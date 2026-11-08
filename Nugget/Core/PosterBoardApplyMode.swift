@@ -1,0 +1,88 @@
+import Foundation
+
+/// How a PosterBoard selection reaches the device.
+///
+/// There are two, and they are not two implementations of one thing — they are two
+/// different mechanisms that happen to install the same wallpapers, so the choice
+/// belongs to the user and the UI has to say what it costs.
+///
+///  - `.backup` is this port's original path: fetch the store's database, compile
+///    the packs into payloads, and ride them through a protective backup and a
+///    restore. It is the *reference's* mechanism, it works on every device the
+///    rest of the app works on, and it ends in a reboot.
+///  - `.airlift` is the AirCard path: open an AirTraffic tunnel over the pairing
+///    record this app already holds and write straight into PosterBoard's data
+///    container. No backup, no reboot — a respring is enough — but it needs
+///    iOS 26.2+, LocalDevVPN, an unlocked device, and it cannot do a store reset.
+///
+/// AirLift is the default. The backup path is this port's original mechanism, not
+/// a better one: it costs a full protective backup and a reboot, and it only has
+/// something left to do that AirLift cannot — the store reset. A user who wants
+/// neither pays nothing for either default, so the cheaper one is the default.
+enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
+    case backup
+    case airlift
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .backup: return String(localized: "Protective backup")
+        case .airlift: return String(localized: "AirLift (AirTraffic)")
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .backup: return "externaldrive.fill"
+        case .airlift: return "bolt.horizontal.circle.fill"
+        }
+    }
+
+    /// What the apply will and will not do, in the user's terms.
+    var summary: String {
+        switch self {
+        case .backup:
+            return "先从设备获取商店数据库，再通过保护性备份送入壁纸。适用于所有受支持的设备，最后会重启设备。"
+        case .airlift:
+            return "通过隧道直接写进 PosterBoard 的容器——不做备份，以注销代替重启。需要 iOS 26.2 或更高版本、LocalDevVPN，且设备保持解锁。"
+        }
+    }
+
+    /// Whether a reset can be honoured in this mode.
+    ///
+    /// A reset is a store operation: it clears what PosterBoard has indexed. The
+    /// AirLift path only ever adds a descriptor directory, so a reset selected
+    /// there is not silently dropped — the apply says it cannot and stops before
+    /// touching the device.
+    var supportsReset: Bool {
+        self == .backup
+    }
+}
+
+/// The selected mode, persisted the same way `autoRefresh` is.
+enum PosterBoardApplyModeSettings {
+    static let key = "PosterBoardApplyMode"
+
+    /// AirLift unless something says otherwise.
+    ///
+    /// The stored value is the only thing that can move this off AirLift, and a
+    /// device that has never touched the picker has nothing stored — so the
+    /// default is what such a device gets.
+    /// Resolve saved AirLift selections against the actual target without erasing
+    /// the user's preference for another, supported device.
+    static func resolved(deviceVersion: String, buildVersion: String) -> PosterBoardApplyMode {
+        if AirliftAvailability.isHidden(deviceVersion: deviceVersion, buildVersion: buildVersion) {
+            return .backup
+        }
+        return current
+    }
+
+    static var current: PosterBoardApplyMode {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: key) else { return .airlift }
+            return PosterBoardApplyMode(rawValue: raw) ?? .airlift
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: key) }
+    }
+}
