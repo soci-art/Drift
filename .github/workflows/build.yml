@@ -1,0 +1,69 @@
+name: Build IPA
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build unsigned IPA
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Check toolchain
+        run: bash scripts/check-xcode-toolchain.sh
+
+      - name: Install XcodeGen
+        # Pinned to the version project.yml is written against (2.46 — see the
+        # "quirks this file works around" note there), not brew's latest, so the
+        # generated project cannot change under a runner image bump.  The release
+        # zip is a universal binary *plus* its SettingPresets, and XcodeGen finds
+        # those relative to the executable, so the unpacked directory goes on
+        # PATH rather than a copied single file.
+        env:
+          XCODEGEN_VERSION: 2.46.0
+        run: |
+          set -euo pipefail
+          DEST="$RUNNER_TEMP/xcodegen"
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$DEST"
+          echo "$DEST/xcodegen/bin" >> "$GITHUB_PATH"
+
+      - name: Generate the Xcode project
+        # Drift.xcodeproj is a build product of project.yml and is
+        # gitignored, so CI regenerates it before xcodebuild can read it.  The
+        # manifest's postGenCommand runs scripts/sync-pbxproj-sources.py, which
+        # reconciles the Sources phase to what SwiftPM resolves — the same
+        # two-step generation a local run does, so the host and CI agree.
+        run: |
+          xcodegen --version
+          xcodegen generate
+
+      # The only supported build path.  It drives Drift.xcodeproj
+      # through xcodebuild and packages build/Drift.ipa; the same
+      # script is what the local workflow runs, so CI and the host cannot
+      # drift apart.
+      - name: Build IPA
+        run: ./scripts/build-ipa.sh Release
+
+      # Drift note: the upstream localization-catalog check is not run.
+      # Drift is a Chinese-first personal build — its new UI copy is written
+      # directly in Chinese — while the inherited catalog still serves the
+      # kept upstream views. The check (which also fails on keys orphaned by
+      # the removed feature pages) belongs to the upstream project.
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: Drift
+          path: build/Drift.ipa
+          if-no-files-found: error
+
+# Manual rebuild trigger
