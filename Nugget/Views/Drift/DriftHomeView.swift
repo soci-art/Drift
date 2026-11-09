@@ -144,7 +144,11 @@ struct DriftHomeView: View {
                     Picker("刷入方式", selection: $manualPickRaw) {
                         Text("自动判断").tag(nil as String?)
                         Text("直刷（只注销）").tag(PosterBoardApplyMode.airlift.rawValue as String?)
+                        // Feedback #30: while the restore gate is closed
+                        // the restore pick is visible but not selectable —
+                        // greyed, with the reason on the card below.
                         Text("恢复式（会重启）").tag(PosterBoardApplyMode.backup.rawValue as String?)
+                            .disabled(!DriftRestoreGate.isEnabled)
                     }
                 } label: {
                     // The control names the **pick**, not the outcome: it used
@@ -162,6 +166,10 @@ struct DriftHomeView: View {
             }
             Text(judged.reason).font(.subheadline).foregroundStyle(.secondary)
                 .onChange(of: manualPickRaw) { statusLine = nil }
+            if !DriftRestoreGate.isEnabled {
+                Text("恢复式暂时停用：菜单里选不了、自动判断也不会选它，原因查清之前先这样。直刷不受影响。")
+                    .font(.caption).foregroundStyle(.orange)
+            }
             if judged.overriddenPick != nil {
                 Text("你手动选了直刷，但上面的硬性限制不允许，已按恢复式处理。")
                     .font(.caption).foregroundStyle(.orange)
@@ -233,6 +241,9 @@ struct DriftHomeView: View {
             Text("重置壁纸商店").font(.subheadline.weight(.semibold))
             Text("壁纸乱了、刷坏了想清掉时用。只能走恢复式，刷完会重启；和普通刷入不能同一次进行。")
                 .font(.subheadline).foregroundStyle(.secondary)
+            if !DriftRestoreGate.isEnabled {
+                NativeNote(DriftRestoreGate.notice)
+            }
             ForEach(PosterBoardResetMode.allCases, id: \.self) { mode in
                 Toggle(isOn: Binding(
                     get: { selection.resetModes.contains(mode) },
@@ -260,7 +271,10 @@ struct DriftHomeView: View {
     }
 
     private var canReset: Bool {
-        session.paired && !session.running
+        // Feedback #30: a reset IS a restore run — while the gate is
+        // closed the button stays disabled and the card above says why.
+        DriftRestoreGate.isEnabled
+            && session.paired && !session.running
             && (selection.fullReset || !selection.resetModes.isEmpty)
     }
 
@@ -305,6 +319,13 @@ struct DriftHomeView: View {
 
     private func runApply() {
         let judged = judgement
+        // Feedback #30: a blocked judgement starts nothing — the tap
+        // only explains. (The session funnel refuses restore runs too,
+        // but a blocked selection must never even be shaped into one.)
+        if judged.isBlocked {
+            statusLine = judged.blockedReason
+            return
+        }
         var runSelection = selection
         runSelection.resetModes = []
         runSelection.fullReset = false
@@ -315,6 +336,10 @@ struct DriftHomeView: View {
     }
 
     private func runReset() {
+        guard DriftRestoreGate.isEnabled else {
+            statusLine = DriftRestoreGate.notice
+            return
+        }
         var resetSelection = PosterBoardSelection()
         resetSelection.resetModes = selection.resetModes
         resetSelection.fullReset = selection.fullReset
@@ -600,7 +625,7 @@ struct DriftPackDetail: View {
                         .driftCard()
                     }
                     if current.isUnsafeContainer {
-                        NativeSafetyNote("这个包带着壁纸商店的数据库，属于「容器包」：刷入可能弄乱现有壁纸索引，只能用恢复式刷入；真乱了用壁纸页底部的「重置壁纸商店」清理。")
+                        NativeSafetyNote("这个包带着壁纸商店的数据库，属于「容器包」：刷入可能弄乱现有壁纸索引，只能用恢复式刷入。" + DriftRestoreGate.notice + "这类包只能走恢复式，目前刷不了。")
                     }
                     Button(role: .destructive) {
                         PosterBoardPreview.invalidate(for: current)
