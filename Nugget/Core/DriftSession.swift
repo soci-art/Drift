@@ -171,54 +171,26 @@ final class DriftSession: ObservableObject {
                     // report is logged, because a wrong peer address strands
                     // the createTunnel step silently otherwise.
                     await core.bindConnectionConfig(ConnectionConfigBinding(
+                        setTunnelIfaceIp: { value in Tunnel.noteReported { $0.ifaceIP = value } },
+                        setTunnelPeerIp: { value in Tunnel.noteReported { $0.peerIP = value } },
+                        setTunnelPeerSubnetMask: { value in Tunnel.noteReported { $0.peerSubnetMask = value } },
+                        setTunnelPeerReachable: { value in Tunnel.noteReported { $0.peerReachable = value } },
+                        setTunnelIfaceSubnetMask: { value in Tunnel.noteReported { $0.ifaceSubnetMask = value } },
+                        getRemoteServerIp: { "" },
+                        setRemoteReachable: { _ in },
+                        // Use the same peer as the pre-start probe, even when
+                        // LocalDevVPN's routes cannot be auto-discovered.
                         getOverrideTunnelPeerIp: { Tunnel.peerIP },
-                        setOverrideTunnelPeerIp: { value in
-                            Tunnel.reported("override tunnel peer IP set to \(value ?? "nil")")
-                        },
-                        getConnectionMode: { .localVPN },
-                        setUsingTunnel: { value in
-                            Tunnel.reported("using tunnel = \(value)")
-                        },
-                        setUsingEmulatedDevice: { value in
-                            Tunnel.reported("using emulated device = \(value)")
-                        },
-                        setRemotePairingClient: { value in
-                            Tunnel.reported("remote pairing client = \(value)")
-                        },
-                        setLocalSocketPairingClient: { value in
-                            Tunnel.reported("local-socket pairing client = \(value)")
-                        },
-                        setRsdSocketPairingClient: { value in
-                            Tunnel.reported("RSD-socket pairing client = \(value)")
-                        },
-                        setPairingFilePath: { value in
-                            Tunnel.reported("pairing file path = \(value ?? "nil")")
-                        },
-                        setUdid: { value in
-                            Tunnel.reported("UDID = \(value ?? "nil")")
-                        },
-                        setTunnelPeerIp: { value in
-                            Tunnel.reported("tunnel peer IP = \(value ?? "nil")")
-                        },
-                        setTunnelPeerPort: { value in
-                            Tunnel.reported("tunnel peer port = \(value.map(String.init) ?? "nil")")
-                        },
-                        setTunnelSubnetIp: { value in
-                            Tunnel.reported("tunnel subnet IP = \(value ?? "nil")")
-                        },
-                        setTunnelSubnetMask: { value in
-                            Tunnel.reported("tunnel subnet mask = \(value ?? "nil")")
-                        },
-                        setTunnelSubnetPrefix: { value in
-                            Tunnel.reported("tunnel subnet prefix length = \(value.map(String.init) ?? "nil")")
-                        },
-                        setConnectsThroughTunnel: { value in
-                            Tunnel.reported("connects through tunnel = \(value)")
-                        }))
+                        setOverrideTunnelPeerReachable: { value in Tunnel.noteReported { $0.overridePeerReachable = value } },
+                        getConnectionMode: { .localVPN }
+                    ))
+                    // Diagnostic only, no verdict attached (a lockdown-only
+                    // key rule would misread the valid .rppairing record an
+                    // iOS 17+ device uses); start() gives the real verdict.
                     if let keys = PairingRecord.topLevelKeys(pairingRaw) {
-                        GoldenNuggetEngine.shared.log("pairing file: top-level keys = \(keys.joined(separator: ", ")). "
-                            + "Individual formats carry different subsets of keys; presence or absence of any "
-                            + "one key here is not a validity verdict.")
+                        GoldenNuggetEngine.shared.log("pairing file top-level keys: \(keys.isEmpty ? "(empty)" : keys.sorted().joined(separator: ", "))")
+                    } else {
+                        GoldenNuggetEngine.shared.log("pairing file: NOT a parseable plist")
                     }
                     try await core.start(pairingFile: pairingRaw, mountPath: docs)
 
