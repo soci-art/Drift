@@ -163,7 +163,7 @@ PY
 # The shipped idevice.h is newer than any tag we can pin, and two of its
 # additions are ABI-relevant in ways a symbol diff cannot see. Both are kept as
 # git patches so a fresh clone of the tag reproduces them exactly.
-for P in factory_info should_preserve local_tunnel redact_pairing log_rotation purge_disk_space; do
+for P in factory_info should_preserve local_tunnel redact_pairing log_rotation purge_disk_space pull_trace; do
   PATCH="$REPO/Vendor/patches/idevice-ffi/$P.patch"
   echo "==> applying idevice-ffi/$P.patch"
   if git -C "$SRC" apply --reverse --check "$PATCH" 2>/dev/null; then
@@ -185,6 +185,10 @@ grep -q "^    factory_info: crate::plist_t,$" "$SRC/ffi/src/mobilebackup2.rs" \
   || { echo "error: mobilebackup2_backup still has no factory_info parameter" >&2; exit 1; }
 grep -q "fn should_store_file" "$SRC/ffi/src/mobilebackup2.rs" \
   || { echo "error: the FFI delegate still cannot reject a payload before writing it" >&2; exit 1; }
+# Same assertion style for the feedback-#31 pull trace: it is log-only, but
+# a silently-dropped patch would send the spare-device diagnosis in blind.
+grep -q "MB2-PULL" "$SRC/idevice/src/services/mobilebackup2.rs" \
+  || { echo "error: the pull-trace instrumentation (pull_trace.patch) is missing" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # 4. Build
