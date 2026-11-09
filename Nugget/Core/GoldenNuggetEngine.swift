@@ -1089,6 +1089,53 @@ class GoldenNuggetEngine {
         return backupRoot
     }
 
+    // MARK: - Research diagnostics (feedback #31)
+
+    /// Research builds only: run ONE protective pull and nothing else.
+    ///
+    /// This is the spare-device diagnosis entry for the pull silence of
+    /// feedback #14/#21: the device asks for the state files, asks for a
+    /// directory listing, and then never speaks again. The entry exists so
+    /// that session can be run on its own — with the [MB2-PULL] trace
+    /// live — without going anywhere near prune, injection or restore.
+    /// It deliberately does NOT consult the mode judgement: a diagnostic
+    /// that needs the judge's permission to run could never observe the
+    /// systems that need it most (on the spare device's iOS 27.3 the
+    /// judge can only land on the restore tier, which is closed). The
+    /// judge's landing for the connected device is still written to the
+    /// log, in full, so the report shows where the version falls. The
+    /// restore gate stays closed in this build — the pull is the only
+    /// mobilebackup2 direction this entry can start.
+    ///
+    /// Returns a one-line outcome for the Settings row that called it.
+    func researchDiagnosticPull() async throws -> String {
+        guard DriftResearchBuild.isActive else {
+            throw GoldenNuggetError("诊断拉取只在研究构建里提供（分发构建没有这个入口）。")
+        }
+        return try await loggedRun("research diagnostic pull") {
+            clearCancel()
+            clearProgress()
+            let udid = try await prepareRun()
+            let identity = await DeviceIdentity.read()
+            let verdict = DriftJudge.judge(
+                identity: identity,
+                selection: PosterBoardSelection(),
+                pick: nil)
+            log("[MB2-PULL] research pull: device ProductVersion="
+                + "\(identity.version.isEmpty ? "<unread>" : identity.version) "
+                + "BuildVersion=\(identity.buildVersion.isEmpty ? "<unread>" : identity.buildVersion) "
+                + "ProductType=\(identity.productType.isEmpty ? "<unread>" : identity.productType)")
+            log("[MB2-PULL] research pull: judge landing for an empty selection — "
+                + "mode \(verdict.mode.title), reason: \(verdict.reason)"
+                + (verdict.isBlocked ? " (blocked: \(verdict.blockedReason ?? ""))" : "")
+                + "; restore gate closed (the research build does not open it — feedback #31)")
+            log("[MB2-PULL] research pull: this entry does not consult the judge — "
+                + "it only pulls, and never prunes, injects or restores")
+            _ = try await protectiveBackup(udid: udid)
+            return "诊断拉取完成：设备备份已拉到本地。下一步到「记录」里点「打包分享记录」，把整包发回分析。"
+        }
+    }
+
     // MARK: - Shared run plumbing
     //
     // The sequence below is order-sensitive, so it lives in one place.
