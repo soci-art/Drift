@@ -19,7 +19,6 @@ struct DriftSettingsView: View {
         NavigationStack {
             List {
                 connectionSection
-                tunnelSection
                 applySection
                 historySection
                 recordsSection
@@ -129,18 +128,6 @@ struct DriftSettingsView: View {
         }
     }
 
-    // MARK: - Tunnel address
-
-    private var tunnelSection: some View {
-        Section {
-            DriftTunnelAddressCard()
-        } header: {
-            Text("隧道地址")
-        } footer: {
-            Text("隧道地址固定使用 LocalDevVPN 的默认值，这里只检测、不修改。在 LocalDevVPN 里填上同样的值，隧道状态就会显示已连接。")
-        }
-    }
-
     // MARK: - Apply
 
     private var applySection: some View {
@@ -225,46 +212,6 @@ struct DriftSettingsView: View {
             }
             Text("独立应用：借用 GoldenNugget 的原理与壁纸／连接层代码（AGPL-3.0），界面、UI 与主题均为重新设计，只保留刷壁纸功能。")
                 .font(.caption).foregroundStyle(.secondary)
-        }
-    }
-}
-
-/// The four tunnel address fields, validated on commit: an invalid value is
-/// flagged and not stored (the engine then probes with the defaults — the
-/// base app's behaviour).
-/// Read-only tunnel address card. Drift always detects against the
-/// LocalDevVPN defaults — the address is not user-editable, so this card
-/// only shows the values and offers to copy them for LocalDevVPN itself.
-/// (Stale overrides from an earlier build are cleared at launch.)
-struct DriftTunnelAddressCard: View {
-    @State private var copied = false
-
-    var body: some View {
-        Group {
-            row("本机隧道 IP", Tunnel.ifaceIP)
-            row("对端 IP", Tunnel.peerIP)
-            row("端口", String(Tunnel.servicePort))
-            row("前缀长度", String(Tunnel.ifacePrefixLength))
-            HStack {
-                Spacer()
-                Button {
-                    UIPasteboard.general.string =
-                        "地址：\(Tunnel.ifaceIP)/\(Tunnel.ifacePrefixLength)\n对端：\(Tunnel.peerIP)\n端口：\(Tunnel.servicePort)"
-                    copied = true
-                } label: {
-                    Label(copied ? "已复制" : "复制要填进 LocalDevVPN 的值",
-                          systemImage: copied ? "checkmark" : "doc.on.doc")
-                }
-            }
-        }
-    }
-
-    private func row(_ title: String, _ value: String) -> some View {
-        HStack {
-            Text(title)
-            Spacer()
-            Text(value)
-                .foregroundStyle(.secondary)
         }
     }
 }
