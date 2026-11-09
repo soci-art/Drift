@@ -346,7 +346,9 @@ enum PosterBoardImports {
         let destination = uniqueDestination(for: source.lastPathComponent)
         try? FileManager.default.removeItem(at: destination)
         do {
-            try FileManager.default.copyItem(at: source, to: destination)
+            try unwrappedPackData(from: source).write(to: destination, options: .atomic)
+        } catch let error as GoldenNuggetError {
+            throw error
         } catch {
             throw GoldenNuggetError("无法把 \(source.lastPathComponent) 拷贝进应用："
                 + error.localizedDescription)
@@ -358,6 +360,35 @@ enum PosterBoardImports {
             try? FileManager.default.removeItem(at: destination)
             throw error
         }
+    }
+
+    /// The pack's bytes, unwrapped first if they arrive encoded.
+    ///
+    /// Some packs circulate as base64 *text* wearing a `.tendies` name — the
+    /// whole ZIP is in there, encoded (verified on Grace's real packs,
+    /// 2026-11-09: the text decodes to a well-formed pack, while the archive
+    /// reader alone reports a missing end-of-central-directory and refuses
+    /// it). What is stored is always the plain ZIP, so every later reader —
+    /// unpack, previews, apply — sees the one true form.
+    ///
+    /// The order matters: a normal pack costs one prefix test, and a decode
+    /// is accepted only when it lands on a ZIP header. A file that is
+    /// neither passes through untouched and keeps the archive reader's own
+    /// error, so a genuinely bad pack fails exactly as it did before.
+    private static func unwrappedPackData(from source: URL) throws -> Data {
+        let data: Data
+        do {
+            data = try Data(contentsOf: source)
+        } catch {
+            throw GoldenNuggetError("无法把 \(source.lastPathComponent) 拷贝进应用："
+                + error.localizedDescription)
+        }
+        if data.starts(with: [0x50, 0x4B]) { return data } // "PK": a plain ZIP
+        if let decoded = Data(base64Encoded: data, options: .ignoreUnknownCharacters),
+           decoded.starts(with: [0x50, 0x4B]) {
+            return decoded
+        }
+        return data
     }
 
     /// Every imported pack, newest last, in file-name order.
