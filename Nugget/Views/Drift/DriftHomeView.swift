@@ -65,7 +65,14 @@ struct DriftHomeView: View {
             // `DocumentPicker` for the tap-swallowing failure that moved
             // these. A pick or a cancel always lands back here.
             .sheet(isPresented: $importingTendies) {
-                DocumentPicker(contentTypes: [UTType("com.sociart.drift.tendies") ?? .zip],
+                // `.item` is the same eligibility backstop as the pairing
+                // picker's: the declared `.tendies` type is in the bundle,
+                // but real packs' system type tags don't reliably match it
+                // on Grace's phone — her packs listed greyed-out and
+                // unselectable (2026-11-09). Eligibility was never the gate;
+                // `PosterBoardImports` unpacks and validates every pick and
+                // reports bad packs in words.
+                DocumentPicker(contentTypes: [UTType("com.sociart.drift.tendies") ?? .zip, .item],
                                allowsMultipleSelection: true) { urls in
                     importingTendies = false
                     handleTendiesPick(urls)

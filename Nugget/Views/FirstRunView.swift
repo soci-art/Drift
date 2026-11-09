@@ -258,7 +258,7 @@ struct FirstRunView: View {
                          status: pairingReady ? "配对记录已就位" : "尚无配对记录",
                          destination: 2)
                 NativeNote("第 2 步可以在电脑上用 iLoader 配对——生成配对文件后传到这台 iPhone 上导入。")
-                NativeNote("如果隧道是在打开 App 之后才连上的，把 Drift 关掉重新打开一次。")
+                NativeNote("隧道状态实时检测：打开 App 之后再连上隧道，这一页会自动变绿，不用重开 App。")
             }
         }
     }
