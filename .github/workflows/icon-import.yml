@@ -1,0 +1,25 @@
+name: Import Drift icon PNGs (one-shot)
+on: workflow_dispatch
+permissions:
+  contents: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and verify the icon bundle
+        run: |
+          curl -fsSL -o /tmp/drift-iconfix.tar.gz "https://muse.ai/files/1368012179736313/1855078565849395/nkpfjum33vwapzdfvjb49d83/drift-iconfix.tar.gz"
+          echo "d33de20667d0d7afbd7596947433f83b0e3fa2cf51b6b6354a9e4c24a6f0ca01  /tmp/drift-iconfix.tar.gz" | sha256sum -c -
+      - name: Place the PNGs and commit
+        run: |
+          tar -xzf /tmp/drift-iconfix.tar.gz -C .
+          ls -la layout/Applications/Drift.app/Logo@1x.png layout/Applications/Drift.app/Logo@2x.png
+          git config user.name "drift-icon-import"
+          git config user.email "actions@github.com"
+          git add "layout/Applications/Drift.app/Logo@1x.png" "layout/Applications/Drift.app/Logo@2x.png" "layout/Applications/Drift.app/AppIcon60x60@2x.png" "layout/Applications/Drift.app/AppIcon76x76@2x~ipad.png"
+          git commit -m "Logo 与骨架图标换成 Drift 图案"
+          rm .github/workflows/icon-import.yml
+          git add -A .github/workflows/icon-import.yml
+          git commit -m "移除一次性图标导入工作流" || true
+          git push
