@@ -59,7 +59,7 @@ jobs:
       # script is what the local workflow runs, so CI and the host cannot
       # drift apart.
       - name: Build IPA
-        run: ./scripts/build-ipa.sh Release
+        run: bash ./scripts/build-ipa.sh Release
 
       # Drift note: the upstream localization-catalog check is not run.
       # Drift is a Chinese-first personal build — its new UI copy is written
