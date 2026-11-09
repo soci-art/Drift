@@ -41,7 +41,7 @@ struct FirstRunWelcomeArt: View {
             Circle()
                 .strokeBorder(Color(.separator).opacity(0.2), lineWidth: 1)
                 .frame(width: 208, height: 208)
-            TimelineView(.animation(minimumInterval: 1 / 12, paused: !active)) { timeline in
+            TimelineView(.animation(minimumInterval: 1 / 30, paused: !active)) { timeline in
                 ArtOrbitChips(stamp: timeline.date)
             }
             NativeLogo(size: 120)
@@ -72,6 +72,13 @@ private struct ArtOrbitChips: View {
             orbiting(icon: "cable.connector", radius: 140, angle: angle)
             orbiting(icon: "wifi", radius: 104, phase: 0.5, angle: angle)
         }
+        // The frame is load-bearing, not cosmetic: `drawingGroup()` renders
+        // into a texture the size of the view's **layout** frame and clips
+        // to it, and the chips live almost entirely outside the 44 pt layout
+        // box the offsets leave behind — the first flattened build shipped
+        // with both chips clipped away to nothing (Grace, 2026-11-09). The
+        // frame spans the full orbit (2 × (140 + 22)) so nothing is cut.
+        .frame(width: 324, height: 324)
         .drawingGroup()
     }
 
@@ -126,7 +133,12 @@ private struct ArtTunnelSegment: View {
                                   style: StrokeStyle(lineWidth: ready ? 3 : 1.5,
                                                      dash: ready ? [] : [6, 5]))
                     .frame(height: 34)
-                TimelineView(.animation(minimumInterval: 1 / 12, paused: !active)) { timeline in
+                // Display-rate ticks, deliberately not the 12 fps the other
+                // heroes use: the dots cross in ~2.5 s, so a 12 fps step is
+                // a visible jump — the "卡" Grace reported on this slide.
+                // The content is a three-dot `Canvas`, which redraws cheaply
+                // at full rate.
+                TimelineView(.animation(paused: !active)) { timeline in
                     ArtFlowDots(stamp: timeline.date, ready: ready)
                 }
             }
@@ -210,7 +222,9 @@ private struct ArtPairBridge: View {
                             style: StrokeStyle(lineWidth: linked ? 3 : 1.5,
                                                dash: linked ? [] : [6, 5]))
                     .opacity(0.9)
-                TimelineView(.animation(minimumInterval: 1 / 12, paused: !active)) { timeline in
+                // Display rate, like the tunnel dots: the sweep crosses in
+                // ~3 s and steps visibly at 12 fps.
+                TimelineView(.animation(paused: !active)) { timeline in
                     ArtPairSweep(stamp: timeline.date, linked: linked, curve: curve)
                 }
                 Image(systemName: linked ? "checkmark.circle.fill" : "doc.badge.plus")
@@ -264,7 +278,7 @@ struct FirstRunFinishArt: View {
                     RadialGradient(colors: [Color.accentColor.opacity(0.22), .clear],
                                    center: .center, startRadius: 10, endRadius: 150))
                 .frame(width: 300, height: 300)
-            TimelineView(.animation(minimumInterval: 1 / 12, paused: !active || !ready)) { timeline in
+            TimelineView(.animation(minimumInterval: 1 / 24, paused: !active || !ready)) { timeline in
                 // Flattened like the welcome orbit: eight small marks moving
                 // per tick should cost one composited layer, not eight.
                 ArtConfettiLayer(stamp: timeline.date)
@@ -296,6 +310,12 @@ private struct ArtConfettiLayer: View {
         let t = stamp.timeIntervalSinceReferenceDate
         // Eight marks on four radii, each rising and rotating; the periods are
         // incommensurate on purpose — synced confetti reads as a loop.
+        //
+        // The fixed frame is the same lesson as the welcome orbit's: the
+        // marks are placed by offsets far outside their own layout sizes, so
+        // without a canvas spanning the hero, the caller's `drawingGroup()`
+        // would clip them away.
+        ZStack {
         ForEach(0..<8, id: \.self) { i in
             let period = 1.6 + Double(i % 4) * 0.55
             let drift = (t / period)
@@ -306,6 +326,8 @@ private struct ArtConfettiLayer: View {
                 .offset(x: [ -1.0, 1.0, 0.35, -0.35, 0.8, -0.8, 0.15, -0.15 ][i] * 112)
                 .opacity(0.7 * (1 - drift))
         }
+        }
+        .frame(width: 300, height: 300)
     }
 }
 

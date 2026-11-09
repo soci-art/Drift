@@ -27,19 +27,19 @@ struct DriftSettingsView: View {
             }
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.large)
-            .fileImporter(isPresented: $importingPairing,
-                          allowedContentTypes: PairingRecord.types,
-                          allowsMultipleSelection: false) { result in
-                switch result {
-                case .success(let urls):
+            // UIKit picker, not SwiftUI `fileImporter` — see
+            // `DocumentPicker` for why.
+            .sheet(isPresented: $importingPairing) {
+                DocumentPicker(contentTypes: PairingRecord.types) { urls in
+                    importingPairing = false
                     guard let url = urls.first else {
                         session.errorText = "没有选到文件，请再导入一次。"
                         return
                     }
                     do { try session.importPairing(from: url) }
                     catch { session.errorText = error.localizedDescription }
-                case .failure(let error):
-                    session.errorText = error.localizedDescription
+                } onCancel: {
+                    importingPairing = false
                 }
             }
             .sheet(isPresented: $showGuide) {

@@ -38,15 +38,23 @@ struct DriftVideoView: View {
             }
             .navigationTitle("视频壁纸")
             .navigationBarTitleDisplayMode(.large)
-            .fileImporter(isPresented: $importingVideo,
-                          allowedContentTypes: [.movie, .video, .mpeg4Movie, .quickTimeMovie],
-                          allowsMultipleSelection: false) { result in
-                importPicked(result, into: PosterBoard.videoDirectory) { selection.video = $0 }
+            // UIKit pickers, not SwiftUI `fileImporter` — same reasoning as
+            // the pairing import; see `DocumentPicker`.
+            .sheet(isPresented: $importingVideo) {
+                DocumentPicker(contentTypes: [.movie, .video, .mpeg4Movie, .quickTimeMovie]) { urls in
+                    importingVideo = false
+                    importPicked(urls, into: PosterBoard.videoDirectory) { selection.video = $0 }
+                } onCancel: {
+                    importingVideo = false
+                }
             }
-            .fileImporter(isPresented: $importingFrame,
-                          allowedContentTypes: [.image],
-                          allowsMultipleSelection: false) { result in
-                importPicked(result, into: PosterBoard.thumbnailDirectory) { selection.thumbnail = $0 }
+            .sheet(isPresented: $importingFrame) {
+                DocumentPicker(contentTypes: [.image]) { urls in
+                    importingFrame = false
+                    importPicked(urls, into: PosterBoard.thumbnailDirectory) { selection.thumbnail = $0 }
+                } onCancel: {
+                    importingFrame = false
+                }
             }
         }
     }
@@ -169,9 +177,9 @@ struct DriftVideoView: View {
         }
     }
 
-    private func importPicked(_ result: Result<[URL], Error>, into directory: URL,
+    private func importPicked(_ urls: [URL], into directory: URL,
                               assign: (URL?) -> Void) {
-        guard case .success(let urls) = result, let source = urls.first else { return }
+        guard let source = urls.first else { return }
         do {
             let scoped = source.startAccessingSecurityScopedResource()
             defer { if scoped { source.stopAccessingSecurityScopedResource() } }

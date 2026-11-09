@@ -128,12 +128,16 @@ struct FirstRunView: View {
                 await probe()
             }
         }
-        .fileImporter(isPresented: $showPairingImporter, allowedContentTypes: PairingRecord.types) { result in
-            switch result {
-            case .success(let url):
-                importRecord(from: url)
-            case .failure(let error):
-                errorText = error.localizedDescription
+        // UIKit picker, not SwiftUI `fileImporter` — see
+        // `DocumentPicker` for the tap-swallowing failure that moved it.
+        .sheet(isPresented: $showPairingImporter) {
+            DocumentPicker(contentTypes: PairingRecord.types) { urls in
+                showPairingImporter = false
+                if let url = urls.first {
+                    importRecord(from: url)
+                }
+            } onCancel: {
+                showPairingImporter = false
             }
         }
         // A pairing file arriving as a link (AirDrop, Files "Open in"), which is

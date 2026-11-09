@@ -61,15 +61,25 @@ struct DriftHomeView: View {
                     .accessibilityLabel("导入配对文件")
                 }
             }
-            .fileImporter(isPresented: $importingTendies,
-                          allowedContentTypes: [UTType("com.sociart.drift.tendies") ?? .zip],
-                          allowsMultipleSelection: true) { result in
-                handleTendiesImport(result)
+            // UIKit pickers, not SwiftUI `fileImporter` — see
+            // `DocumentPicker` for the tap-swallowing failure that moved
+            // these. A pick or a cancel always lands back here.
+            .sheet(isPresented: $importingTendies) {
+                DocumentPicker(contentTypes: [UTType("com.sociart.drift.tendies") ?? .zip],
+                               allowsMultipleSelection: true) { urls in
+                    importingTendies = false
+                    handleTendiesPick(urls)
+                } onCancel: {
+                    importingTendies = false
+                }
             }
-            .fileImporter(isPresented: $importingPairing,
-                          allowedContentTypes: PairingRecord.types,
-                          allowsMultipleSelection: false) { result in
-                handlePairingImport(result)
+            .sheet(isPresented: $importingPairing) {
+                DocumentPicker(contentTypes: PairingRecord.types) { urls in
+                    importingPairing = false
+                    handlePairingPick(urls)
+                } onCancel: {
+                    importingPairing = false
+                }
             }
             .modifier(LegacyConvertPromptModifier(prompt: $legacyPrompt) { prompt, convert in
                 answerLegacy(prompt, convert: convert)
@@ -124,7 +134,16 @@ struct DriftHomeView: View {
                     Button("直刷（只注销）") { manualPickRaw = PosterBoardApplyMode.airlift.rawValue; statusLine = nil }
                     Button("恢复式（会重启）") { manualPickRaw = PosterBoardApplyMode.backup.rawValue; statusLine = nil }
                 } label: {
-                    Label(judged.mode == .airlift ? "直刷" : "恢复式", systemImage: "chevron.up.chevron.down")
+                    // The control names the **pick**, not the outcome: it used
+                    // to render `judged.mode`, so with a hard limit in force
+                    // (no pairing → no identity → restore forced) the button
+                    // read 恢复式 no matter what was tapped, and the menu
+                    // looked dead (Grace, 2026-11-09). The effective mode
+                    // stays where it belongs — the reason line and the
+                    // override note below.
+                    Label(manualPick == nil ? "自动判断"
+                          : manualPick == .airlift ? "直刷" : "恢复式",
+                          systemImage: "chevron.up.chevron.down")
                         .font(.subheadline.weight(.medium))
                 }
             }
@@ -277,8 +296,7 @@ struct DriftHomeView: View {
         }
     }
 
-    private func handleTendiesImport(_ result: Result<[URL], Error>) {
-        guard case .success(let urls) = result else { return }
+    private func handleTendiesPick(_ urls: [URL]) {
         for url in urls {
             do {
                 let tendie = try PosterBoardImports.import(from: url)
@@ -293,22 +311,15 @@ struct DriftHomeView: View {
         imports = PosterBoardImports.load()
     }
 
-    private func handlePairingImport(_ result: Result<[URL], Error>) {
-        switch result {
-        case .success(let urls):
-            guard let url = urls.first else {
-                session.errorText = "没有选到文件，请再导入一次。"
-                return
-            }
-            do {
-                try session.importPairing(from: url)
-                statusLine = "配对文件已导入，正在连接设备。"
-            } catch {
-                session.errorText = error.localizedDescription
-            }
-        case .failure(let error):
-            // A swallowed failure here reads as "tapped it and nothing
-            // happened" — the exact report the .plist import produced.
+    private func handlePairingPick(_ urls: [URL]) {
+        guard let url = urls.first else {
+            session.errorText = "没有选到文件，请再导入一次。"
+            return
+        }
+        do {
+            try session.importPairing(from: url)
+            statusLine = "配对文件已导入，正在连接设备。"
+        } catch {
             session.errorText = error.localizedDescription
         }
     }

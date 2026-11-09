@@ -38,6 +38,14 @@ enum PairingRecord {
         if let lockdown = UTType("com.awesomenull.mobiledevicepairing") {
             list.append(lockdown)
         }
+        // `.item` last, as the eligibility backstop: with it present, no
+        // file in the picker can be unselectable, so a tap always comes back
+        // to the app — the failure this guards against is a pairing `.plist`
+        // that rendered in the list but swallowed taps (2026-11-09). What
+        // keeps a wrong file out is the content check in `accept(contentsOf:)`,
+        // which is strict (UTF-8 XML plist, non-empty top-level dictionary)
+        // and reports in words; eligibility was never the real gate.
+        list.append(.item)
         return list
     }()
 
