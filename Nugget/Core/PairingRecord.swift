@@ -15,7 +15,11 @@ enum PairingRecord {
     /// list**: the picker built its array from these names and the URL handler
     /// hard-coded the same three again, so adding a fourth would have worked in
     /// one path and silently not in the other.
-    static let extensions = ["mobiledevicepairing", "mobiledevicepair", "mobiledeviceconfig"]
+    /// `plist` is on the list because pairing records are often delivered
+    /// under a plain `.plist` name (e.g. `rp_pairing_file.plist`): the picker
+    /// greyed such files out entirely. The shape check on import is what
+    /// keeps a random plist from being adopted.
+    static let extensions = ["mobiledevicepairing", "mobiledevicepair", "mobiledeviceconfig", "plist"]
 
     static let types: [UTType] = extensions.compactMap {
         UTType(filenameExtension: $0, conformingTo: .data)

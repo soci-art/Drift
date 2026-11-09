@@ -18,6 +18,7 @@
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>com.awesomenull.mobiledevicepairing</string>
+				<string>com.apple.property-list</string>
 			</array>
 		</dict>
 		<dict>

@@ -315,7 +315,7 @@ struct FirstRunView: View {
                                subtitle: "iOS 27+ — on iOS 26, use a file from a computer") {
                         wirelessPair.start()
                     }
-                    NativeNote("No helper? Pair on a computer (idevicepair, Sideloadly — tap Trust when the phone asks), send the .mobiledevicepairing file here, and import it above. The helper's “Save Pairing File to Disk” works the same way.")
+                    NativeNote("没有电脑工具？也可以在电脑上配对（idevicepair、Sideloadly——手机弹窗时点「信任」），把配对文件（.mobiledevicepairing 或 .plist）发到这台 iPhone，在上面导入。")
                 }
             }
         }
