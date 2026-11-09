@@ -42,6 +42,51 @@ enum PosterBoardBackup {
         URL.documents.appendingPathComponent("PosterBoard/\(udid).sqlite3", conformingTo: .data)
     }
 
+    /// The database an apply compiles against now that no backup is pulled
+    /// (feedback #21: on Grace's iOS 27.2 beta 2 every mobilebackup2 pull
+    /// dies at the directory listing, so the fetch is gone from the apply
+    /// path entirely). Two local sources, in order:
+    ///
+    ///   1. the consolidated cache of an earlier successful fetch — it
+    ///      carries the device store's own rows, so wallpapers already on
+    ///      the device stay registered;
+    ///   2. a freshly built empty store database — correct shape, no rows:
+    ///      wallpapers the device already has are NOT in it, and the log
+    ///      says so in plain words rather than letting the run look like a
+    ///      full merge.
+    ///
+    /// There is deliberately no third source: when neither is available the
+    /// apply stops with an error instead of falling back to a pull.
+    struct LocalDatabase {
+        let database: URL
+        let structureVersion: Int
+        /// One line naming which source answered, for the run log.
+        let sourceLabel: String
+    }
+
+    static func localDatabase(udid: String,
+                              log: @escaping @Sendable (String) -> Void) throws -> LocalDatabase {
+        let cached = cachedDatabase(udid: udid)
+        if FileManager.default.fileExists(atPath: cached.path), PosterBoardStore.validate(cached) {
+            log("PosterBoard: using the locally cached store database "
+                + "(fetched from the device on an earlier run) — no backup pulled")
+            return LocalDatabase(database: cached,
+                                 structureVersion: PosterBoard.fallbackStructureVersion,
+                                 sourceLabel: "本地缓存的设备数据库副本")
+        }
+        let scratch = AppPaths.posterBoardFetchRoot
+            .appendingPathComponent("local-empty.sqlite3", conformingTo: .data)
+        try FileManager.default.createDirectory(at: AppPaths.posterBoardFetchRoot,
+                                                withIntermediateDirectories: true)
+        try PosterBoardStore.createEmptyDatabase(at: scratch)
+        log("PosterBoard: no cached store database — built an empty one locally. "
+            + "Wallpapers already on the device are not in it and may stop being "
+            + "listed; no backup was pulled to get them.")
+        return LocalDatabase(database: scratch,
+                             structureVersion: PosterBoard.fallbackStructureVersion,
+                             sourceLabel: "从零新建的空数据库（本地无缓存）")
+    }
+
     /// Run the targeted backup and return the consolidated database.
     ///
     /// - Parameter ios27: the device speaks the sqlite `Manifest.db` (iOS 27+) or the
