@@ -140,7 +140,7 @@ final class DriftSession: ObservableObject {
         Self.startLock.unlock()
 
         let docs = URL.documents.path(percentEncoded: false)
-        DispatchQueue.global(qos: .userInitiated).async { [pairingRaw] in
+        DispatchQueue.global(qos: .userInitiated).async(execute: DispatchWorkItem { [pairingRaw] in
             defer {
                 Self.startLock.lock()
                 Self.startInFlight = false
@@ -260,7 +260,7 @@ final class DriftSession: ObservableObject {
                     }
                 }
             }
-        }
+        })
     }
 
     // MARK: - Device identity
@@ -292,7 +292,7 @@ final class DriftSession: ObservableObject {
 
     // MARK: - Wallpaper runs
 
-    func cancelRun() { GoldenNuggetEngine.shared.cancel() }
+    func cancelRun() { GoldenNuggetEngine.shared.requestCancel() }
 
     /// Run one wallpaper apply in an already-decided mode and record it.
     /// Returns a one-line outcome for the page's status area.
@@ -317,14 +317,12 @@ final class DriftSession: ObservableObject {
             ApplyHistory.record(mode: mode.title, success: true,
                                 device: identity.describe,
                                 model: identity.productType, ios: identity.version)
-            if selection.fullReset || !selection.resetModes.isEmpty {
-                selection.resetModes = []
-                selection.fullReset = false
-            }
+            // The reset flags are one-shot; the calling page clears its own
+            // selection on success (this session only ever holds a copy).
             errorText = nil
             return (true, mode == .airlift ? "刷入完成，设备将注销生效" : "刷入完成，设备将重启生效")
         } catch {
-            if TransportFailure.isCancellation(error) {
+            if let failure = error as? TransportFailure, failure.isCancellation {
                 GoldenNuggetEngine.shared.log("run cancelled")
                 ApplyHistory.record(mode: mode.title, success: false, error: "已取消",
                                     device: identity.describe,

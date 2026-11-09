@@ -189,7 +189,7 @@ struct DriftHomeView: View {
                     get: { selection.resetModes.contains(mode) },
                     set: { on in
                         if on { selection.resetModes.insert(mode) }
-                        else { selection.resetModes.removeAll { $0 == mode } }
+                        else { selection.resetModes.remove(mode) }
                     })) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(resetModeTitle(mode))
@@ -386,7 +386,7 @@ struct DriftPackDetail: View {
                     }
                     .driftCard()
                     if current.isUnsafeContainer {
-                        NativeSafetyNote(text: "这个包带着壁纸商店的数据库，属于「容器包」：刷入可能弄乱现有壁纸索引，只能用恢复式刷入；真乱了用壁纸页底部的「重置壁纸商店」清理。")
+                        NativeSafetyNote("这个包带着壁纸商店的数据库，属于「容器包」：刷入可能弄乱现有壁纸索引，只能用恢复式刷入；真乱了用壁纸页底部的「重置壁纸商店」清理。")
                     }
                     Button(role: .destructive) {
                         PosterBoardPreview.invalidate(for: current)
