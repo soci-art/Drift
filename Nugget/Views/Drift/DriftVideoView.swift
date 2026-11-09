@@ -65,7 +65,8 @@ struct DriftVideoView: View {
                 DriftPill(text: "只能恢复式", tint: .orange)
                 DriftPill(text: "刷完重启")
             }
-            Text("视频壁纸只能用恢复式刷入，刷完设备会重启。循环模式会把视频逐帧存下，最多 400 帧；非循环是实况照片式（视频 + 一张定格帧）。")
+            Text("视频壁纸只能用恢复式刷入，刷完设备会重启。循环模式会把视频逐帧存下，最多 400 帧；非循环是实况照片式（视频 + 一张定格帧）。"
+                 + (DriftRestoreGate.isEnabled ? "" : "恢复式暂时停用，所以视频壁纸现在刷不了。"))
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -138,7 +139,8 @@ struct DriftVideoView: View {
 
     private var applyCard: some View {
         VStack(spacing: 10) {
-            NativePrimaryButton(title: session.running ? "刷入中…" : "刷入视频壁纸（将重启）",
+            NativePrimaryButton(title: session.running ? "刷入中…"
+                                : DriftRestoreGate.isEnabled ? "刷入视频壁纸（将重启）" : "刷入视频壁纸",
                                 systemImage: "restart",
                                 running: session.running,
                                 disabled: !canApply) {
@@ -150,6 +152,9 @@ struct DriftVideoView: View {
             if let statusLine {
                 Text(statusLine).font(.subheadline).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if !DriftRestoreGate.isEnabled {
+                NativeNote(DriftRestoreGate.notice)
             }
             if !session.paired {
                 NativeNote("先在「壁纸」页或设置里导入配对文件。")
@@ -164,6 +169,13 @@ struct DriftVideoView: View {
     // MARK: - Actions
 
     private func runVideo() {
+        // Feedback #30: video can only travel the restore route, so
+        // while the gate is closed the tap only explains — nothing is
+        // shaped into a run. (The session funnel refuses it too.)
+        guard DriftRestoreGate.isEnabled else {
+            statusLine = DriftRestoreGate.notice
+            return
+        }
         var videoSelection = PosterBoardSelection()
         videoSelection.video = selection.video
         videoSelection.thumbnail = selection.thumbnail
