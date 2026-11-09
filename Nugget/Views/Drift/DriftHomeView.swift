@@ -362,8 +362,30 @@ struct DriftHomeView: View {
 /// The whole row (cover, name, chevron) opens the detail page — the chevron
 /// alone was too small a target (Grace, 2026-11-09) — and a left swipe
 /// reveals a delete button behind the row. The rows live in a card inside a
-/// `ScrollView`, not a `List`, so the swipe is a hand-rolled drag: the row
-/// content is a frosted tile that slides over the red delete tile beneath.
+/// `ScrollView`, not a `List`, so the swipe is hand-rolled — and the first
+/// version's arbitration was itself the bug (feedback #25/#26): the detail
+/// target was a real `Button` sitting under a `simultaneousGesture` drag,
+/// so a horizontal swipe could still end as a button tap (both left and
+/// right swipes navigated into the detail page), the drag had to fight the
+/// scroll view and the buttons for the touch (a press-and-hold was needed
+/// before a swipe would take at all), and the row slid on a translucent
+/// material that let the delete tile's text ghost through its own.
+///
+/// The arbitration now lives in exactly one place:
+///   * the sliding content carries no buttons — the tick and the detail
+///     target are tap zones on one surface, told apart by where the tap
+///     lands;
+///   * a `highPriorityGesture` drag watches the same surface, so a touch
+///     that travels past the drag's minimum distance is a drag and can
+///     never also land as a tap;
+///   * the drag locks its axis from the cumulative translation: the row
+///     only starts moving once the motion is clearly horizontal, and a
+///     mostly-vertical drag leaves the row exactly where it was (the page
+///     scroll owns those);
+///   * the slide is clamped to [-revealWidth, 0] — a right swipe from
+///     closed does nothing at all, and from revealed it can only close;
+///   * the content's background is opaque, so nothing underneath can show
+///     through while it slides.
 struct DriftPackRow: View {
     let pack: PosterBoardTendie
     let selected: Bool
@@ -372,16 +394,25 @@ struct DriftPackRow: View {
     let onDelete: () -> Void
 
     @State private var cover: UIImage?
-    /// How far the row content is slid left: 0 closed, -76 delete revealed.
+    /// How far the row content is slid left: 0 closed, -revealWidth revealed.
     @State private var slide: CGFloat = 0
-    /// The slide position the current drag started from.
+    /// The slide position the current drag started from, captured when the
+    /// drag locks horizontal.
     @State private var dragBase: CGFloat = 0
+    /// Whether the current drag has locked horizontal. A vertical-dominant
+    /// drag never sets it, so it never moves the row.
+    @State private var dragLocked = false
 
     private static let revealWidth: CGFloat = 76
+    /// Width of the leading tap zone that belongs to the select tick: the
+    /// tick glyph plus the spacing that follows it.
+    private static let tickZoneWidth: CGFloat = 48
 
     var body: some View {
         ZStack(alignment: .trailing) {
-            // Delete tile, uncovered as the row slides left.
+            // Delete tile, uncovered as the row slides left. The only real
+            // button in the row, and only reachable while revealed — the
+            // opaque content covers it completely when closed.
             Button(role: .destructive) { onDelete() } label: {
                 VStack(spacing: 3) {
                     Image(systemName: "trash")
@@ -393,76 +424,99 @@ struct DriftPackRow: View {
                 .background(Color.red, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .buttonStyle(.plain)
-            .opacity(slide < -4 ? 1 : 0)
 
             HStack(spacing: 12) {
-                Button(action: onToggle) {
-                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                        .font(.title3)
-                        .foregroundStyle(selected ? Color.accentColor : .secondary)
-                }
-                .buttonStyle(.plain)
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(selected ? Color.accentColor : .secondary)
+                    .frame(width: 24)
 
-                // Everything but the tick circle is the detail-page target.
-                Button {
-                    if slide != 0 { closeSwipe() } else { onOpen() }
-                } label: {
-                    HStack(spacing: 12) {
-                        Group {
-                            if let cover {
-                                Image(uiImage: cover).resizable().scaledToFill()
-                            } else {
-                                LinearGradient(colors: [.blue.opacity(0.35), .mint.opacity(0.35)],
-                                               startPoint: .topLeading, endPoint: .bottomTrailing)
-                                    .overlay(Text(String(pack.url.lastPathComponent.prefix(1)))
-                                        .font(.headline).foregroundStyle(.secondary))
-                            }
+                HStack(spacing: 12) {
+                    Group {
+                        if let cover {
+                            Image(uiImage: cover).resizable().scaledToFill()
+                        } else {
+                            LinearGradient(colors: [.blue.opacity(0.35), .mint.opacity(0.35)],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                                .overlay(Text(String(pack.url.lastPathComponent.prefix(1)))
+                                    .font(.headline).foregroundStyle(.secondary))
                         }
-                        .frame(width: 44, height: 60)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(pack.url.lastPathComponent).font(.subheadline.weight(.medium)).lineLimit(1)
-                            HStack(spacing: 6) {
-                                DriftPill(text: "\(pack.descriptorCount) 张")
-                                DriftPill(text: pack.posterType.label)
-                                if pack.isUnsafeContainer {
-                                    DriftPill(text: "含数据库 · 风险高", tint: .red)
-                                }
-                            }
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                     }
-                    .contentShape(Rectangle())
+                    .frame(width: 44, height: 60)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(pack.url.lastPathComponent).font(.subheadline.weight(.medium)).lineLimit(1)
+                        HStack(spacing: 6) {
+                            DriftPill(text: "\(pack.descriptorCount) 张")
+                            DriftPill(text: pack.posterType.label)
+                            if pack.isUnsafeContainer {
+                                DriftPill(text: "含数据库 · 风险高", tint: .red)
+                            }
+                        }
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                 }
-                .buttonStyle(.plain)
             }
             .padding(.vertical, 4)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            // Opaque on purpose: the translucent material this used to slide
+            // on let the delete tile's text print through the row's own text
+            // (the ghosting in Grace's recording, feedback #25).
+            .background(Color(uiColor: .secondarySystemGroupedBackground),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(Rectangle())
             .offset(x: slide)
+            .onTapGesture(coordinateSpace: .local) { location in
+                handleTap(at: location)
+            }
+            .highPriorityGesture(swipeGesture)
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 12)
-                .onChanged { value in
-                    // Horizontal intent only: a mostly-vertical drag belongs
-                    // to the page scroll and must not move the row.
-                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                    slide = min(0, max(-Self.revealWidth, dragBase + value.translation.width))
-                }
-                .onEnded { value in
-                    withAnimation(.snappy) {
-                        slide = slide < -Self.revealWidth / 2 ? -Self.revealWidth : 0
-                    }
-                    dragBase = slide
-                }
-        )
         .task {
             let url = await Task.detached { PosterBoardPreview.cover(for: pack) }.value
             if let url, let data = try? Data(contentsOf: url) {
                 cover = UIImage(data: data)
             }
         }
+    }
+
+    /// The row's single drag: axis-locked, clamped, flick-aware.
+    private var swipeGesture: some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                if !dragLocked {
+                    // Axis lock, judged on the cumulative translation: the
+                    // row only joins a clearly horizontal drag. One that
+                    // starts out vertical belongs to the page scroll and
+                    // never moves the row at all.
+                    guard abs(value.translation.width) > abs(value.translation.height) * 1.2
+                    else { return }
+                    dragLocked = true
+                    dragBase = slide
+                }
+                // Clamped at 0: a right swipe can never push the row past
+                // closed, so from closed it does nothing, and from revealed
+                // it only closes.
+                slide = min(0, max(-Self.revealWidth, dragBase + value.translation.width))
+            }
+            .onEnded { value in
+                defer { dragLocked = false }
+                guard dragLocked else { return }
+                // Flick-aware: judge by where the drag is heading, not just
+                // where it stopped, so a fast short swipe reveals the tile
+                // just as surely as a slow full one.
+                let projected = dragBase + value.predictedEndTranslation.width
+                withAnimation(.snappy) {
+                    slide = projected < -Self.revealWidth / 2 ? -Self.revealWidth : 0
+                }
+            }
+    }
+
+    private func handleTap(at location: CGPoint) {
+        // With the delete tile revealed, any tap on the row just closes it —
+        // it never falls through to the tick or the detail page.
+        if slide != 0 { closeSwipe(); return }
+        if location.x < Self.tickZoneWidth { onToggle() } else { onOpen() }
     }
 
     private func closeSwipe() {
