@@ -56,6 +56,12 @@ struct FirstRunWelcomeArt: View {
 /// so one tick is one rotation step; the chain is counter-rotated chip, orbit
 /// offset, orbit rotation, which nets the chip upright. `phase` staggers the
 /// two orbits so they do not pass through the same angle together.
+///
+/// The chips carry **no shadow** and the pair is flattened with
+/// `drawingGroup()`: a shadow on a moving node forces an offscreen render of
+/// that node on every tick, which is what made this hero visibly stutter on
+/// device (Grace, 2026-11-09: 向导顶部的动画很卡） — the static nodes keep
+/// their shadows, the moving ones trade them for a single composited layer.
 private struct ArtOrbitChips: View {
     let stamp: Date
 
@@ -66,10 +72,11 @@ private struct ArtOrbitChips: View {
             orbiting(icon: "cable.connector", radius: 140, angle: angle)
             orbiting(icon: "wifi", radius: 104, phase: 0.5, angle: angle)
         }
+        .drawingGroup()
     }
 
     private func orbiting(icon: String, radius: CGFloat, phase: Double = 0, angle: Double) -> some View {
-        ArtNode(icon: icon, size: 44)
+        ArtNode(icon: icon, size: 44, castsShadow: false)
             .rotationEffect(.degrees(-(angle + phase * 360)))
             .offset(x: radius)
             .rotationEffect(.degrees(angle + phase * 360))
@@ -258,7 +265,10 @@ struct FirstRunFinishArt: View {
                                    center: .center, startRadius: 10, endRadius: 150))
                 .frame(width: 300, height: 300)
             TimelineView(.animation(minimumInterval: 1 / 12, paused: !active || !ready)) { timeline in
+                // Flattened like the welcome orbit: eight small marks moving
+                // per tick should cost one composited layer, not eight.
                 ArtConfettiLayer(stamp: timeline.date)
+                    .drawingGroup()
             }
             NativeLogo(size: 124)
                 .shadow(color: .black.opacity(0.18), radius: 14, y: 7)
@@ -328,6 +338,9 @@ private struct ArtNode: View {
     /// Draws the green seal over the corner when the step this node depicts
     /// has been satisfied — the drawn form of the guide's status tick.
     var sealed = false
+    /// Moving nodes (the welcome orbit) opt out: a shadow under a node that
+    /// moves every tick is re-rendered offscreen every tick.
+    var castsShadow = true
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -339,7 +352,8 @@ private struct ArtNode: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
                         .strokeBorder(Color(.separator).opacity(0.6), lineWidth: 1))
-                .shadow(color: .black.opacity(0.12), radius: 10, y: 5)
+                .shadow(color: castsShadow ? .black.opacity(0.12) : .clear,
+                        radius: castsShadow ? 10 : 0, y: castsShadow ? 5 : 0)
             Image(systemName: icon)
                 .font(.system(size: size * 0.42, weight: .medium))
                 .foregroundStyle(tone)

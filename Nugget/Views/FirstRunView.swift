@@ -25,6 +25,10 @@ struct FirstRunView: View {
     @ObservedObject private var firstRun = FirstRunSettings.shared
     /// Shared: the advertisement outlives this page (Settings → Developer Mode).
     @ObservedObject private var wirelessPair = WirelessPairing.shared
+    /// The session, for its pairing state: the guide's own pairing check is a
+    /// one-off disk read, so a record the session adopts live (its disk watch
+    /// noticed the wireless flow's file, say) is mirrored in below.
+    @EnvironmentObject private var session: DriftSession
     @Environment(\.scenePhase) private var scenePhase
 
     /// The tunnel step. A live probe rather than a stored answer — see `probe()`.
@@ -101,6 +105,11 @@ struct FirstRunView: View {
         .task {
             pairingReady = PairingRecord.onDisk() != nil
             await probe()
+        }
+        // Live pairing detection, mirroring the session's disk watch: a
+        // record adopted anywhere ticks this step without a re-read here.
+        .onChange(of: session.paired) { _, paired in
+            if paired { pairingReady = true }
         }
         // Coming back from Settings is when a tunnel that was just switched on
         // becomes visible, and nothing in this process is told when an interface
@@ -315,7 +324,7 @@ struct FirstRunView: View {
                                subtitle: "iOS 27+ — on iOS 26, use a file from a computer") {
                         wirelessPair.start()
                     }
-                    NativeNote("没有电脑工具？也可以在电脑上配对（idevicepair、Sideloadly——手机弹窗时点「信任」），把配对文件（.mobiledevicepairing 或 .plist）发到这台 iPhone，在上面导入。")
+                    NativeNote("没有电脑工具？也可以在电脑上配对（idevicepair、Sideloadly——手机弹窗时点「信任」），把配对文件（.plist 或 .mobiledevicepairing）发到这台 iPhone，在上面导入。")
                 }
             }
         }

@@ -3,9 +3,11 @@ import SwiftUI
 /// The four-tab shell. The wallpaper selection is hoisted here (the base
 /// app's `RootView` did the same) so the wallpaper page and the video page
 /// edit one selection and one run applies either.
+///
+/// Live detection (the tunnel, identity and pairing-record monitors) is
+/// wired one level up, in `DriftRootView`, so it also runs while the
+/// first-run guide — not this shell — is on screen.
 struct DriftShell: View {
-    @EnvironmentObject private var session: DriftSession
-    @Environment(\.scenePhase) private var scenePhase
     @State private var selection = PosterBoardSelection()
     @State private var tab = 0
 
@@ -29,13 +31,6 @@ struct DriftShell: View {
             restored.loadFromDisk()
             selection.video = restored.video
             selection.thumbnail = restored.thumbnail
-        }
-        .onChange(of: scenePhase) { _, phase in
-            // Coming back to the app: re-read the device rather than trusting
-            // the snapshot (it may have rebooted or been swapped).
-            if phase == .active {
-                Task { await session.refreshIdentity() }
-            }
         }
     }
 }

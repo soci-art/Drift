@@ -141,7 +141,7 @@ final class WirelessPairing: NSObject, ObservableObject, NetServiceDelegate {
         // so a superseded run cannot overwrite the currently trusted record.
         let stage = FileManager.default.temporaryDirectory
             .appendingPathComponent("pairing-\(UUID().uuidString)", isDirectory: true)
-        let stagedRecord = stage.appendingPathComponent("pairingfile.mobiledevicepairing")
+        let stagedRecord = stage.appendingPathComponent("pairingfile.plist")
         do {
             try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
             if FileManager.default.fileExists(atPath: AppPaths.pairingFile.path) {

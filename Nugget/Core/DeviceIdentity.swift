@@ -125,7 +125,15 @@ final class DeviceIdentityMonitor: ObservableObject {
     @discardableResult
     func refresh() async -> Bool {
         let read = await DeviceIdentity.read()
-        return await MainActor.run { publishOnMainActor(read) }
+        return await MainActor.run {
+            // A poll that fails to reach the device must not erase a good
+            // identity with `.unknown`: that would flip the pages to "device
+            // unknown" — and the mode judgement to the restore path — over a
+            // transient tunnel hiccup. `publish(_:)` stays unguarded for the
+            // session's deliberate reads, which retry before they publish.
+            if read == .unknown && current != .unknown { return false }
+            return publishOnMainActor(read)
+        }
     }
 
     /// Publish a value the caller has already read — the home page's bounded wait

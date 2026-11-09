@@ -27,6 +27,15 @@ final class DriftSession: ObservableObject {
     private static let startLock = NSLock()
     private static var startInFlight = false
 
+    /// True once minimuxer has answered its readiness poll in this process.
+    /// `ensureCoreStarted()` keys off it: a start that failed because the
+    /// tunnel was not up yet is retried when the tunnel monitor reports the
+    /// tunnel ready, instead of the session sitting dead until relaunch.
+    private var coreReady = false
+
+    /// The pairing-record watch's loop, while it runs.
+    private var pairingWatch: Task<Void, Never>?
+
     private init() {}
 
     var paired: Bool { pairingRaw != nil }
@@ -59,7 +68,10 @@ final class DriftSession: ObservableObject {
         let stored = UserDefaults.standard.string(forKey: PairingRecord.Key.stored)
         let embedded = Bundle.main.object(forInfoDictionaryKey: "ALTPairingFile") as? String
         let candidates: [(source: String, raw: String?)] = [
-            ("Documents/pairingfile.mobiledevicepairing", try? String(contentsOf: dest, encoding: .utf8)),
+            ("Documents/pairingfile.plist", try? String(contentsOf: dest, encoding: .utf8)),
+            // Pre-rename installs paired into the lockdown-era filename; it is
+            // migrated to `pairingfile.plist` by the write-back below.
+            ("Documents/pairingfile.mobiledevicepairing (legacy)", try? String(contentsOf: AppPaths.legacyPairingFile, encoding: .utf8)),
             ("stored PairingFile", stored),
             ("Info.plist ALTPairingFile", embedded),
         ]
@@ -124,6 +136,59 @@ final class DriftSession: ObservableObject {
             startMinimuxer()
             Task { await refreshIdentity() }
         }
+    }
+
+    /// Record that the core answered its readiness poll, and take the
+    /// identity read that was waiting on it.
+    func noteCoreReady() async {
+        coreReady = true
+        await refreshIdentity()
+    }
+
+    /// Start the core if there is a record and it has never come up — the
+    /// tunnel monitor calls this when the tunnel turns ready, which is how
+    /// "opened LocalDevVPN after Drift" recovers on its own.
+    func ensureCoreStarted() {
+        guard paired, !coreReady else { return }
+        GoldenNuggetEngine.shared.log("tunnel is ready and the core is not — starting minimuxer now")
+        startMinimuxer()
+    }
+
+    // MARK: - Pairing-record watch
+
+    /// Watch the canonical path for a record arriving outside an import on
+    /// the page the user is looking at (Grace, 2026-11-09: 配对记录也没有
+    /// 实时检测）. Wireless self-pairing writes the file from a sheet, a
+    /// record can be copied into Documents, a re-pair replaces it — until
+    /// this watch, none of that moved `pairingRaw` until the next launch.
+    ///
+    /// The watch only ever **adopts**: it never un-pairs. A record the user
+    /// deleted on purpose stays deleted — the reset's
+    /// `autoImportDisabled` flag is honoured here exactly as at launch —
+    /// and a file vanishing mid-session does not strand a core that is
+    /// already running on the in-memory copy.
+    func startPairingWatch() {
+        guard pairingWatch == nil else { return }
+        pairingWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                self?.noticePairingRecordOnDisk()
+            }
+        }
+    }
+
+    func stopPairingWatch() {
+        pairingWatch?.cancel()
+        pairingWatch = nil
+    }
+
+    private func noticePairingRecordOnDisk() {
+        guard !running else { return }
+        guard !UserDefaults.standard.bool(forKey: PairingRecord.Key.autoImportDisabled) else { return }
+        guard let disk = PairingRecord.onDisk(), disk != pairingRaw else { return }
+        GoldenNuggetEngine.shared.log("pairing record noticed on disk — adopting it "
+            + "(\(PairingRecord.sourceLabel(disk)))")
+        adoptPairingFromDisk()
     }
 
     // MARK: - minimuxer start (ported sequence)
@@ -222,7 +287,7 @@ final class DriftSession: ObservableObject {
                             DriftSession.shared.errorText = "minimuxer 已启动但始终未能就绪。\n\n\(reason)\n\nminimuxer.log 的最后几行：\n\(tail)"
                         }
                     } else {
-                        await DriftSession.shared.refreshIdentity()
+                        await DriftSession.shared.noteCoreReady()
                     }
                 } catch {
                     let tail = RustLog.tail()
@@ -336,8 +401,14 @@ enum DriftJudge {
     /// hard limits first (video, store reset, store-database packs, system
     /// out of the direct range, unknown device), then the manual pick, then
     /// the automatic default (direct whenever the system allows it).
-    static func judge(identity: DeviceIdentity, selection: PosterBoardSelection) -> DriftModeJudgement {
-        let pick = manualPick
+    ///
+    /// The pick arrives as a parameter, not from `manualPick`: the pages hold
+    /// it in `@AppStorage` so a menu tap re-renders the judgement card at
+    /// once. Reading the UserDefaults-backed static here made the card a
+    /// snapshot — it only caught up when some unrelated state (an imported
+    /// pack) happened to redraw the page.
+    static func judge(identity: DeviceIdentity, selection: PosterBoardSelection,
+                      pick: PosterBoardApplyMode?) -> DriftModeJudgement {
         func forced(_ reason: String) -> DriftModeJudgement {
             DriftModeJudgement(mode: .backup, reason: reason,
                                overriddenPick: pick == .airlift ? .airlift : nil)

@@ -28,9 +28,21 @@ enum AppPaths {
     /// can be shared as a FILE instead of hand-selecting text in the log list.
     static let diagnostics = URL.documents.appendingPathComponent("diagnostics.txt")
 
-    /// `<Documents>/pairingfile.mobiledevicepairing` — the imported pairing file.
+    /// `<Documents>/pairingfile.plist` — the imported pairing file.
     /// minimuxer reads it from Documents too, so this is the canonical location.
-    static let pairingFile = URL.documents.appendingPathComponent("pairingfile.mobiledevicepairing")
+    ///
+    /// The `.plist` name is deliberate (Grace, 2026-11-09): pairing records are
+    /// plist files, the tools that produce them (iLoader and friends) deliver
+    /// them as `.plist`, and the app's own copies — imports and the wireless
+    /// self-pairing record alike — now carry the same extension the user
+    /// already recognises, instead of the lockdown-era `.mobiledevicepairing`.
+    static let pairingFile = URL.documents.appendingPathComponent("pairingfile.plist")
+
+    /// `<Documents>/pairingfile.mobiledevicepairing` — where the canonical
+    /// record lived before the rename above. Read as a fallback during
+    /// re-import so an install that paired under the old name keeps its
+    /// record; the content is migrated to `pairingFile` on first sight.
+    static let legacyPairingFile = URL.documents.appendingPathComponent("pairingfile.mobiledevicepairing")
 
     /// `<Documents>/<udid>/` — the full protective backup pulled from the device.
     /// The AFC media store, inside the container.

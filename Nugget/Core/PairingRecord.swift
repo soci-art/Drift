@@ -21,9 +21,25 @@ enum PairingRecord {
     /// keeps a random plist from being adopted.
     static let extensions = ["mobiledevicepairing", "mobiledevicepair", "mobiledeviceconfig", "plist"]
 
-    static let types: [UTType] = extensions.compactMap {
-        UTType(filenameExtension: $0, conformingTo: .data)
-    }
+    /// The picker's content types, **plist first** (Grace, 2026-11-09:
+    /// pairing files are to be `.plist` wherever the app has a say).
+    ///
+    /// Built from explicit identifiers, not `UTType(filenameExtension:)`:
+    /// that lookup is a runtime query against the UTI database whose answer
+    /// for a plain extension like `plist` is an implementation detail, and a
+    /// nil there is silently dropped by a `compactMap` — the picker's
+    /// failure mode for exactly that case is a `.plist` row that renders
+    /// dimmed and answers taps with nothing at all, which is the report this
+    /// replaces. `.propertyList` is the system's own type for the extension,
+    /// and the imported declaration covers the three lockdown-era extensions
+    /// with the one identifier declared for them in Info.plist.
+    static let types: [UTType] = {
+        var list: [UTType] = [.propertyList]
+        if let lockdown = UTType("com.awesomenull.mobiledevicepairing") {
+            list.append(lockdown)
+        }
+        return list
+    }()
 
     static func hasKnownExtension(_ ext: String) -> Bool {
         extensions.contains(ext.lowercased())
@@ -92,7 +108,7 @@ enum PairingRecord {
     /// minimuxer.
     ///
     /// This is what "is a record already in place?" means for a screen that does
-    /// not own the import: `Documents/pairingfile.mobiledevicepairing`, judged by
+    /// not own the import: `Documents/pairingfile.plist`, judged by
     /// the same rule the home page's restore path judges it by. A file that
     /// exists but is unusable answers `false` here on purpose — the setup guide
     /// must not tick its pairing step over a record the app cannot use.

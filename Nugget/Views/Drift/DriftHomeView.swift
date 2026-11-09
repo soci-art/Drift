@@ -6,7 +6,13 @@ import UniformTypeIdentifiers
 struct DriftHomeView: View {
     @EnvironmentObject private var session: DriftSession
     @EnvironmentObject private var identityMonitor: DeviceIdentityMonitor
+    @ObservedObject private var tunnelMonitor = TunnelMonitor.shared
     @Binding var selection: PosterBoardSelection
+
+    /// The mode menu's pick, held in `@AppStorage` so a tap publishes a
+    /// change the judgement card re-renders from immediately. The same key
+    /// backs `DriftJudge.manualPick`, which stays for non-view readers.
+    @AppStorage(DriftJudge.manualKey) private var manualPickRaw: String?
 
     @State private var imports: [PosterBoardTendie] = PosterBoardImports.load()
     @State private var importingTendies = false
@@ -17,7 +23,12 @@ struct DriftHomeView: View {
     @State private var confirmReset = false
 
     private var identity: DeviceIdentity { identityMonitor.current }
-    private var judgement: DriftModeJudgement { DriftJudge.judge(identity: identity, selection: selection) }
+    private var manualPick: PosterBoardApplyMode? {
+        manualPickRaw.flatMap(PosterBoardApplyMode.init(rawValue:))
+    }
+    private var judgement: DriftModeJudgement {
+        DriftJudge.judge(identity: identity, selection: selection, pick: manualPick)
+    }
     private var selectedDescriptors: Int { selection.tendies.reduce(0) { $0 + $1.descriptorCount } }
     private var overLimit: Bool { selectedDescriptors > PosterBoardImports.descriptorLimit }
     private var canApply: Bool {
@@ -76,6 +87,10 @@ struct DriftHomeView: View {
             HStack(spacing: 8) {
                 DriftPill(text: session.paired ? "已配对" : "未配对",
                           tint: session.paired ? .green : .orange)
+                DriftPill(text: tunnelMonitor.status == .ready ? "隧道已连通"
+                          : tunnelMonitor.status == .interfaceUp ? "隧道等待对端"
+                          : "隧道未连接",
+                          tint: tunnelMonitor.status == .ready ? .green : .orange)
                 if identity.version.isEmpty {
                     DriftPill(text: "设备信息未读到", tint: .orange)
                 } else {
@@ -105,9 +120,9 @@ struct DriftHomeView: View {
                 Text("本次刷入方式").font(.subheadline.weight(.semibold))
                 Spacer()
                 Menu {
-                    Button("自动判断") { DriftJudge.manualPick = nil; statusLine = nil }
-                    Button("直刷（只注销）") { DriftJudge.manualPick = .airlift; statusLine = nil }
-                    Button("恢复式（会重启）") { DriftJudge.manualPick = .backup; statusLine = nil }
+                    Button("自动判断") { manualPickRaw = nil; statusLine = nil }
+                    Button("直刷（只注销）") { manualPickRaw = PosterBoardApplyMode.airlift.rawValue; statusLine = nil }
+                    Button("恢复式（会重启）") { manualPickRaw = PosterBoardApplyMode.backup.rawValue; statusLine = nil }
                 } label: {
                     Label(judged.mode == .airlift ? "直刷" : "恢复式", systemImage: "chevron.up.chevron.down")
                         .font(.subheadline.weight(.medium))
@@ -279,11 +294,21 @@ struct DriftHomeView: View {
     }
 
     private func handlePairingImport(_ result: Result<[URL], Error>) {
-        guard case .success(let urls) = result, let url = urls.first else { return }
-        do {
-            try session.importPairing(from: url)
-            statusLine = "配对文件已导入，正在连接设备。"
-        } catch {
+        switch result {
+        case .success(let urls):
+            guard let url = urls.first else {
+                session.errorText = "没有选到文件，请再导入一次。"
+                return
+            }
+            do {
+                try session.importPairing(from: url)
+                statusLine = "配对文件已导入，正在连接设备。"
+            } catch {
+                session.errorText = error.localizedDescription
+            }
+        case .failure(let error):
+            // A swallowed failure here reads as "tapped it and nothing
+            // happened" — the exact report the .plist import produced.
             session.errorText = error.localizedDescription
         }
     }

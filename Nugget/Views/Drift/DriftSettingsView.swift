@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct DriftSettingsView: View {
     @EnvironmentObject private var session: DriftSession
     @ObservedObject private var wirelessPair = WirelessPairing.shared
+    @ObservedObject private var tunnelMonitor = TunnelMonitor.shared
 
     @State private var importingPairing = false
     @State private var showGuide = false
@@ -29,9 +30,17 @@ struct DriftSettingsView: View {
             .fileImporter(isPresented: $importingPairing,
                           allowedContentTypes: PairingRecord.types,
                           allowsMultipleSelection: false) { result in
-                guard case .success(let urls) = result, let url = urls.first else { return }
-                do { try session.importPairing(from: url) }
-                catch { session.errorText = error.localizedDescription }
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else {
+                        session.errorText = "没有选到文件，请再导入一次。"
+                        return
+                    }
+                    do { try session.importPairing(from: url) }
+                    catch { session.errorText = error.localizedDescription }
+                case .failure(let error):
+                    session.errorText = error.localizedDescription
+                }
             }
             .sheet(isPresented: $showGuide) {
                 FirstRunView(onClose: { showGuide = false })
@@ -71,7 +80,12 @@ struct DriftSettingsView: View {
             HStack {
                 Label("隧道状态", systemImage: "antenna.radiowaves.left.and.right")
                 Spacer()
-                Text(Tunnel.isInterfaceUp() ? "接口已就绪" : "未检测到隧道")
+                // The monitor's live verdict, not a one-off probe taken when
+                // this page happened to render — the tunnel coming up or
+                // dropping changes this row within a couple of seconds.
+                Text(tunnelMonitor.status == .ready ? "隧道已连通"
+                     : tunnelMonitor.status == .interfaceUp ? "接口已就绪，等待对端回应"
+                     : "未检测到隧道")
                     .foregroundStyle(.secondary)
             }
             Button {

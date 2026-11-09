@@ -10,6 +10,8 @@ struct DriftRootView: View {
     @StateObject private var session = DriftSession.shared
     @StateObject private var firstRun = FirstRunSettings.shared
     @StateObject private var identityMonitor = DeviceIdentityMonitor.shared
+    @ObservedObject private var tunnelMonitor = TunnelMonitor.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var inboxNote: String?
 
     var body: some View {
@@ -22,7 +24,30 @@ struct DriftRootView: View {
         }
         .environmentObject(session)
         .environmentObject(identityMonitor)
-        .task { session.bootstrap() }
+        .task {
+            session.bootstrap()
+            startLiveDetection()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                startLiveDetection()
+                // Coming back to the app: re-read the device rather than
+                // trusting the snapshot (it may have rebooted or been
+                // swapped under a live tunnel).
+                Task { await session.refreshIdentity() }
+            } else if phase == .background {
+                TunnelMonitor.shared.stop()
+                DeviceIdentityMonitor.shared.stop()
+                session.stopPairingWatch()
+            }
+        }
+        .onChange(of: tunnelMonitor.status) { _, status in
+            // The tunnel arriving after a failed start is the core's cue to
+            // retry, instead of the session sitting dead until relaunch.
+            if status == .ready {
+                session.ensureCoreStarted()
+            }
+        }
         .onOpenURL { url in handleIncoming(url) }
         .alert("导入", isPresented: Binding(
             get: { inboxNote != nil },
@@ -40,6 +65,17 @@ struct DriftRootView: View {
         } message: {
             Text(session.errorText ?? "")
         }
+    }
+
+    /// Live detection (Grace, 2026-11-09: tunnel and pairing record alike
+    /// must be watched, not sampled once): the tunnel monitor, the identity
+    /// poll — whose loop existed from the start with nothing ever calling
+    /// `start()` on it — and the session's pairing-record watch. All three
+    /// starts are idempotent, so calling this on every foreground is safe.
+    private func startLiveDetection() {
+        TunnelMonitor.shared.start()
+        DeviceIdentityMonitor.shared.start()
+        session.startPairingWatch()
     }
 
     private func handleIncoming(_ url: URL) {
