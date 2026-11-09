@@ -21,6 +21,18 @@ struct DriftApp: App {
         // build's editor may have stored.
         Tunnel.resetToDefaults()
 
+        // Older builds pulled the device's photos and videos into the
+        // container's media store partway through a flash; feedback #27
+        // removed the step, and anything still parked there is a leftover
+        // copy with nothing pointing at it. Reclaim it at launch — only the
+        // container's copies; the device's own library is never involved.
+        let reclaimedMedia = AfcMediaBackup.reclaimResidualStore()
+        if reclaimedMedia > 0 {
+            AppLog.write("AFC media: 已清理旧版拉进容器的媒体副本，回收 "
+                + ByteCountFormatter.string(fromByteCount: reclaimedMedia, countStyle: .file)
+                + "（\(reclaimedMedia) 字节，仅 App 容器内的副本，设备相册原件未动）")
+        }
+
         // AirLift's log sink, installed at launch for two reasons.  The library
         // is linked into the binary, and a launch is the only moment a static
         // archive's symbols are proven good: if the linker or the packager had
