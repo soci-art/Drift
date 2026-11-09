@@ -18,7 +18,7 @@ struct DriftAboutView: View {
                         DriftFactRow(title: "系统范围",
                                      text: "iOS 26.0–26.1：只有恢复式。iOS 26.2–27.1、27.2 测试版 1/2：普通壁纸包可直刷，视频仍走恢复式。iOS 27.2 测试版 3 起（含 27.2 正式版、27.3 以上）：直刷被关闭，回落恢复式。App 会按配对读到的系统版本和构建号自动判断，每次刷入前重读。")
                         DriftFactRow(title: "隧道",
-                                     text: "借 LocalDevVPN（或同类隧道 App）建立：地址要和设置里一致，需 Wi-Fi；如果隧道是在 App 启动之后才连上的，把 App 关掉重开一次。")
+                                     text: "借 LocalDevVPN（或同类隧道 App）建立：地址固定用默认值（本机 10.7.1.1、对端 10.7.0.1、端口 62078），在 LocalDevVPN 里填同样的值即可，需 Wi-Fi；如果隧道是在 App 启动之后才连上的，把 App 关掉重开一次。")
                         DriftFactRow(title: "签名",
                                      text: "两种签名都能用，功能无差别。Apple ID 免费签 7 天过期、重装会丢 App 内数据（配对和已导入的包要重新导入）；付费证书有效期长、更稳定。本 App 没有自己的隧道扩展，用不上付费证书的 VPN 权限。")
                         DriftFactRow(title: "风险与边界",
