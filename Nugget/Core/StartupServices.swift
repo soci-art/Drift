@@ -13,7 +13,7 @@ enum RemoteMetadataError: LocalizedError {
 enum RemoteMetadata {
     static func fetch(_ url: URL, session: URLSession = .shared) async throws -> Data {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
-        request.setValue("GoldenNugget-Mobile", forHTTPHeaderField: "User-Agent")
+        request.setValue("Drift", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (bytes, response) = try await session.bytes(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
@@ -60,7 +60,7 @@ final class HotLoadService: ObservableObject {
 
     private static var defaultCacheURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("GoldenNugget/hotload_rules.json")
+            .appendingPathComponent("Drift/hotload_rules.json")
     }
 
     func policy(deviceVersion: String, model: String) -> HotLoadPolicy {

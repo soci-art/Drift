@@ -96,7 +96,7 @@ final class WirelessPairing: NSObject, ObservableObject, NetServiceDelegate {
 
     private func beginBackgroundTask() {
         endBackgroundTask()
-        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "GoldenNugget.WirelessPairing") { [weak self] in
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Drift.WirelessPairing") { [weak self] in
             Task { @MainActor in
                 GoldenNuggetEngine.shared.log("wireless pair: background time expired before the device connected")
                 self?.endBackgroundTask()

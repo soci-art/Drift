@@ -91,7 +91,7 @@ enum ApplyHistory {
     /// `<Documents>/GoldenNugget/History/`.
     static var fileURL: URL {
         fileURLOverride ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("GoldenNugget", isDirectory: true)
+            .appendingPathComponent("Drift", isDirectory: true)
             .appendingPathComponent("History", isDirectory: true)
             .appendingPathComponent("operations.json")
     }

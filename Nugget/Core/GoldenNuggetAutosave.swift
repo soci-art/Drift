@@ -45,7 +45,7 @@ enum GoldenNuggetAutosave {
     static var fileURL: URL {
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return documents
-            .appendingPathComponent("GoldenNugget", isDirectory: true)
+            .appendingPathComponent("Drift", isDirectory: true)
             .appendingPathComponent("Presets", isDirectory: true)
             .appendingPathComponent("\(presetName).json")
     }

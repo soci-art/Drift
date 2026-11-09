@@ -31,7 +31,7 @@ enum GoldenNuggetPresets {
     /// `…/Documents/GoldenNugget/Presets`.
     static var presetsDirectory: URL {
         directoryOverride ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("GoldenNugget", isDirectory: true)
+            .appendingPathComponent("Drift", isDirectory: true)
             .appendingPathComponent(directoryName, isDirectory: true)
     }
 
