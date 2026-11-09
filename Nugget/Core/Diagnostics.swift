@@ -207,7 +207,7 @@ enum LogPackage {
             let note = Data(("这份记录包缺少以下文件（打包时不存在）：\n"
                 + missing.joined(separator: "\n") + "\n").utf8)
             try archive.addEntry(with: "缺失说明.txt", type: .file,
-                                 uncompressedSize: UInt64(note.count)) { position, size in
+                                 uncompressedSize: Int64(note.count)) { position, size in
                 note.subdata(in: Int(position)..<(Int(position) + size))
             }
         }
