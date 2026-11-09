@@ -133,11 +133,11 @@ struct DriftSettingsView: View {
 
     private var tunnelSection: some View {
         Section {
-            DriftTunnelAddressEditor()
+            DriftTunnelAddressCard()
         } header: {
             Text("隧道地址")
         } footer: {
-            Text("LocalDevVPN 里要填的值和这里保持一致。填错的地址会被标出来并按默认值探测。改完地址后，把 App 关掉重开一次。")
+            Text("隧道地址固定使用 LocalDevVPN 的默认值，这里只检测、不修改。在 LocalDevVPN 里填上同样的值，隧道状态就会显示已连接。")
         }
     }
 
@@ -232,43 +232,20 @@ struct DriftSettingsView: View {
 /// The four tunnel address fields, validated on commit: an invalid value is
 /// flagged and not stored (the engine then probes with the defaults — the
 /// base app's behaviour).
-struct DriftTunnelAddressEditor: View {
-    @State private var iface = Tunnel.ifaceIP
-    @State private var peer = Tunnel.peerIP
-    @State private var port = String(Tunnel.servicePort)
-    @State private var prefix = String(Tunnel.ifacePrefixLength)
-    @State private var invalidFields: Set<String> = []
+/// Read-only tunnel address card. Drift always detects against the
+/// LocalDevVPN defaults — the address is not user-editable, so this card
+/// only shows the values and offers to copy them for LocalDevVPN itself.
+/// (Stale overrides from an earlier build are cleared at launch.)
+struct DriftTunnelAddressCard: View {
     @State private var copied = false
 
     var body: some View {
         Group {
-            field("本机隧道 IP", value: $iface, id: "iface") { newValue in
-                guard Self.isIPv4(newValue) else { return false }
-                UserDefaults.standard.set(newValue, forKey: Tunnel.Key.ifaceIP)
-                return true
-            }
-            field("对端 IP", value: $peer, id: "peer") { newValue in
-                guard Self.isIPv4(newValue) else { return false }
-                UserDefaults.standard.set(newValue, forKey: Tunnel.Key.peerIP)
-                return true
-            }
-            field("端口", value: $port, id: "port") { newValue in
-                guard let number = Int(newValue), (1...65535).contains(number) else { return false }
-                UserDefaults.standard.set(number, forKey: Tunnel.Key.port)
-                return true
-            }
-            field("前缀长度", value: $prefix, id: "prefix") { newValue in
-                guard let number = Int(newValue), (0...32).contains(number) else { return false }
-                UserDefaults.standard.set(number, forKey: Tunnel.Key.prefixLength)
-                return true
-            }
+            row("本机隧道 IP", Tunnel.ifaceIP)
+            row("对端 IP", Tunnel.peerIP)
+            row("端口", String(Tunnel.servicePort))
+            row("前缀长度", String(Tunnel.ifacePrefixLength))
             HStack {
-                Button("恢复默认") {
-                    Tunnel.resetToDefaults()
-                    iface = Tunnel.ifaceIP; peer = Tunnel.peerIP
-                    port = String(Tunnel.servicePort); prefix = String(Tunnel.ifacePrefixLength)
-                    invalidFields = []
-                }
                 Spacer()
                 Button {
                     UIPasteboard.general.string =
@@ -282,37 +259,12 @@ struct DriftTunnelAddressEditor: View {
         }
     }
 
-    private func field(_ title: String, value: Binding<String>, id: String,
-                       commit: @escaping (String) -> Bool) -> some View {
+    private func row(_ title: String, _ value: String) -> some View {
         HStack {
             Text(title)
             Spacer()
-            TextField(title, text: value)
-                .multilineTextAlignment(.trailing)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                .keyboardType(.numbersAndPunctuation)
-                .frame(maxWidth: 170)
-                .foregroundStyle(invalidFields.contains(id) ? .red : .primary)
-                .onSubmit {
-                    if commit(value.wrappedValue) {
-                        invalidFields.remove(id)
-                    } else {
-                        invalidFields.insert(id)
-                    }
-                }
-            if invalidFields.contains(id) {
-                Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
-            }
-        }
-    }
-
-    private static func isIPv4(_ value: String) -> Bool {
-        let parts = value.split(separator: ".")
-        guard parts.count == 4 else { return false }
-        return parts.allSatisfy { part in
-            guard let number = Int(part), String(number) == String(part) || part == "0" || !part.hasPrefix("0") else { return false }
-            return (0...255).contains(number)
+            Text(value)
+                .foregroundStyle(.secondary)
         }
     }
 }

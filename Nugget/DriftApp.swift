@@ -16,6 +16,10 @@ struct DriftApp: App {
         if UserDefaults.standard.object(forKey: "SkipSetupEnabled") == nil {
             UserDefaults.standard.set(false, forKey: "SkipSetupEnabled")
         }
+        // The tunnel address is not user-editable in Drift: detection always
+        // uses the LocalDevVPN defaults, so clear any override an earlier
+        // build's editor may have stored.
+        Tunnel.resetToDefaults()
 
         // AirLift's log sink, installed at launch for two reasons.  The library
         // is linked into the binary, and a launch is the only moment a static
