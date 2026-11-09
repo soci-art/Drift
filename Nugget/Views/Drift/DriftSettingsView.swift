@@ -181,9 +181,22 @@ struct DriftSettingsView: View {
 
     private var backupSection: some View {
         Section("备份") {
-            Text("刷入和清理不再从设备拉取备份。已经存在本地的备份可以在这里写回设备，或者删掉。")
+            Text(DriftRestoreGate.isEnabled
+                 ? "刷入和清理不再从设备拉取备份。已经存在本地的备份可以在这里写回设备，或者删掉。"
+                 : "刷入和清理不再从设备拉取备份。「恢复备份」属于恢复式，暂时停用；已经存在本地的备份可以先删掉。")
                 .font(.caption).foregroundStyle(.secondary)
+            if !DriftRestoreGate.isEnabled {
+                Text(DriftRestoreGate.notice)
+                    .font(.caption).foregroundStyle(.orange)
+            }
             Button {
+                // Feedback #30: writing a backup back IS a restore —
+                // while the gate is closed this never starts (the button
+                // is disabled too; this is the second lock).
+                guard DriftRestoreGate.isEnabled else {
+                    backupNote = DriftRestoreGate.notice
+                    return
+                }
                 backupBusy = true
                 backupNote = nil
                 Task {
@@ -199,7 +212,7 @@ struct DriftSettingsView: View {
             } label: {
                 Label("恢复备份（写回设备）", systemImage: "arrow.down.doc")
             }
-            .disabled(!hasLocalBackup || backupBusy)
+            .disabled(!hasLocalBackup || backupBusy || !DriftRestoreGate.isEnabled)
             Button(role: .destructive) {
                 confirmDeleteBackup = true
             } label: {
