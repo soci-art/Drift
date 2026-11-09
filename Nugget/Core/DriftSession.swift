@@ -335,7 +335,9 @@ final class DriftSession: ObservableObject {
     /// Returns a one-line outcome for the page's status area.
     func run(selection: PosterBoardSelection, mode: PosterBoardApplyMode,
              identity: DeviceIdentity) async -> (ok: Bool, message: String) {
-        guard !InFlightCall.shared.isRunActive else {
+        // An abandoned run (its calls walked away from) does not block a
+        // successor — `beginRun` inside the engine makes the final call.
+        guard !InFlightCall.shared.hasLiveRun else {
             return (false, "已有一轮刷入正在进行")
         }
         PosterBoardApplyModeSettings.current = mode
