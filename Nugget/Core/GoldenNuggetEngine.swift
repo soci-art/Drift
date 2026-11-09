@@ -58,8 +58,8 @@ class GoldenNuggetEngine {
     /// why.
     private func loggedRun<T>(_ label: String,
                               _ body: () async throws -> T) async throws -> T {
-        try InFlightCall.shared.beginRun()
-        defer { InFlightCall.shared.endRun() }
+        let runToken = try InFlightCall.shared.beginRun()
+        defer { InFlightCall.shared.endRun(runToken) }
         do {
             return try await body()
         } catch let failure as TransportFailure where failure.isCancellation {
@@ -482,19 +482,21 @@ class GoldenNuggetEngine {
                 // template-only descriptors, must start with the device's database.
                 log("PosterBoard: reset only — no database is needed, and none is fetched.")
             } else {
-                let fetched = try await PosterBoardBackup.fetch(
-                    backupRoot: AppPaths.posterBoardFetchRoot, udid: udid,
-                    ios27: major >= 27 && !DevSettings.effective.forcePartialRestore,
-                    preserveExisting: true,
-                    onProgress: { overall in
-                        self.logProgress("posterboard backup progress", overall)
-                    },
-                    log: { AppLog.write($0) })
-                posterBoardSnapshotDirectory = fetched.snapshotDirectory
-                database = fetched.database
-                preservedPosterBoardFiles = fetched.preservedPayloads
-                log("PosterBoard: preserving \(preservedPosterBoardFiles.count) existing container file(s)")
-                structureVersion = fetched.structureVersion
+                // Feedback #21: the targeted fetch is gone. Every
+                // mobilebackup2 pull on Grace's device dies at the directory
+                // listing, so the database now comes from this app's own
+                // copies — the cache of an earlier fetch, or an empty store
+                // built on the spot — and never from a pull. Nothing is
+                // preserved from the live container (there is no snapshot
+                // without a pull), which the source label in the log states.
+                let local = try PosterBoardBackup.localDatabase(
+                    udid: udid, log: { AppLog.write($0) })
+                database = local.database
+                structureVersion = local.structureVersion
+                preservedPosterBoardFiles = []
+                posterBoardSnapshotDirectory = nil
+                log("PosterBoard: database source — \(local.sourceLabel); "
+                    + "no existing container files are preserved (no pull)")
             }
             posterBoardPayloads = try await PosterBoard.compile(
                 selection: posterBoard,
@@ -539,10 +541,22 @@ class GoldenNuggetEngine {
                     + "above needed the reboot.")
             } else if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
                 log("The PosterBoard store was cleared. Reboot the device, then add wallpapers "
-                    + "from a fresh database fetch — a reset makes the copy fetched before it "
-                    + "stale.")
+                    + "again — a reset makes the locally cached database copy stale, so the "
+                    + "next apply rebuilds from an empty store database.")
             } else if posterBoard.isActive {
                 log("Reboot the device so the PosterBoard store picks the new wallpapers up.")
+            }
+        }
+        // A reset just emptied the device store, so the locally cached
+        // database copy now describes wallpapers that no longer exist.
+        // Drop it: the next apply rebuilds from an empty store database
+        // instead of resurrecting the cleared rows (feedback #21).
+        if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
+            let cached = PosterBoardBackup.cachedDatabase(udid: udid)
+            if FileManager.default.fileExists(atPath: cached.path) {
+                try? FileManager.default.removeItem(at: cached)
+                log("PosterBoard: dropped the locally cached store database — "
+                    + "the reset made it stale.")
             }
         }
         do { try CommunityApplyRecord.record(communityPayloads, udid: udid) }
@@ -683,10 +697,11 @@ class GoldenNuggetEngine {
 
     // MARK: - The shared delivery tail
     //
-    // Both applies end in the same four stages, and the order is load-bearing:
-    // the manifest-format fork decides whether there is anything to prune, the
-    // pull is what authorizes the session, the prune must precede the injection,
-    // and the restore is what delivers any of it.
+    // Both applies end in the same stages, and the order is load-bearing:
+    // the manifest-format fork decides which manifest shape gets synthesised
+    // on the host (no backup is pulled on either branch — feedback #21), the
+    // injection writes this run's rows into it, and the restore is what
+    // delivers any of it.
 
     /// One payload set through stages 1–4.  `udid` and `version` come from the caller:
     /// the PosterBoard stage talks to the device (and needs the version) before this
@@ -702,8 +717,10 @@ class GoldenNuggetEngine {
         // The two versions take opposite paths, and the split is the
         // reference's one-line fork (`backup.py:113`) widened to the whole run:
         // iOS 26 speaks legacy MBDB and can have a backup built for it from
-        // nothing, iOS 27+ speaks the modern sqlite Manifest.db and must keep
-        // the device's own state. Comparing "26.0" against "27.0" lexically
+        // nothing; iOS 27+ speaks the modern sqlite Manifest.db, which this
+        // app now also builds from nothing (feedback #21 removed the
+        // protective pull — every mobilebackup2 backup-direction exchange
+        // dies on Grace's device). Comparing "26.0" against "27.0" lexically
         // would put 26.9 on the wrong side, so compare the major component.
         //
         let major = Int(version.split(separator: ".").first ?? "0") ?? 0
@@ -714,7 +731,7 @@ class GoldenNuggetEngine {
         let ios27 = major >= 27 && !dev.forcePartialRestore
         let hasEligibility = payloads.contains { $0.domain == "SysContainerDomain-com.apple.eligibilityd" }
         if hasEligibility && !ios27 {
-            throw GoldenNuggetError("Siri AI 覆盖需要一份未加密的保护性备份。请关闭强制部分恢复后重试。")
+            throw GoldenNuggetError("Siri AI 覆盖需要 iOS 27 的 sqlite 清单格式，且设备不能开启加密本地备份（运行前检查会核对）。请关闭强制部分恢复后重试。")
         }
         // Reported before the fork, because this number *is* the fork: the
         // branch lines below say where the run went, this says why.
@@ -729,25 +746,22 @@ class GoldenNuggetEngine {
         // pulled, so there is no device state to reconcile against and the
         // prune would only discard what this run just wrote.
         //
-        // iOS 27: the protective backup, pulled from the device, then pruned to
-        // what is on disk before injection. A synthesized manifest is not enough
-        // here: `restored` rejects a domain it cannot resolve ("Failed to
-        // prepare INSERT for ManagedPreferencesDomain") because the real one
-        // carries the device's own domain registration.
+        // iOS 27: the same shape since feedback #21 — a backup synthesised on
+        // the host (empty Files-table Manifest.db, host-side manifests, this
+        // run's rows), nothing pulled and nothing pruned. The historical
+        // objection to synthesis was `restored` rejecting a domain it cannot
+        // resolve ("Failed to prepare INSERT for
+        // ManagedPreferencesDomain"); the injector answers that by
+        // registering AppDomain payloads in Manifest.plist itself
+        // (`pruneAndInject`'s applications pass), and the encrypted-backup
+        // premise the pulled Manifest.plist used to prove is now checked
+        // before every run by `preflightBackupEncryption`.
         let backupRoot: URL
         let prune: Bool
         if ios27 {
-            log("Manifest format: sqlite (iOS 27+ path), protective backup pulled")
-            backupRoot = try await protectiveBackup(udid: udid)
-            if hasEligibility {
-                let manifestURL = backupRoot.appendingPathComponent(udid).appendingPathComponent("Manifest.plist")
-                let data = try Data(contentsOf: manifestURL)
-                let manifest = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
-                guard manifest?["IsEncrypted"] as? Bool == false else {
-                    throw GoldenNuggetError("Siri AI 覆盖需要一份已确认的未加密保护性备份。请在访达/iTunes 中关闭本地备份加密后重试。")
-                }
-            }
-            prune = true
+            log("Manifest format: sqlite (iOS 27+ path), synthesised locally — no backup pulled")
+            backupRoot = try synthesizedBackup(udid: udid)
+            prune = false
             // Media over AFC, after the backup and before the prune: the backup
             // filter rejects the media domains, so this is the only thing that
             // collects them, and doing it here means an apply is the one action
@@ -801,12 +815,12 @@ class GoldenNuggetEngine {
     /// plist — `TweakReset` has the table and the reason) and in which manifest
     /// the run needs, for the same reason the apply forks:
     ///
-    /// * **iOS 27+** speaks the modern sqlite `Manifest.db` and rejects a
-    ///   synthesized one ("Failed to prepare INSERT for ManagedPreferencesDomain"
-    ///   — the real one carries the device's own domain registration), so the
-    ///   reset pulls the protective backup and prunes it, exactly as an apply
-    ///   does. It does **not** pull media: a reset is a preferences operation and
-    ///   the backup filter rejects the media domains anyway.
+    /// * **iOS 27+** speaks the modern sqlite `Manifest.db`. The reset used
+    ///   to pull the protective backup here because a synthesized manifest
+    ///   was rejected for lacking the device's domain registration; since
+    ///   feedback #21 no flow pulls a backup at all (every pull dies on
+    ///   Grace's device), so the reset synthesises one exactly as an apply
+    ///   does and lets the injector register the domains it delivers.
     /// * **iOS 26** speaks legacy MBDB and can have a backup built for it from
     ///   nothing, so the reset synthesises one.
     ///
@@ -889,9 +903,9 @@ class GoldenNuggetEngine {
         let backupRoot: URL
         let prune: Bool
         if ios27 {
-            log("Manifest format: sqlite (iOS 27+ path), protective backup pulled, then pruned")
-            backupRoot = try await protectiveBackup(udid: udid)
-            prune = true
+            log("Manifest format: sqlite (iOS 27+ path), synthesised locally — no backup pulled")
+            backupRoot = try synthesizedBackup(udid: udid)
+            prune = false
         } else {
             log("Manifest format: legacy MBDB (iOS 26 path), built from nothing")
             backupRoot = try await partialRestore(udid: udid)
@@ -1105,6 +1119,84 @@ class GoldenNuggetEngine {
         return backupRoot
     }
 
+    /// An iOS 27 backup synthesised on the host, the #21 replacement for the
+    /// protective pull in the delivery tail: an empty device directory, a
+    /// Manifest.db carrying only the `Files` table, and then whatever
+    /// `pruneAndInject` writes into it (host-side manifests via
+    /// `HostManifests.ensure`, then this run's rows). Same root as the flows
+    /// it replaces, so the restore stage sees the shape it always saw.
+    private func synthesizedBackup(udid: String) throws -> URL {
+        let backupRoot = AppPaths.fullBackupRoot(udid: udid)
+        try resetDirectory(backupRoot)
+        let deviceDir = AppPaths.deviceDir(backupRoot: backupRoot, udid: udid)
+        try ManifestStore(deviceDir: deviceDir).createEmptyManifestDB()
+        log("Synthesised backup at \(backupRoot.lastPathComponent) "
+            + "(no device content pulled — feedback #21)")
+        return backupRoot
+    }
+
+    // MARK: - Local backup management (feedback #21)
+    //
+    // The two user-facing companions of the no-pull rule: a backup that is
+    // already on disk can still be written back, and it can be deleted —
+    // neither needs the pull direction that no longer works.
+
+    /// The newest local backup tree: a `<Documents>/<udid>/<udid>/` folder
+    /// holding a manifest. Pure filesystem scan — no device contact, so the
+    /// settings page can offer the two actions below without a tunnel.
+    static func localBackupCandidate() -> (root: URL, udid: String)? {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(
+            at: URL.documents, includingPropertiesForKeys: [.contentModificationDateKey])
+        else { return nil }
+        var best: (root: URL, udid: String, date: Date)?
+        for entry in entries where entry.hasDirectoryPath {
+            let name = entry.lastPathComponent
+            let deviceDir = entry.appendingPathComponent(name, conformingTo: .data)
+            let hasManifest = fm.fileExists(atPath: deviceDir.appendingPathComponent("Manifest.db").path)
+                || fm.fileExists(atPath: deviceDir.appendingPathComponent("Manifest.mbdb").path)
+            guard hasManifest else { continue }
+            let date = (try? entry.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? .distantPast
+            if best == nil || date > best!.date {
+                best = (entry, name, date)
+            }
+        }
+        return best.map { (root: $0.root, udid: $0.udid) }
+    }
+
+    /// Write an existing local backup back to the device. Restore is the
+    /// write direction only — it never pulls — so it stays available under
+    /// the #21 rule that killed every backup-direction exchange.
+    func restoreLocalBackup() async throws {
+        try await loggedRun("local backup restore") {
+            clearCancel()
+            clearProgress()
+            let udid = try await prepareRun()
+            guard let candidate = Self.localBackupCandidate() else {
+                throw GoldenNuggetError("本地没有可恢复的备份。")
+            }
+            guard candidate.udid == udid else {
+                throw GoldenNuggetError("本地备份属于另一台设备，与当前设备不一致，已停止恢复。")
+            }
+            log("Restoring the local backup back to the device "
+                + "(write-only — nothing is pulled)")
+            try await runRestore(backupRoot: candidate.root, udid: udid, label: "恢复备份") {
+                log("Restore succeeded: the device confirmed it finished.")
+                log("Reboot the device so the restored files take effect.")
+            }
+        }
+    }
+
+    /// Delete the local backup tree. Local only — no device contact.
+    func deleteLocalBackup() throws {
+        guard let candidate = Self.localBackupCandidate() else {
+            throw GoldenNuggetError("本地没有可删除的备份。")
+        }
+        try FileManager.default.removeItem(at: candidate.root)
+        log("Deleted the local backup (\(candidate.root.lastPathComponent))")
+    }
+
     /// A real protective backup into `<Documents>/<udid>/`.
     private func protectiveBackup(udid: String) async throws -> URL {
         let backupRoot = AppPaths.fullBackupRoot(udid: udid)
@@ -1164,9 +1256,8 @@ class GoldenNuggetEngine {
         guard !identity.version.isEmpty else {
             throw GoldenNuggetError(
                 "无法读取设备的 iOS 版本（lockdown 的 ProductVersion），而本次运行"
-                + "需要靠它来选择清单格式：iOS 27+ 会从"
-                + "设备拉取一份带 sqlite Manifest.db 的保护性备份，iOS 26 则用在主机"
-                + "上合成的旧式 MBDB 备份。请解锁设备、确认隧道已连通，然后再运行一次。")
+                + "需要靠它来选择清单格式：iOS 27+ 用 sqlite Manifest.db，iOS 26 "
+                + "用旧式 MBDB，两种都在主机上合成、不从设备拉取。请解锁设备、确认隧道已连通，然后再运行一次。")
         }
         log("device version: lockdown answered \(identity.version)")
         return identity.version
