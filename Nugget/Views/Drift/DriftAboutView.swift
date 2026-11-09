@@ -24,7 +24,7 @@ struct DriftAboutView: View {
                         DriftFactRow(title: "风险与边界",
                                      text: "刷入时请保持解锁、隧道开着、配对有效；中途断开可能留下刷一半的状态。归属类型选错不报错、只是不显示。带数据库的容器包可能弄乱壁纸索引，本 App 没有备份和回滚，清乱了用「重置壁纸商店」。一次最多刷 10 张。本 App 没有下载功能，壁纸包请自备。纯动画的包没有静态图，列表里用占位图显示。")
                         DriftFactRow(title: "基于",
-                                     text: "Drift 基于开源项目 GoldenNugget 移植壁纸与连接层代码，只保留刷壁纸功能，沿用 AGPL-3.0 许可证。")
+                                     text: "Drift 是独立应用：只借用了 GoldenNugget 的原理与壁纸／连接层代码（沿用 AGPL-3.0 许可证），界面、UI 与主题均为重新设计，只保留刷壁纸功能。")
                     }
                     .padding(16)
                 }

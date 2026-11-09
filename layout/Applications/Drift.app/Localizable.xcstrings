@@ -1183,16 +1183,6 @@
         }
       }
     },
-    "Connect this iPhone over USB and tap Trust, then open GoldenNugget on the computer — iOS → “GoldenNugget Mobile Helper”. It installs the app and sends the pairing file itself.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "通过 USB 连接这台 iPhone 并点击“信任”，然后在电脑上打开 GoldenNugget — iOS → “GoldenNugget Mobile Helper”。它会安装 App 并自行发送配对文件。"
-          }
-        }
-      }
-    },
     "Continue": {
       "localizations": {
         "zh-Hans": {
@@ -2135,46 +2125,6 @@
         }
       }
     },
-    "GoldenNugget": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "GoldenNugget"
-          }
-        }
-      }
-    },
-    "GoldenNugget Mobile %@ is available": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "GoldenNugget Mobile %@ 已发布"
-          }
-        }
-      }
-    },
-    "GoldenNugget developer": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "GoldenNugget 开发者"
-          }
-        }
-      }
-    },
-    "GoldenNugget is unavailable": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "GoldenNugget 不可用"
-          }
-        }
-      }
-    },
     "Hebrew": {
       "localizations": {
         "zh-Hans": {
@@ -2757,16 +2707,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "在电脑上制作 — 隔空投送、文件、iCloud Drive"
-          }
-        }
-      }
-    },
-    "Made with ❤️ by\nGoldenNugget Development Team": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "用 ❤️ 制作\nGoldenNugget 开发团队"
           }
         }
       }
@@ -5587,32 +5527,12 @@
         }
       }
     },
-    "GoldenNugget for desktop is the original this app is a port of. It runs the same protocols over its own Rust and Swift stack instead of driving pymobiledevice3, and speaks to iOS 26 and 27 rather than only to tethered devices.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "桌面版 GoldenNugget 是这个应用移植的原型。它用自己的 Rust 和 Swift 栈运行相同的协议，而不是驱动 pymobiledevice3，并且面向 iOS 26 和 27，而不只是有线连接的设备。"
-          }
-        }
-      }
-    },
     "Hold a card against the reader while it listens.": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "在读卡器监听时，把卡贴近它。"
-          }
-        }
-      }
-    },
-    "If the tunnel was connected after the app started, close and reopen GoldenNugget once.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "如果隧道是在应用启动之后才连接的，请关闭并重新打开一次 GoldenNugget。"
           }
         }
       }
@@ -5837,16 +5757,6 @@
         }
       }
     },
-    "The PC version does step 2 for you — plug this iPhone in over USB and open GoldenNugget's “Mobile Helper”.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "电脑版会替你完成第 2 步——用 USB 连接这台 iPhone，打开 GoldenNugget 的“Mobile Helper”。"
-          }
-        }
-      }
-    },
     "The card appears here — tap it to assign a skin.": {
       "localizations": {
         "zh-Hans": {
@@ -6013,16 +5923,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "%lld 个照片和视频文件——%@ 保存在应用中"
-          }
-        }
-      }
-    },
-    "GoldenNugget Development Team 用 ❤️ 制作": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "GoldenNugget Development Team 用 ❤️ 制作"
           }
         }
       }

@@ -233,8 +233,8 @@ struct FirstRunView: View {
     private var welcomeSlide: some View {
         SlideLayout(
             art: { FirstRunWelcomeArt(active: page == 0) },
-            title: "GoldenNugget",
-            subtitle: "Restyle this iPhone's SpringBoard, status bar and daemons. Two steps stand in front of it.")
+            title: "Drift",
+            subtitle: "给这台 iPhone 刷入交互壁纸。开始之前还有两个步骤。")
         {
             VStack(alignment: .leading, spacing: 12) {
                 stepCard(number: 1, title: "Tunnel", done: tunnel.isReady,
@@ -244,8 +244,8 @@ struct FirstRunView: View {
                          working: wirelessPair.isRunning,
                          status: pairingReady ? "配对记录已就位" : "尚无配对记录",
                          destination: 2)
-                NativeNote("The PC version does step 2 for you — plug this iPhone in over USB and open GoldenNugget's “Mobile Helper”.")
-                NativeNote("If the tunnel was connected after the app started, close and reopen GoldenNugget once.")
+                NativeNote("第 2 步可以让电脑代劳——用 USB 连上这台 iPhone，打开电脑版的 Mobile Helper。")
+                NativeNote("如果隧道是在打开 App 之后才连上的，把 Drift 关掉重新打开一次。")
             }
         }
     }
@@ -298,7 +298,7 @@ struct FirstRunView: View {
         SlideLayout(
             art: { FirstRunPairArt(linked: pairingReady, active: page == 2) },
             title: "2 · Pairing",
-            subtitle: "The PC version's Mobile Helper is the easiest route. The two cards below are fallbacks.")
+            subtitle: "电脑版的 Mobile Helper 是最省事的一条路；下面的两张卡是备选办法。")
         {
             VStack(alignment: .leading, spacing: 12) {
                 statusPill(done: pairingReady, working: wirelessPair.isRunning,
@@ -335,7 +335,7 @@ struct FirstRunView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("The PC version does this for you")
                     .font(.headline)
-                Text("Connect this iPhone over USB and tap Trust, then open GoldenNugget on the computer — iOS → “GoldenNugget Mobile Helper”. It installs the app and sends the pairing file itself.")
+                Text("用 USB 连上这台 iPhone 并点「信任」，然后打开电脑版的 Mobile Helper，它会自己把配对文件发到这台 iPhone 上。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -364,7 +364,7 @@ struct FirstRunView: View {
                          working: wirelessPair.isRunning,
                          status: pairingReady ? "配对记录已就位" : "尚无配对记录",
                          destination: 2)
-                NativeNote("Finish also starts copying this device's photos and videos in the background — “Restore media” on the home page puts it back after a reset.")
+                NativeNote("点「完成设置」后会连接设备并打开壁纸页。")
                 if !canFinish {
                     NativeNote("Finish stays greyed out until both steps are ready.")
                 }
@@ -493,17 +493,12 @@ struct FirstRunView: View {
 
     // MARK: - Actions
 
-    /// Leave the guide with both steps satisfied, and start the copy.
+    /// Leave the guide with both steps satisfied.
+    ///
+    /// Drift has no media feature: unlike the app this guide came from,
+    /// finishing setup here deliberately does NOT start a photo/video copy.
     private func finish() {
         firstRun.complete(reason: "tunnel and pairing record both ready")
-        // Start the photo/video copy here, while the tunnel is known to
-        // be up and the user is still on a screen that explains it. The
-        // order matters: the record is already complete, so a pull that
-        // outlives this page is not tied to it. The engine waits for
-        // minimuxer before it touches AFC, which is why this call can
-        // happen before the home page's `.task` starts it.
-        GoldenNuggetEngine.shared.startAutomaticMediaPull(
-            reason: "setup finished", force: true)
         onClose?()
     }
 

@@ -223,7 +223,7 @@ struct DriftSettingsView: View {
                 Text("Drift \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0")")
                     .foregroundStyle(.secondary)
             }
-            Text("基于开源项目 GoldenNugget 移植壁纸与连接层代码，只保留刷壁纸功能。沿用 AGPL-3.0 许可证。")
+            Text("独立应用：借用 GoldenNugget 的原理与壁纸／连接层代码（AGPL-3.0），界面、UI 与主题均为重新设计，只保留刷壁纸功能。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

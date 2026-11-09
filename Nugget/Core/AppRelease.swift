@@ -41,7 +41,7 @@ struct AppReleaseVersion: Comparable {
 /// GitHub's latest stable *mobile* release, with links restricted to this repo.
 /// Opening its page/IPA leaves signing and installation to the user's sideloader.
 struct AppRelease: Decodable {
-    static let repository = "GoldenNugget-Team/GoldenNugget-mobile"
+    static let repository = "soci-art/Drift"
     static let latestURL = URL(string: "https://github.com/\(repository)/releases/latest")!
     static let apiURL = URL(string: "https://api.github.com/repos/\(repository)/releases/latest")!
     let tag_name: String
