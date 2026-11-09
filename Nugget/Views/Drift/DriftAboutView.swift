@@ -12,6 +12,14 @@ struct DriftAboutView: View {
                 ScrollView {
                     VStack(spacing: 14) {
                         intro
+                        // Feedback #30: the suspension is stated first,
+                        // before any row that describes the restore route
+                        // as a way to flash — nothing below may read as
+                        // "restore is available" while the gate is closed.
+                        if !DriftRestoreGate.isEnabled {
+                            DriftFactRow(title: "恢复式暂时停用",
+                                         text: DriftRestoreGate.notice + "下面凡是写「恢复式」的地方都先按停用看：只能走恢复式的内容（视频壁纸、重置商店、系统不在直刷范围内的普通包）暂时都刷不了。")
+                        }
                         rangeTable
                         DriftFactRow(title: "两种刷入方式",
                                      text: "直刷：只把壁纸写进壁纸商店，刷完注销让系统重读，不重启，范围窄。恢复式：把壁纸编进一份在手机外合成的系统备份再恢复写回，覆盖全部受支持系统，刷完重启。视频壁纸和重置商店只能走恢复式。")
@@ -24,7 +32,7 @@ struct DriftAboutView: View {
                         DriftFactRow(title: "签名",
                                      text: "两种签名都能用，功能无差别。Apple ID 免费签 7 天过期、重装会丢 App 内数据（配对和已导入的包要重新导入）；付费证书有效期长、更稳定。本 App 没有自己的隧道扩展，用不上付费证书的 VPN 权限。")
                         DriftFactRow(title: "风险与边界",
-                                     text: "刷入时请保持解锁、隧道开着、配对有效；中途断开可能留下刷一半的状态。出现位置选错不报错、只是不显示。带数据库的容器包可能弄乱壁纸索引，清乱了用「重置壁纸商店」。刷入和清理全程不从设备拉取备份：壁纸数据库用本地缓存的副本，没有缓存时从零新建，设备上原有的壁纸可能不再被列出；已经存在的本地备份可以在设置里写回设备或删除。一次最多刷 10 张。本 App 没有下载功能，壁纸包请自备。纯动画的包没有静态图，列表里用占位图显示。")
+                                     text: "刷入时请保持解锁、隧道开着、配对有效；中途断开可能留下刷一半的状态。出现位置选错不报错、只是不显示。带数据库的容器包可能弄乱壁纸索引，清乱了用「重置壁纸商店」。刷入和清理全程不从设备拉取备份：壁纸数据库用本地缓存的副本，没有缓存时从零新建，设备上原有的壁纸可能不再被列出；已经存在的本地备份可以在设置里删除（写回设备的「恢复备份」属于恢复式，暂时停用）。一次最多刷 10 张。本 App 没有下载功能，壁纸包请自备。纯动画的包没有静态图，列表里用占位图显示。")
                         DriftFactRow(title: "基于",
                                      text: "Drift 是独立应用：只借用了 GoldenNugget 的原理与壁纸／连接层代码（沿用 AGPL-3.0 许可证），界面、UI 与主题均为重新设计，只保留刷壁纸功能。")
                     }
@@ -50,11 +58,14 @@ struct DriftAboutView: View {
     private var rangeTable: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("版本对照").font(.subheadline.weight(.semibold))
-            rangeRow("26.0 – 26.1", "仅恢复式", "重启")
+            rangeRow("26.0 – 26.1", DriftRestoreGate.isEnabled ? "仅恢复式" : "仅恢复式（停用中）", "重启")
             rangeRow("26.2 – 27.1", "可直刷", "不重启")
             rangeRow("27.2 测试版 1 / 2", "可直刷", "不重启")
-            rangeRow("27.2 测试版 3 起", "仅恢复式", "重启")
-            Text("视频壁纸在任何版本都只能走恢复式。").font(.caption).foregroundStyle(.secondary)
+            rangeRow("27.2 测试版 3 起", DriftRestoreGate.isEnabled ? "仅恢复式" : "仅恢复式（停用中）", "重启")
+            Text(DriftRestoreGate.isEnabled
+                 ? "视频壁纸在任何版本都只能走恢复式。"
+                 : "视频壁纸在任何版本都只能走恢复式，恢复式停用期间暂时刷不了。")
+                .font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
