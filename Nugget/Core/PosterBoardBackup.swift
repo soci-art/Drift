@@ -178,13 +178,15 @@ enum PosterBoardBackup {
         // first exchange — the device asks for the state files and either
         // starts offering payloads or it does not — so 45 idle seconds is
         // already generous here; the 120 default suits the bulk pulls.
+        log("[MB2-PULL] session start: PosterBoard fetch pull, udid \(udid)")
         try await StallGuard.run(
             label: "PosterBoard 获取",
             idleSeconds: 45,
             idle: { counter.lastActivityAt },
             wire: { WireCensus.totals() },
             probe: { await Diagnostics.deviceLivenessProbe() },
-            handshakeSilent: { RustLog.deviceSilentAtHandshake() }
+            handshakeSilent: { RustLog.deviceSilentAtHandshake() },
+            lastExchange: { RustLog.pullTraceTail() }
         ) {
             try await Minimuxer.shared().backupBackup(
             backupRoot: backupRoot.path(percentEncoded: false),
@@ -229,6 +231,7 @@ enum PosterBoardBackup {
             )
         }
         log("PosterBoard: backup done — \(counter.summary)")
+        log("[MB2-PULL] session end: PosterBoard fetch pull — \(counter.summary)")
         // Logged on every run, not only on failure: the first few offers are the
         // only record of which string this device's stream carries the path in.
         log("PosterBoard: offers — \(counter.sample())")
