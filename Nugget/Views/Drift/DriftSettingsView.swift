@@ -22,6 +22,8 @@ struct DriftSettingsView: View {
     @State private var confirmDeleteBackup = false
     @State private var backupBusy = false
     @State private var backupNote: String?
+    @State private var researchPullBusy = false
+    @State private var researchPullNote: String?
 
     var body: some View {
         NavigationStack {
@@ -306,6 +308,36 @@ struct DriftSettingsView: View {
             }
             Text("出问题时点这里打包，把整包发出去就行，不用再一个个找文件。")
                 .font(.caption).foregroundStyle(.secondary)
+            // Feedback #31: research builds only. The diagnostic pull is
+            // the one research action this stage ships: it runs the
+            // protective pull with the [MB2-PULL] trace live and does
+            // nothing else — no prune, no injection, no restore.
+            if DriftResearchBuild.isActive {
+                Text(DriftResearchBuild.notice)
+                    .font(.caption).foregroundStyle(.red)
+                Button {
+                    Task { await runResearchPull() }
+                } label: {
+                    Label(researchPullBusy ? "正在诊断拉取…" : "诊断拉取（研究）",
+                          systemImage: "stethoscope")
+                }
+                .disabled(researchPullBusy)
+                if let researchPullNote {
+                    Text(researchPullNote)
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func runResearchPull() async {
+        researchPullBusy = true
+        researchPullNote = nil
+        defer { researchPullBusy = false }
+        do {
+            researchPullNote = try await GoldenNuggetEngine.shared.researchDiagnosticPull()
+        } catch {
+            researchPullNote = "诊断拉取失败：\(error.localizedDescription)（详情看运行日志）"
         }
     }
 
