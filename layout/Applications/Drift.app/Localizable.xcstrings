@@ -5185,12 +5185,32 @@
         }
       }
     },
-    "iOS 27 only applies the depth effect to wallpapers in the modern format, so a legacy wallpaper is rewritten on import. Pick “Install as is” to push the original files untouched instead.": {
+    "iOS 27's wallpaper library cannot read this legacy (WWDC22) layout at all: installed as-is, the wallpaper would never appear — no error, just nothing. Converting rewrites the pack into the modern layout iOS 27 reads. Pick “Install as is” to push the original files untouched instead.": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "iOS 27 只对现代格式的壁纸应用景深效果，因此旧版壁纸在导入时会被重写。选择“按原样安装”则可以原封不动地推送原始文件。"
+            "value": "iOS 27 的壁纸库完全读不了这种（WWDC22）老布局：按原样刷进去不会报错，也永远不会显示。转换会把包改写成 iOS 27 能读的新布局。选择“按原样安装”则可以原封不动地推送原始文件。"
+          }
+        }
+      }
+    },
+    "Legacy packs use the WWDC22 layout. iOS 27's wallpaper library cannot read that layout: installed unconverted, a pack raises no error and simply never appears. Converting rewrites the pack into the modern layout iOS 27 reads.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "老包用的是 WWDC22 时代的布局。iOS 27 的壁纸库读不了这种布局：不转换直接刷进去，不会报错，也永远不会显示。转换就是把包改写成 iOS 27 能读的新布局。"
+          }
+        }
+      }
+    },
+    "Whether conversion is needed depends only on the major version: every iOS 26 release reads legacy packs as they are — no conversion, and the question is never asked; every iOS 27 release and later needs the conversion. Minor versions and build numbers do not matter. Below iOS 26 is not supported.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "要不要转换只看大版本：iOS 26 全系列原生能读老包，不需要转换、也不会弹询问；iOS 27 起全系列都需要转换。与小版本和 build 号无关。iOS 26 以下：不支持。"
           }
         }
       }
