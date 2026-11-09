@@ -12,19 +12,32 @@ struct DriftShell: View {
     @State private var tab = 0
 
     var body: some View {
-        TabView(selection: $tab) {
-            DriftHomeView(selection: $selection)
-                .tabItem { Label("壁纸", systemImage: "photo.on.rectangle.angled") }
-                .tag(0)
-            DriftVideoView(selection: $selection)
-                .tabItem { Label("视频", systemImage: "film") }
-                .tag(1)
-            DriftAboutView()
-                .tabItem { Label("说明", systemImage: "info.circle") }
-                .tag(2)
-            DriftSettingsView()
-                .tabItem { Label("设置", systemImage: "gearshape") }
-                .tag(3)
+        VStack(spacing: 0) {
+            // Feedback #31: a research build announces itself on every
+            // tab, permanently — the banner is the visible half of the
+            // research channel's isolation (see DriftResearchBuild).
+            if DriftResearchBuild.isActive {
+                Text(DriftResearchBuild.bannerText)
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(Color.red)
+            }
+            TabView(selection: $tab) {
+                DriftHomeView(selection: $selection)
+                    .tabItem { Label("壁纸", systemImage: "photo.on.rectangle.angled") }
+                    .tag(0)
+                DriftVideoView(selection: $selection)
+                    .tabItem { Label("视频", systemImage: "film") }
+                    .tag(1)
+                DriftAboutView()
+                    .tabItem { Label("说明", systemImage: "info.circle") }
+                    .tag(2)
+                DriftSettingsView()
+                    .tabItem { Label("设置", systemImage: "gearshape") }
+                    .tag(3)
+            }
         }
         .task {
             var restored = PosterBoardSelection()
