@@ -22,7 +22,7 @@ let package = Package(
         // "Can't parse BundleExecute file!".  Keep the two in step.
         .library(
             name: "Drift",
-            targets: ["GoldenNuggetMobile"]
+            targets: ["Drift"]
         ),
     ],
     dependencies: [
