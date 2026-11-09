@@ -299,7 +299,7 @@ struct FirstRunView: View {
                     NativeNote(String(localized: "No interface carries \(Tunnel.ifaceIP) — the VPN app may be on the wrong network, or its tunnel IP left at default."))
                 }
                 if Tunnel.isCustomised {
-                    NativeSafetyNote("Custom tunnel values are in use (Tunnel settings on the home page) — they must match LocalDevVPN.")
+                    NativeSafetyNote("Custom tunnel values are in use — they must match LocalDevVPN.")
                 }
             }
         }
@@ -328,7 +328,7 @@ struct FirstRunView: View {
                                subtitle: "iOS 27+ — on iOS 26, use a file from a computer") {
                         wirelessPair.start()
                     }
-                    NativeNote("没有电脑工具？也可以在电脑上配对（idevicepair、Sideloadly——手机弹窗时点「信任」），把配对文件（.plist 或 .mobiledevicepairing）发到这台 iPhone，在上面导入。")
+                    NativeNote("没有电脑工具？也可以在电脑上配对（idevicepair、Sideloadly——手机弹窗时点「信任」），把 .plist 配对文件发到这台 iPhone，在上面导入。")
                 }
             }
         }
@@ -348,11 +348,11 @@ struct FirstRunView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("用 iLoader 在电脑上配对")
                     .font(.headline)
-                Text("用 USB 连上这台 iPhone 并点「信任」，在电脑上打开 iLoader 完成配对，导出配对文件（.plist 或 .mobiledevicepairing），传到这台 iPhone 后在上方导入。")
+                Text("用 USB 连上这台 iPhone 并点「信任」，在电脑上打开 iLoader 完成配对，导出 .plist 配对文件，传到这台 iPhone 后在上方导入。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                NativeNote("Send the file while the app is closed, then reopen it.")
+                NativeNote("Once imported, this page ticks itself — no need to reopen the app.")
             }
             Spacer(minLength: 0)
         }

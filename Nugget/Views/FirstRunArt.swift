@@ -178,7 +178,7 @@ private struct ArtFlowDots: View {
 
 /// The pairing slide's drawing: a computer (where a pairing file is usually
 /// made) and this iPhone, joined by a travelling file. While the record is
-/// missing the middle holds the `.mobiledevicepairing` document chip on a
+/// missing the middle holds the pairing-file document chip on a
 /// dashed bridge; once `linked`, the dashes become a solid arc and the phone
 /// gets the seal — the same verdict the pairing card reports.
 struct FirstRunPairArt: View {

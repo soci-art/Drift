@@ -150,7 +150,7 @@ struct DriftSettingsView: View {
                 get: { autoConvert },
                 set: { autoConvert = $0; PosterBoardPreferences.autoConvertLegacy = $0 }
             ))
-            Text("关掉后，旧格式的包在导入时会逐个问你转不转。")
+            Text("打开时，旧格式包刷入前会转成新格式；每个包第一次勾选时会问你转还是按原样，答案会记住。关掉后，一律按原样刷入、不转换。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

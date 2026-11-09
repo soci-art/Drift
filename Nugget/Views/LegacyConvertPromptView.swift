@@ -27,7 +27,7 @@ struct LegacyConvertPromptModifier: ViewModifier {
             "Legacy Wallpaper Format",
             isPresented: Binding(
                 get: { prompt != nil },
-                set: { if !$0 { dismiss() } }),
+                set: { if !$0 { dismiss(); prompt = nil } }),
             presenting: prompt
         ) { prompt in
             Button(LegacyConvertPrompt.convertTitle) { resolve(prompt, true) }

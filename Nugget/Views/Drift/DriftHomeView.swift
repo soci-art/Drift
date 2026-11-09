@@ -137,9 +137,15 @@ struct DriftHomeView: View {
                 Text("本次刷入方式").font(.subheadline.weight(.semibold))
                 Spacer()
                 Menu {
-                    Button("自动判断") { manualPickRaw = nil; statusLine = nil }
-                    Button("直刷（只注销）") { manualPickRaw = PosterBoardApplyMode.airlift.rawValue; statusLine = nil }
-                    Button("恢复式（会重启）") { manualPickRaw = PosterBoardApplyMode.backup.rawValue; statusLine = nil }
+                    // A Picker inside the menu, not three bare Buttons: the
+                    // picker is what draws the native checkmark on the current
+                    // pick. With buttons the menu showed three identical rows
+                    // and no sign of which one was in force (Grace, 2026-11-09).
+                    Picker("刷入方式", selection: $manualPickRaw) {
+                        Text("自动判断").tag(nil as String?)
+                        Text("直刷（只注销）").tag(PosterBoardApplyMode.airlift.rawValue as String?)
+                        Text("恢复式（会重启）").tag(PosterBoardApplyMode.backup.rawValue as String?)
+                    }
                 } label: {
                     // The control names the **pick**, not the outcome: it used
                     // to render `judged.mode`, so with a hard limit in force
@@ -155,6 +161,7 @@ struct DriftHomeView: View {
                 }
             }
             Text(judged.reason).font(.subheadline).foregroundStyle(.secondary)
+                .onChange(of: manualPickRaw) { statusLine = nil }
             if judged.overriddenPick != nil {
                 Text("你手动选了直刷，但上面的硬性限制不允许，已按恢复式处理。")
                     .font(.caption).foregroundStyle(.orange)
@@ -182,7 +189,8 @@ struct DriftHomeView: View {
                 DriftPackRow(pack: pack,
                              selected: selection.tendies.contains { $0.url == pack.url },
                              onToggle: { toggle(pack) },
-                             onOpen: { detailPack = pack })
+                             onOpen: { detailPack = pack },
+                             onDelete: { deletePack(pack) })
             }
             if !selection.tendies.isEmpty {
                 Text("已选 \(selection.tendies.count) 个包，共 \(selectedDescriptors) 张（一次最多 \(PosterBoardImports.descriptorLimit) 张）")
@@ -270,7 +278,24 @@ struct DriftHomeView: View {
         selection.tendies.append(pack)
     }
 
+    /// Remove an imported pack: the same steps the detail page's delete
+    /// button takes (preview cache, stored copy, list, selection).
+    private func deletePack(_ pack: PosterBoardTendie) {
+        PosterBoardPreview.invalidate(for: pack)
+        PosterBoardImports.remove(pack)
+        imports.removeAll { $0.url == pack.url }
+        selection.tendies.removeAll { $0.url == pack.url }
+    }
+
     private func answerLegacy(_ prompt: LegacyConvertPrompt, convert: Bool) {
+        // Clear the question FIRST. The modifier's contract says the caller
+        // clears `prompt`; leaving it set keeps `isPresented` true, so the
+        // alert re-presented itself every time this view re-rendered — most
+        // visibly on every tab switch back to this page (Grace, 2026-11-09).
+        // The answer itself is already permanent: `settingAutoConvert` writes
+        // it to `autoConvertAnswers` by file name, so the pack is never asked
+        // about twice.
+        legacyPrompt = nil
         let answered = prompt.pack.settingAutoConvert(convert)
         if let index = imports.firstIndex(where: { $0.url == answered.url }) {
             imports[index] = answered
@@ -333,58 +358,116 @@ struct DriftHomeView: View {
 }
 
 /// One imported pack: cover preview, facts, and the select toggle.
+///
+/// The whole row (cover, name, chevron) opens the detail page — the chevron
+/// alone was too small a target (Grace, 2026-11-09) — and a left swipe
+/// reveals a delete button behind the row. The rows live in a card inside a
+/// `ScrollView`, not a `List`, so the swipe is a hand-rolled drag: the row
+/// content is a frosted tile that slides over the red delete tile beneath.
 struct DriftPackRow: View {
     let pack: PosterBoardTendie
     let selected: Bool
     let onToggle: () -> Void
     let onOpen: () -> Void
+    let onDelete: () -> Void
 
     @State private var cover: UIImage?
+    /// How far the row content is slid left: 0 closed, -76 delete revealed.
+    @State private var slide: CGFloat = 0
+    /// The slide position the current drag started from.
+    @State private var dragBase: CGFloat = 0
+
+    private static let revealWidth: CGFloat = 76
 
     var body: some View {
-        HStack(spacing: 12) {
-            Button(action: onToggle) {
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundStyle(selected ? Color.accentColor : .secondary)
+        ZStack(alignment: .trailing) {
+            // Delete tile, uncovered as the row slides left.
+            Button(role: .destructive) { onDelete() } label: {
+                VStack(spacing: 3) {
+                    Image(systemName: "trash")
+                    Text("删除").font(.caption)
+                }
+                .foregroundStyle(.white)
+                .frame(width: Self.revealWidth)
+                .frame(maxHeight: .infinity)
+                .background(Color.red, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .buttonStyle(.plain)
+            .opacity(slide < -4 ? 1 : 0)
 
-            Group {
-                if let cover {
-                    Image(uiImage: cover).resizable().scaledToFill()
-                } else {
-                    LinearGradient(colors: [.blue.opacity(0.35), .mint.opacity(0.35)],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing)
-                        .overlay(Text(String(pack.url.lastPathComponent.prefix(1)))
-                            .font(.headline).foregroundStyle(.secondary))
+            HStack(spacing: 12) {
+                Button(action: onToggle) {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundStyle(selected ? Color.accentColor : .secondary)
                 }
-            }
-            .frame(width: 44, height: 60)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .buttonStyle(.plain)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(pack.url.lastPathComponent).font(.subheadline.weight(.medium)).lineLimit(1)
-                HStack(spacing: 6) {
-                    DriftPill(text: "\(pack.descriptorCount) 张")
-                    DriftPill(text: pack.posterType.label)
-                    if pack.isUnsafeContainer {
-                        DriftPill(text: "含数据库 · 风险高", tint: .red)
+                // Everything but the tick circle is the detail-page target.
+                Button {
+                    if slide != 0 { closeSwipe() } else { onOpen() }
+                } label: {
+                    HStack(spacing: 12) {
+                        Group {
+                            if let cover {
+                                Image(uiImage: cover).resizable().scaledToFill()
+                            } else {
+                                LinearGradient(colors: [.blue.opacity(0.35), .mint.opacity(0.35)],
+                                               startPoint: .topLeading, endPoint: .bottomTrailing)
+                                    .overlay(Text(String(pack.url.lastPathComponent.prefix(1)))
+                                        .font(.headline).foregroundStyle(.secondary))
+                            }
+                        }
+                        .frame(width: 44, height: 60)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(pack.url.lastPathComponent).font(.subheadline.weight(.medium)).lineLimit(1)
+                            HStack(spacing: 6) {
+                                DriftPill(text: "\(pack.descriptorCount) 张")
+                                DriftPill(text: pack.posterType.label)
+                                if pack.isUnsafeContainer {
+                                    DriftPill(text: "含数据库 · 风险高", tint: .red)
+                                }
+                            }
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                     }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
-            Spacer()
-            Button(action: onOpen) {
-                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-            }
-            .buttonStyle(.plain)
+            .padding(.vertical, 4)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .offset(x: slide)
         }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 12)
+                .onChanged { value in
+                    // Horizontal intent only: a mostly-vertical drag belongs
+                    // to the page scroll and must not move the row.
+                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    slide = min(0, max(-Self.revealWidth, dragBase + value.translation.width))
+                }
+                .onEnded { value in
+                    withAnimation(.snappy) {
+                        slide = slide < -Self.revealWidth / 2 ? -Self.revealWidth : 0
+                    }
+                    dragBase = slide
+                }
+        )
         .task {
             let url = await Task.detached { PosterBoardPreview.cover(for: pack) }.value
             if let url, let data = try? Data(contentsOf: url) {
                 cover = UIImage(data: data)
             }
         }
+    }
+
+    private func closeSwipe() {
+        withAnimation(.snappy) { slide = 0 }
+        dragBase = 0
     }
 }
 
@@ -414,10 +497,8 @@ struct DriftPackDetail: View {
                         }
                     }
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("归属类型").font(.subheadline.weight(.semibold))
-                        Text("决定壁纸出现在哪一类里。选错不报错、只是不显示，拿不准就用合集。")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Picker("归属类型", selection: Binding(
+                        Text("刷完出现在哪里").font(.subheadline.weight(.semibold))
+                        Picker("刷完出现在哪里", selection: Binding(
                             get: { current.posterType },
                             set: { setType($0) }
                         )) {
@@ -426,6 +507,14 @@ struct DriftPackDetail: View {
                             }
                         }
                         .pickerStyle(.segmented)
+                        // The explanation follows the selection: each kind
+                        // says, in plain words, which gallery shelf it lands
+                        // on — the provider names alone did not (Grace,
+                        // 2026-11-09).
+                        Text(current.posterType.blurb)
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text("选错了不报错、只是不显示，回来改就行。")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                     .driftCard()
                     if current.isUnsafeContainer {
@@ -479,7 +568,7 @@ struct DriftPackDetail: View {
 private func resetModeTitle(_ mode: PosterBoardResetMode) -> String {
     switch mode {
     case .collections: return "清理合集"
-    case .suggestedPhotos: return "清理精选照片"
+    case .suggestedPhotos: return "清理照片推荐"
     case .galleryCache: return "清理图库缓存"
     }
 }

@@ -11,18 +11,23 @@ import UniformTypeIdentifiers
 /// files appear and disappear (`loadPairingFile`'s history, below). None of it is
 /// view state, so none of it belongs on a view.
 enum PairingRecord {
-    /// Extensions accepted by the picker and the `onOpenURL` handler.  **One
-    /// list**: the picker built its array from these names and the URL handler
-    /// hard-coded the same three again, so adding a fourth would have worked in
-    /// one path and silently not in the other.
-    /// `plist` is on the list because pairing records are often delivered
-    /// under a plain `.plist` name (e.g. `rp_pairing_file.plist`): the picker
-    /// greyed such files out entirely. The shape check on import is what
-    /// keeps a random plist from being adopted.
+    /// Extensions that *route* a file to the pairing importer (the
+    /// `onOpenURL` handler). **One list**: the URL handler used to hard-code
+    /// the same names a second time, so adding one would have worked in one
+    /// path and silently not in the other.
+    ///
+    /// Routing is not acceptance: since 2026-11-09 pairing files are
+    /// `.plist` only, and `accept(contentsOf:)` refuses the three
+    /// lockdown-era names with a sentence that says so. They stay on this
+    /// list so such a file is answered as a pairing file with the wrong
+    /// name — not misrouted to the wallpaper-pack importer. `plist` is the
+    /// name records are delivered under (e.g. `rp_pairing_file.plist`), and
+    /// the shape check on import is what keeps a random plist from being
+    /// adopted.
     static let extensions = ["mobiledevicepairing", "mobiledevicepair", "mobiledeviceconfig", "plist"]
 
-    /// The picker's content types, **plist first** (Grace, 2026-11-09:
-    /// pairing files are to be `.plist` wherever the app has a say).
+    /// The picker's content types (Grace, 2026-11-09: pairing files are
+    /// `.plist`, full stop — the lockdown-era type is no longer offered).
     ///
     /// Built from explicit identifiers, not `UTType(filenameExtension:)`:
     /// that lookup is a runtime query against the UTI database whose answer
@@ -30,21 +35,17 @@ enum PairingRecord {
     /// nil there is silently dropped by a `compactMap` — the picker's
     /// failure mode for exactly that case is a `.plist` row that renders
     /// dimmed and answers taps with nothing at all, which is the report this
-    /// replaces. `.propertyList` is the system's own type for the extension,
-    /// and the imported declaration covers the three lockdown-era extensions
-    /// with the one identifier declared for them in Info.plist.
+    /// replaces. `.propertyList` is the system's own type for the extension.
     static let types: [UTType] = {
         var list: [UTType] = [.propertyList]
-        if let lockdown = UTType("com.awesomenull.mobiledevicepairing") {
-            list.append(lockdown)
-        }
         // `.item` last, as the eligibility backstop: with it present, no
         // file in the picker can be unselectable, so a tap always comes back
         // to the app — the failure this guards against is a pairing `.plist`
         // that rendered in the list but swallowed taps (2026-11-09). What
-        // keeps a wrong file out is the content check in `accept(contentsOf:)`,
-        // which is strict (UTF-8 XML plist, non-empty top-level dictionary)
-        // and reports in words; eligibility was never the real gate.
+        // keeps a wrong file out is the gate in `accept(contentsOf:)`: the
+        // extension must be `.plist`, and the content must be a non-empty
+        // XML plist dictionary — both reported in words; eligibility was
+        // never the real gate.
         list.append(.item)
         return list
     }()
@@ -150,6 +151,19 @@ enum PairingRecord {
     ///   silently strips.
     @discardableResult
     static func accept(contentsOf url: URL) throws -> String {
+        // Pairing records are `.plist`, full stop (Grace, 2026-11-09): the
+        // app no longer accepts the lockdown-era extensions as import names.
+        // `extensions` above still *routes* those names here (a file called
+        // `.mobiledevicepairing` plainly means "pairing record"), so the
+        // refusal can be one clear sentence instead of the file being
+        // silently adopted — or, worse, misread as a wallpaper pack. The
+        // content check below still decides whether a `.plist` IS a record.
+        guard url.pathExtension.lowercased() == "plist" else {
+            throw GoldenNuggetError("\(url.lastPathComponent) 不是 .plist 文件："
+                + "Drift 的配对文件只接收 .plist。请在电脑上把配对文件导出为"
+                + " .plist（内容不变、只改后缀也可以），再导入一次。")
+        }
+
         // Document-picker URLs are security-scoped: reading one without
         // `startAccessingSecurityScopedResource` fails with "you don't have
         // permission to view it".

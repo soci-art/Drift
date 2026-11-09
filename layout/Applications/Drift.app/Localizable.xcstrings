@@ -518,7 +518,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "App 容器"
+            "value": "容器"
           }
         }
       }
@@ -1038,7 +1038,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "清除 Collections 和 MercuryPoster 的描述文件文件夹。"
+            "value": "清除合集与动态壁纸的描述文件文件夹。"
           }
         }
       }
@@ -1048,7 +1048,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "清除 Photos 海报提供方的描述文件文件夹。"
+            "value": "清除照片推荐的描述文件文件夹。"
           }
         }
       }
@@ -2746,7 +2746,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mercury"
+            "value": "动态壁纸"
           }
         }
       }
@@ -4448,7 +4448,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "建议照片"
+            "value": "照片推荐"
           }
         }
       }
@@ -4549,16 +4549,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "电脑版会替你完成这一步"
-          }
-        }
-      }
-    },
-    "The PC version's Mobile Helper is the easiest route. The two cards below are fallbacks.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "电脑版的 Mobile Helper 是最省事的途径。下面的两张卡片是备选方案。"
           }
         }
       }
@@ -5437,16 +5427,6 @@
         }
       }
     },
-    "Custom tunnel values are in use (Tunnel settings on the home page) — they must match LocalDevVPN.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在使用自定义隧道值（主页的隧道设置）——它们必须与 LocalDevVPN 一致。"
-          }
-        }
-      }
-    },
     "Delivered by the **Apply** button on the home page, together with the tweaks. It fetches the store's database from the device first, so that run takes one extra exchange. Reboot the device afterwards — the store is read at boot.": {
       "localizations": {
         "zh-Hans": {
@@ -5577,16 +5557,6 @@
         }
       }
     },
-    "No helper? Pair on a computer (idevicepair, Sideloadly — tap Trust when the phone asks), send the .mobiledevicepairing file here, and import it above. The helper's “Save Pairing File to Disk” works the same way.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "没有辅助工具？在电脑上配对（idevicepair、Sideloadly——手机询问时点「信任」），把 .mobiledevicepairing 文件发到这里，再从上方导入。辅助工具的“将配对文件保存到磁盘”也是同样的用法。"
-          }
-        }
-      }
-    },
     "No packs imported yet — import a `.tendies` above to apply it this way.": {
       "localizations": {
         "zh-Hans": {
@@ -5693,16 +5663,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "保存、切换和分享完整的调整配置。加载预设会替换当前选择；仍由主页的「应用」送达设备。"
-          }
-        }
-      }
-    },
-    "Send the file while the app is closed, then reopen it.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在应用关闭时发送文件，然后重新打开它。"
           }
         }
       }
@@ -5953,6 +5913,102 @@
           "stringUnit": {
             "state": "translated",
             "value": "适用于：%@."
+          }
+        }
+      }
+    },
+    "Appears in the wallpaper gallery's Collections section, alongside Apple's own featured wallpapers. Right for most packs — and the safe pick when unsure.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Appears in the wallpaper gallery's Collections section, alongside Apple's own featured wallpapers. Right for most packs — and the safe pick when unsure."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "出现在壁纸库的「合集」栏，和系统自带的精选壁纸排在一起。大多数包选这个，拿不准也选这个。"
+          }
+        }
+      }
+    },
+    "Appears in the gallery section that suggests wallpapers made from your own photo library.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Appears in the gallery section that suggests wallpapers made from your own photo library."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "出现在壁纸库里拿你相册照片做壁纸的推荐栏。"
+          }
+        }
+      }
+    },
+    "Apple's dynamic wallpapers — the kind with floating layers and depth motion. Older WWDC22-format packs are usually this kind.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple's dynamic wallpapers — the kind with floating layers and depth motion. Older WWDC22-format packs are usually this kind."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统动态壁纸那一类，带漂浮图层和景深动效。WWDC22 那种老格式包多半是这类。"
+          }
+        }
+      }
+    },
+    "Ships the wallpaper store's whole contents, database included — the kind most likely to scramble your existing wallpapers. Only for packs that actually are containers.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ships the wallpaper store's whole contents, database included — the kind most likely to scramble your existing wallpapers. Only for packs that actually are containers."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把整个壁纸商店的内容整包刷入，带着数据库，最容易弄乱现有壁纸。不是容器包就别选它。"
+          }
+        }
+      }
+    },
+    "Once imported, this page ticks itself — no need to reopen the app.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Once imported, this page ticks itself — no need to reopen the app."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入后这一页会自动打勾，不用重开 App。"
+          }
+        }
+      }
+    },
+    "Custom tunnel values are in use — they must match LocalDevVPN.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Custom tunnel values are in use — they must match LocalDevVPN."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在使用自定义隧道值——它们必须与 LocalDevVPN 一致。"
           }
         }
       }

@@ -96,6 +96,24 @@ enum PosterBoardBackup {
                                  applications: [PosterBoard.bundleID: entry])
         try HostManifests.writeSQLiteManifest(deviceDir: deviceDir, ios27: ios27)
 
+        // The exact host-side state the device is about to be told exists —
+        // logged on every run (2026-11-09, item 14). The 2026-11-09 stall on
+        // iOS 27.2 beta 2 ended with the device requesting Status.plist,
+        // Manifest.plist and Manifest.db, listing a directory, and then never
+        // speaking again; the diagnostics report from that run could not show
+        // what the host had actually laid down, because nothing recorded it.
+        // With this line, the next report answers "were the files the device
+        // asked for really there, and at what sizes" without a re-run.
+        if let files = try? fm.subpathsOfDirectory(atPath: deviceDir.path) {
+            let inventory = files.sorted().map { rel -> String in
+                let attrs = try? fm.attributesOfItem(atPath: deviceDir.appendingPathComponent(rel).path)
+                let size = (attrs?[.size] as? NSNumber)?.intValue ?? -1
+                return "\(rel) (\(size) B)"
+            }
+            log("PosterBoard: host state for this fetch — \(inventory.count) file(s): "
+                + inventory.joined(separator: ", "))
+        }
+
         // 3. The backup itself. The filter keeps the database and its WAL
         //    companions — `…sqlite3-wal` contains the name too — plus the backup
         //    metadata files, which must never be drained or the backup is
@@ -108,9 +126,16 @@ enum PosterBoardBackup {
         // and nobody was polling it. It also means the phase now has a
         // heartbeat: an upload that goes quiet is reported with the device's
         // liveness instead of looking like a slow one.
+        // `idleSeconds` is when the guard starts *saying* the silence, not
+        // when anything is stopped — StallGuard never aborts an exchange
+        // (the 2026-09-20 incident is why), so a lower threshold only makes
+        // the diagnosis arrive sooner. This fetch's fate is decided by its
+        // first exchange — the device asks for the state files and either
+        // starts offering payloads or it does not — so 45 idle seconds is
+        // already generous here; the 120 default suits the bulk pulls.
         try await StallGuard.run(
             label: "PosterBoard 获取",
-            idleSeconds: 120,
+            idleSeconds: 45,
             idle: { counter.lastActivityAt },
             wire: { WireCensus.totals() },
             probe: { await Diagnostics.deviceLivenessProbe() },

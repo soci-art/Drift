@@ -61,6 +61,20 @@ enum PosterBoardPosterType: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// One plain-language line on where a wallpaper of this kind ends up,
+    /// shown under the type picker in the pack detail. The segmented labels
+    /// are PosterBoard's own provider names — "Mercury" says nothing to
+    /// anyone who has not read this file — so each kind also carries its
+    /// explanation in ordinary words (Grace, 2026-11-09).
+    var blurb: String {
+        switch self {
+        case .collections: return String(localized: "Appears in the wallpaper gallery's Collections section, alongside Apple's own featured wallpapers. Right for most packs — and the safe pick when unsure.")
+        case .suggestedPhotos: return String(localized: "Appears in the gallery section that suggests wallpapers made from your own photo library.")
+        case .mercury: return String(localized: "Apple's dynamic wallpapers — the kind with floating layers and depth motion. Older WWDC22-format packs are usually this kind.")
+        case .container: return String(localized: "Ships the wallpaper store's whole contents, database included — the kind most likely to scramble your existing wallpapers. Only for packs that actually are containers.")
+        }
+    }
+
     var systemImage: String {
         switch self {
         case .collections: return "paintpalette.fill"
