@@ -255,6 +255,31 @@ enum RustLog {
             + " ; host→device: \(hostSays.isEmpty ? "none" : hostSays)"
     }
 
+    /// The last `[MB2-PULL]` trace lines of this run (feedback #31).
+    ///
+    /// The pull-trace patch (`Vendor/patches/idevice-ffi/pull_trace.patch`)
+    /// makes the vendored mobilebackup2 loop narrate every DeviceLink
+    /// exchange into this same log: each message in with its key fields,
+    /// each answer that matters with its content. The stall guard quotes
+    /// this tail at the moment it declares a silence, so the verdict in
+    /// the app log names the exact exchange the device went quiet after
+    /// instead of reporting a bare duration.
+    ///
+    /// - Parameter since: byte offset to start from; defaults to the run
+    ///   mark, like `excerpt`.
+    static func pullTraceTail(maxLines: Int = 8, since: UInt64? = nil) -> String {
+        guard let window = readWindow(from: since ?? mark, limit: 4 << 20),
+              let text = String(data: window.data, encoding: .utf8) else {
+            return "(no [MB2-PULL] lines readable — minimuxer.log unavailable)"
+        }
+        let hits = text.split(separator: "\n").filter { $0.contains("[MB2-PULL]") }
+        guard !hits.isEmpty else {
+            return "(no [MB2-PULL] lines yet this run — the pull-trace patch is "
+                + "not in the linked library, or the session has not started)"
+        }
+        return hits.suffix(maxLines).joined(separator: "\n")
+    }
+
     /// Raw tail, used to prove the sink is live and to show an unclassified
     /// failure that no keyword matched.
     ///
