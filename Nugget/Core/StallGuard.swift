@@ -105,6 +105,7 @@ enum StallGuard {
         wire: (@Sendable () -> RustWireSample)? = nil,
         probe: (@Sendable () async -> (alive: Bool, detail: String))? = nil,
         handshakeSilent: (@Sendable () -> Bool)? = nil,
+        lastExchange: (@Sendable () -> String)? = nil,
         _ body: @escaping () async throws -> T
     ) async throws -> T {
         let once = OnceResumer<T>()
@@ -135,7 +136,8 @@ enum StallGuard {
                     idle: idle,
                     wire: wire,
                     probe: probe,
-                    handshakeSilent: handshakeSilent)
+                    handshakeSilent: handshakeSilent,
+                    lastExchange: lastExchange)
             }
         }
     }
@@ -158,7 +160,8 @@ enum StallGuard {
         idle: @escaping @Sendable () -> Date,
         wire: (@Sendable () -> RustWireSample)?,
         probe: (@Sendable () async -> (alive: Bool, detail: String))?,
-        handshakeSilent: (@Sendable () -> Bool)?
+        handshakeSilent: (@Sendable () -> Bool)?,
+        lastExchange: (@Sendable () -> String)?
     ) async {
         var handshakeSince: Date? = nil
         var handshakeReported = false
@@ -283,6 +286,16 @@ enum StallGuard {
                 let result = await probe()
                 probeVerdict = result.detail
                 AppLog.write("⏱ \(label): nothing for \(quiet)s — out-of-band check: \(result.detail)")
+                // Feedback #31: at the first declared silence, quote the
+                // last completed DeviceLink exchanges verbatim. A duration
+                // alone cannot distinguish "device went quiet after asking
+                // for a directory listing" from "device went quiet mid-
+                // upload"; the exchange tail can, and it does not change
+                // while the silence lasts, so it is printed once, here.
+                if let lastExchange {
+                    AppLog.write("⏱ \(label): last DeviceLink exchanges before this silence "
+                        + "(feedback #31 pull trace):\n\(lastExchange())")
+                }
             }
 
             if now.timeIntervalSince(lastNotice) >= noticeInterval {
