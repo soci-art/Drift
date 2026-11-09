@@ -20,6 +20,12 @@ enum ProtectiveBackup {
     ) async throws {
         let minimuxer = Minimuxer.shared()
         AppLog.write("Creating protective backup (no photos/video) at \(backupRoot.path)…")
+        // Feedback #31: session brackets for the pull trace. The Rust half
+        // of the trace lives in minimuxer.log; these two lines put the same
+        // session's start and outcome in the app log, so a shared log
+        // package can be read from either side.
+        AppLog.write("[MB2-PULL] session start: protective pull, udid \(udid), "
+            + "root \(backupRoot.lastPathComponent)")
 
         // The Rust delegate callbacks are the ONLY host-side window into the
         // mobilebackup2 conversation.  Counting what the device streamed and how
@@ -88,7 +94,8 @@ enum ProtectiveBackup {
                     idle: { trace.lastActivityAt },
                     wire: { WireCensus.totals() },
                     probe: { await Diagnostics.deviceLivenessProbe() },
-                    handshakeSilent: { RustLog.deviceSilentAtHandshake() }
+                    handshakeSilent: { RustLog.deviceSilentAtHandshake() },
+                    lastExchange: { RustLog.pullTraceTail() }
                 ) {
                     try await minimuxer.backupBackup(
                         backupRoot: backupRoot.path(percentEncoded: false),
@@ -172,12 +179,14 @@ enum ProtectiveBackup {
                     + "Domains: \(trace.domainSummary())")
             }
             AppLog.write("protective backup finished — \(trace.summary())")
+            AppLog.write("[MB2-PULL] session end: protective pull finished — \(trace.summary())")
             beat.stop()
             stage.done(trace.summary())
         } catch {
             beat.stop()
             stage.done("FAILED — \(trace.summary())")
             AppLog.write("protective backup FAILED — \(trace.summary())")
+            AppLog.write("[MB2-PULL] session end: protective pull FAILED — \(trace.summary())")
             for line in trace.sampleLines() { AppLog.write(line) }
             // The Rust side is the only place that knows WHY the flow died, and
             // every candidate has its own literal: RST (device reset), "timed
