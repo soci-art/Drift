@@ -1,5 +1,6 @@
 import Foundation
 import Minimuxer
+import ZIPFoundation
 
 /// The failure dump, and the device preconditions that gate a run.
 ///
@@ -43,23 +44,38 @@ enum Diagnostics {
         // Proves whether RSD itself survived: if this works while mobilebackup2
         // keeps dying, the drop is mobilebackup2-specific (device side), not
         // the tunnel.
-        let udid = try? await minimuxer.core.fetchUDID()
-        lines.append("  lockdown fetchUDID: \(udid.flatMap { $0 } ?? "FAILED")")
-        switch await minimuxer.core.isReady(withNetworkCheck: true) {
-        case .success(let ready):
-            lines.append("  isReady: \(ready)")
-        case .failure(let error):
-            lines.append("  isReady: FAILED — \(minimuxer.core.describeError(error))")
+        //
+        // Feedback #23: each probe carries a deadline and a miss is written
+        // into the report as a miss. These calls used to run unbounded, so
+        // with the core held by an abandoned run the report simply never
+        // finished and the settings button looked dead; now the report
+        // always comes back, saying which facts it could not get.
+        let udid = await AsyncRacing.withDeadline(seconds: 5, fallback: { nil }) {
+            (try? await minimuxer.core.fetchUDID()) ?? nil
         }
+        lines.append("  lockdown fetchUDID: \(udid ?? "unavailable (probe failed or timed out)")")
+        let readyLine = await AsyncRacing.withDeadline(
+            seconds: 6, fallback: { "  isReady: unavailable (probe timed out)" }) {
+            switch await minimuxer.core.isReady(withNetworkCheck: true) {
+            case .success(let ready):
+                return "  isReady: \(ready)"
+            case .failure(let error):
+                return "  isReady: FAILED — \(minimuxer.core.describeError(error))"
+            }
+        }
+        lines.append(readyLine)
         lines.append("  rust log: \(logStatus)")
         // Wire liveness: how many DeviceLink messages this run actually moved.
         // A run that "hung at N %" is one number away from being diagnosable —
         // zero messages means the device never engaged, thousands means it was
         // working and the silence came later.
         lines.append("  wire: \(WireCensus.healthLine())")
-        let encrypt = await backupEncryptionEnabled()
+        let encrypt = await AsyncRacing.withDeadline(seconds: 6, fallback: { nil }) {
+            await backupEncryptionEnabled()
+        }
         lines.append("  backup encryption (com.apple.mobile.backup/WillEncrypt): "
-            + (encrypt.map { $0 ? "ON — premise broken (encrypted Manifest.db)" : "off" } ?? "unknown"))
+            + (encrypt.map { $0 ? "ON — premise broken (encrypted Manifest.db)" : "off" }
+                ?? "unknown (probe timed out or the device could not be asked)"))
         // Keyword slice first (the actual evidence), raw tail last (proves the
         // sink is live and shows an unclassified failure).  Both were captured
         // before the probes above wrote a single line.
@@ -156,5 +172,45 @@ enum Diagnostics {
             AppLog.write("preflight: WillEncrypt could not be read (domain/key unavailable) "
                          + "— continuing, but note that an encrypted backup breaks prune/inject")
         }
+    }
+}
+
+/// Everything a bug report needs, in one shareable zip (feedback #23,
+/// upgraded at Grace's 21:42 instruction: the old flow exported three files
+/// one by one and scattered them across testers). Building a package first
+/// writes a FRESH diagnostics report — with the deadline-bounded probes
+/// above — then zips it together with both logs. A log that does not exist
+/// is named in a note file inside the package; the package is produced
+/// either way.
+enum LogPackage {
+    static func build() async throws -> URL {
+        _ = await Diagnostics.report()
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let name = "Drift记录-\(formatter.string(from: Date())).zip"
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let url = caches.appendingPathComponent(name)
+        try? FileManager.default.removeItem(at: url)
+
+        let archive = try Archive(url: url, accessMode: .create)
+        var missing: [String] = []
+        for file in [AppPaths.diagnostics, AppPaths.appLog, AppPaths.rustLog] {
+            guard FileManager.default.fileExists(atPath: file.path) else {
+                missing.append(file.lastPathComponent)
+                continue
+            }
+            try archive.addEntry(with: file.lastPathComponent, fileURL: file)
+        }
+        if !missing.isEmpty {
+            let note = Data(("这份记录包缺少以下文件（打包时不存在）：\n"
+                + missing.joined(separator: "\n") + "\n").utf8)
+            try archive.addEntry(with: "缺失说明.txt", type: .file,
+                                 uncompressedSize: UInt64(note.count)) { position, size in
+                note.subdata(in: Int(position)..<(Int(position) + size))
+            }
+        }
+        return url
     }
 }
