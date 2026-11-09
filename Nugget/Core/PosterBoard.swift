@@ -415,10 +415,9 @@ extension PosterBoard {
         let stagedItems = builder.configs
         if database == nil && !stagedItems.isEmpty {
             throw GoldenNuggetError(
-                "PosterBoard 没有可把这些壁纸加进去的数据库。请先获取设备的"
-                + "PosterBoard 数据库（该页的数据库卡片）——库的"
-                + "数据库决定了壁纸是否出现在选择器中，而且它无法"
-                + "合成：它带着设备自己的数据行集合。")
+                "PosterBoard 没有可把这些壁纸加进去的数据库：本地既没有缓存"
+                + "的设备数据库副本，也没能新建空数据库——数据库决定了"
+                + "壁纸是否出现在选择器中。请把日志发给维护者定位。")
         }
         if let database {
             let staged = try PosterBoardStore.stitch(database: database,
@@ -600,8 +599,21 @@ extension PosterBoard {
     /// does get a modern pack pushes it unchanged and reads it fine.
     static func shouldConvertLegacy(pack: PosterBoardTendie, deviceVersion: String,
                                     log: @escaping @Sendable (String) -> Void) -> Bool {
-        guard PosterBoardPreferences.autoConvertLegacy else { return false }
-        guard pack.autoConvert != false else { return false }
+        // Feedback #22: every skip names its reason in the log. A wallpaper
+        // that silently went in unconverted (132.tendies, answered "as is"
+        // once and locked forever) cost a whole evening to diagnose because
+        // no line said which gate had closed.
+        guard PosterBoardPreferences.autoConvertLegacy else {
+            log("  → skipping legacy conversion of \(pack.name): the global "
+                + "auto-convert setting is off, so every pack goes in as-is.")
+            return false
+        }
+        guard pack.autoConvert != false else {
+            log("  → skipping legacy conversion of \(pack.name): this pack's "
+                + "saved answer is “按原样安装” (change it any time in the "
+                + "pack's detail page, under 旧格式处理).")
+            return false
+        }
         guard let atLeast27 = compareVersion(deviceVersion, "27") else {
             log("  → skipping legacy conversion of \(pack.name): PosterBoard needs the device's "
                 + "iOS version to tell a legacy wallpaper from a modern one (27 changed the "
@@ -609,7 +621,13 @@ extension PosterBoard {
                 + "and try again.")
             return false
         }
-        return atLeast27 >= 0
+        guard atLeast27 >= 0 else {
+            log("  → skipping legacy conversion of \(pack.name): the device is "
+                + "on iOS \(deviceVersion), and iOS 26 reads legacy packages "
+                + "natively — conversion is an iOS 27+ concern only.")
+            return false
+        }
+        return true
     }
 
     /// The apply-time conversion for one extracted pack: `convert_tree` then
