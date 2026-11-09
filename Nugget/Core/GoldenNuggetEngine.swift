@@ -762,22 +762,16 @@ class GoldenNuggetEngine {
             log("Manifest format: sqlite (iOS 27+ path), synthesised locally — no backup pulled")
             backupRoot = try synthesizedBackup(udid: udid)
             prune = false
-            // Media over AFC, after the backup and before the prune: the backup
-            // filter rejects the media domains, so this is the only thing that
-            // collects them, and doing it here means an apply is the one action
-            // that leaves media preserved rather than only tweaks applied.
-            //
-            // Deletion stays off. A run is not the place to remove the user's
-            // photos: it is started to apply tweaks, and the media page is where
-            // that choice is made with a count and a free-space figure in front
-            // of the user.
-            if dev.skipAfcMedia {
-                log("development mode: skipping the AFC media pull (Dev.SkipAfcMedia)")
-            } else {
-                clearProgress()
-                log("AFC media: collecting media files…")
-                await mediaBackup(deletingOriginals: false)
-            }
+            // No media stage (feedback #27): the reference pulled the
+            // device's photos and videos over AFC at exactly this point —
+            // after the synthesised backup, before the restore — which on
+            // a full camera roll meant gigabytes copied into the container
+            // before the restore even started, in the one flow whose whole
+            // point (#21) is that nothing is pulled. The stage is removed,
+            // not gated on `DevSettings.skipAfcMedia`: no setting can bring
+            // it back, and the line below is the run log's proof that the
+            // delivery went straight from synthesis to the restore.
+            log("AFC media 已按 Drift 口径停用 — 刷入全程不拉取设备媒体")
         } else {
             log("Manifest format: legacy MBDB (iOS 26 path), built from nothing")
             backupRoot = try await partialRestore(udid: udid)
@@ -931,141 +925,27 @@ class GoldenNuggetEngine {
         }
     }
 
-    /// The AFC media stage, as a stage rather than a separate button so the run
-    /// log tells the whole story in one place.
-    private func mediaBackup(deletingOriginals: Bool) async {
-        // A background top-up owns the store while it runs, and the transfer
-        // lock would reject this pull anyway. Saying so here keeps that out of
-        // the `FAILED` lines, which are for real faults: the run keeps whatever
-        // the store already holds and carries on to the tweaks.
-        guard !AfcMediaBackup.isTransferActive else {
-            log("AFC media: a background pull is still running — this run keeps what the "
-                + "store already has")
-            clearProgress()
-            return
-        }
-        do {
-            let survey = try await AfcMediaBackup.survey()
-            guard !survey.files.isEmpty else {
-                log("AFC media: nothing in \(AfcMediaBackup.trees.joined(separator: "/")) "
-                    + "— skipped")
-                return
-            }
-            log("AFC media: pulling \(survey.files.count) file(s), \(survey.bytes) byte(s)")
-            let manifest = try await AfcMediaBackup.pull(deletingOriginals: deletingOriginals) {
-                self.log($0)
-            }
-            let removed = manifest.entries.filter(\.deleted).count
-            log("AFC media: stored \(manifest.entries.count) file(s), \(removed) removed "
-                + "from the device")
-        } catch {
-            // Not fatal to the tweak apply. The store is a copy, not a
-            // precondition for writing preferences, and a media failure must not
-            // cost the user the tweak run they started.
-            log("AFC media: FAILED — \(error.localizedDescription)")
-        }
-        clearProgress()
-    }
-
     // MARK: - Media facade
-
-    /// One automatic pull at a time, whoever asked for it.
-    private static let mediaPullLock = NSLock()
-    private static var mediaPullInFlight = false
-    /// When the last automatic pull started, for the rate limit below.
-    private static var lastAutomaticMediaPull: Date?
-    /// An hour between automatic pulls. They are top-ups, not runs: the home
-    /// page is rebuilt on every selection in a split view, and each rebuild must
-    /// not mean another walk of the photo library. An hour is short enough that
-    /// a photo taken since the last one is collected the same day.
-    private static let automaticMediaPullInterval: TimeInterval = 3600
 
     /// Copy the device's photos and videos into the app container without a
     /// tweak run behind it.
     ///
-    /// The store is what "Restore media" writes back, and a store that only
-    /// fills when the user remembers the Media page's button is empty exactly
-    /// when it is needed — after a reset, when there is no photo left to
-    /// restore from the device itself. So the setup guide finishing starts one,
-    /// and every launch afterwards tops it up; the second call is cheap because
-    /// `AfcMediaBackup.pull` skips every file it already holds at the same size
-    /// and date.
-    ///
-    /// Deliberately **not** fatal and deliberately not a run: it holds no
-    /// `InFlightCall` reservation, so pressing Apply still works while it
-    /// streams, and every outcome — including "the tunnel was not up" — is a log
-    /// line rather than an error on the page.
+    /// **Disabled outright in Drift (feedback #27).** The reference started
+    /// one of these when the setup guide finished and topped it up on every
+    /// launch, so the media store would be full when "Restore media" needed
+    /// it. Drift has no media feature and a standing rule that nothing is
+    /// ever pulled from the device (#21), so the facade stays only so any
+    /// stale caller lands somewhere harmless: it logs the refusal and does
+    /// nothing. The refusal deliberately ignores
+    /// `DevSettings.skipAfcMedia` — this is Drift policy enforced at the
+    /// entry layer, not a development-mode preference.
     ///
     /// - Parameters:
     ///   - reason: what asked for this, quoted in the log so two callers can be
     ///     told apart in a bug report.
-    ///   - force: skip the one-per-hour limit, for the setup step the user just
-    ///     took rather than a page being rebuilt.
+    ///   - force: formerly skipped the rate limit; now ignored.
     func startAutomaticMediaPull(reason: String, force: Bool = false) {
-        guard !DevSettings.effective.skipAfcMedia else {
-            log("AFC media: automatic pull skipped (\(reason)) — Dev.SkipAfcMedia is on")
-            return
-        }
-        guard !InFlightCall.shared.isRunActive else {
-            log("AFC media: automatic pull skipped (\(reason)) — a run owns the device")
-            return
-        }
-        Self.mediaPullLock.lock()
-        if Self.mediaPullInFlight {
-            Self.mediaPullLock.unlock()
-            log("AFC media: automatic pull already running — \(reason) started no second one")
-            return
-        }
-        if !force, let last = Self.lastAutomaticMediaPull,
-           Date().timeIntervalSince(last) < Self.automaticMediaPullInterval {
-            Self.mediaPullLock.unlock()
-            return
-        }
-        Self.lastAutomaticMediaPull = Date()
-        Self.mediaPullInFlight = true
-        Self.mediaPullLock.unlock()
-        log("AFC media: automatic pull started (\(reason)) — the container keeps a copy "
-            + "of this device's photos and videos so Restore media can put them back")
-
-        Task { [weak self] in
-            defer {
-                Self.mediaPullLock.lock()
-                Self.mediaPullInFlight = false
-                Self.mediaPullLock.unlock()
-            }
-            guard let self else { return }
-            // The gateway only exists once minimuxer has started, which on the
-            // setup path is the same moment this is called. Wait for it instead
-            // of failing the one pull the setup asked for.
-            var waited = 0
-            while Minimuxer.shared().ideviceGateway == nil, waited < 120 {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                waited += 2
-            }
-            guard Minimuxer.shared().ideviceGateway != nil else {
-                self.log("AFC media: automatic pull gave up — no idevice gateway after "
-                    + "\(waited) s (is the tunnel up?). The Media page can pull by hand.")
-                return
-            }
-            do {
-                let survey = try await AfcMediaBackup.survey()
-                guard !survey.files.isEmpty else {
-                    self.log("AFC media: automatic pull found nothing in "
-                        + "\(AfcMediaBackup.trees.joined(separator: "/"))")
-                    return
-                }
-                let manifest = try await AfcMediaBackup.pull(deletingOriginals: false) {
-                    self.log($0)
-                }
-                let stored = manifest.entries.reduce(0) { $0 + $1.size }
-                self.log("AFC media: automatic pull finished — \(manifest.entries.count) file(s), "
-                    + "\(ByteCountFormatter.string(fromByteCount: stored, countStyle: .file)) "
-                    + "in the container, ready for Restore media")
-            } catch {
-                self.log("AFC media: automatic pull FAILED — \(error.localizedDescription); "
-                    + "the store keeps what it already has")
-            }
-        }
+        log("AFC media 已按 Drift 口径停用 — 自动拉取不再启动（\(reason)）")
     }
 
     /// Put the container's photos and videos back on the device.
