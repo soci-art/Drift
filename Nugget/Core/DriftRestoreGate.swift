@@ -13,6 +13,17 @@ import Foundation
 /// touched — the audit still needs it, and reopening the route is meant
 /// to be this one flag flipping back, plus the copy that describes the
 /// route as available being restored with it.
+///
+/// Feedback #31's research build does NOT open this gate either — that
+/// was considered and explicitly rejected for the first diagnosis round:
+/// the round runs on Grace's main device (the original pull-silence
+/// scene, iOS 27.2 beta 2) because the list-dir hypothesis is most
+/// falsifiable there, and the write-back path must never reach that
+/// device. The research flag (see `DriftResearchBuild`) opens only the
+/// diagnostic-pull entry and the banner; this literal stays `false` in
+/// every build this stage produces. A gate-open variant for the spare
+/// device (iOS 27.3) end-to-end stage, if it is ever built, is a
+/// separate build decided separately — it is not a mode of this one.
 enum DriftRestoreGate {
     static let isEnabled = false
 
