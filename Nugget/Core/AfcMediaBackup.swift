@@ -76,6 +76,43 @@ enum AfcMediaBackup {
         storeRoot.appendingPathComponent("afc-media.json", conformingTo: .data)
     }
 
+    /// Everything the store currently holds, as (regular-file count, bytes).
+    private static func storeUsage() -> (files: Int, bytes: Int64) {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(
+            at: storeRoot, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey])
+        else { return (0, 0) }
+        var files = 0
+        var bytes: Int64 = 0
+        for case let url as URL in enumerator {
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            guard values?.isRegularFile == true else { continue }
+            files += 1
+            bytes += Int64(values?.fileSize ?? 0)
+        }
+        return (files, bytes)
+    }
+
+    /// Empty the store completely and return how many bytes were reclaimed
+    /// (0 when there was nothing to reclaim or the removal failed).
+    ///
+    /// Drift never fills the store any more — the pull steps were removed
+    /// (feedback #27) — so whatever sits here is a leftover copy an older
+    /// build pulled off the device mid-flash (one real run had 275 MB+ of a
+    /// 12.84 GB pull in it before it was stopped). Only this app's container
+    /// copy is removed; the device's own library is never touched. `pull`
+    /// recreates the directory on demand, so deleting the whole tree is
+    /// safe for the engine code that remains.
+    @discardableResult
+    static func reclaimResidualStore() -> Int64 {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: storeRoot.path) else { return 0 }
+        let usage = storeUsage()
+        guard usage.files > 0 else { return 0 }
+        try? fm.removeItem(at: storeRoot)
+        return fm.fileExists(atPath: storeRoot.path) ? 0 : usage.bytes
+    }
+
     /// One file's record. `deleted` is whether the original was removed from
     /// the Media tree, which is the only irreversible part of the operation and
     /// therefore is tracked per file rather than per run.
