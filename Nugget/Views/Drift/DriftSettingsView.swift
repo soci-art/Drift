@@ -107,6 +107,14 @@ struct DriftSettingsView: View {
             } label: {
                 Label("重新打开设置向导", systemImage: "wand.and.stars")
             }
+            // Feedback #29: the tutorial lives directly under the guide
+            // row — the guide walks the connection setup once, the
+            // tutorial is the standing how-to for everyday flashing.
+            NavigationLink {
+                DriftTutorialView()
+            } label: {
+                Label("使用教程", systemImage: "book")
+            }
         }
     }
 
