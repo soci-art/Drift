@@ -34,10 +34,10 @@ jobs:
           # GitHub Releases downloads have returned 504 from the runner
           # (2026-11-09, two attempts), so: retries first, then a mirrored
           # copy of the very same zip, sha256-checked either way.
-          if ! curl -fsSL --retry 3 --retry-all-errors -o "$RUNNER_TEMP/xcodegen.zip" \
+          if ! curl -fsSL --max-time 90 --retry 2 --retry-delay 5 --retry-all-errors -o "$RUNNER_TEMP/xcodegen.zip" \
             "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"; then
             echo "GitHub download failed — using the mirrored copy"
-            curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" \
+            curl -fsSL --max-time 120 -o "$RUNNER_TEMP/xcodegen.zip" \
               "https://muse.ai/files/1368012179736313/1689682835907867/vqyshyzj09aj4471ec9f6h46/xcodegen-2.46.0.zip"
           fi
           echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
