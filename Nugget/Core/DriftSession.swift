@@ -340,6 +340,14 @@ final class DriftSession: ObservableObject {
         guard !InFlightCall.shared.hasLiveRun else {
             return (false, "已有一轮刷入正在进行")
         }
+        // Feedback #30: the funnel refuses a restore run while the gate
+        // is closed, even if a caller forgot to consult it — judgement,
+        // reset and video all arrive here, so this is the one place a
+        // restore run cannot slip past.
+        if mode == .backup && !DriftRestoreGate.isEnabled {
+            GoldenNuggetEngine.shared.log("run refused: restore route is suspended (feedback #30)")
+            return (false, DriftRestoreGate.notice)
+        }
         PosterBoardApplyModeSettings.current = mode
         running = true
         RunLog.shared.clear()
@@ -385,6 +393,12 @@ struct DriftModeJudgement {
     var reason: String
     /// Set when the user's manual pick was overridden by a hard limit.
     var overriddenPick: PosterBoardApplyMode?
+    /// Set when no run may start at all right now (feedback #30: the
+    /// restore route is suspended, and this selection can only travel
+    /// it). `mode` is then a placeholder — callers must check
+    /// `isBlocked` before running anything.
+    var blockedReason: String?
+    var isBlocked: Bool { blockedReason != nil }
 }
 
 enum DriftJudge {
@@ -411,6 +425,14 @@ enum DriftJudge {
     /// pack) happened to redraw the page.
     static func judge(identity: DeviceIdentity, selection: PosterBoardSelection,
                       pick: PosterBoardApplyMode?) -> DriftModeJudgement {
+        // Feedback #30: while the restore gate is closed the judgement
+        // is a different shape — restore is never the answer, and a
+        // selection that can only travel restore is "cannot flash now",
+        // not "restore". The normal judgement below stays untouched for
+        // the day the gate reopens.
+        if !DriftRestoreGate.isEnabled {
+            return judgeRestoreSuspended(identity: identity, selection: selection, pick: pick)
+        }
         func forced(_ reason: String) -> DriftModeJudgement {
             DriftModeJudgement(mode: .backup, reason: reason,
                                overriddenPick: pick == .airlift ? .airlift : nil)
@@ -435,6 +457,49 @@ enum DriftJudge {
                 mode: pick,
                 reason: pick == .airlift ? "已手动选择直刷，刷完只注销不重启"
                                          : "已手动选择恢复式，刷完会重启",
+                overriddenPick: nil)
+        }
+        return DriftModeJudgement(mode: .airlift, reason: "当前系统支持直刷，刷完只注销不重启", overriddenPick: nil)
+    }
+
+    /// The judgement while the restore route is suspended (feedback #30).
+    /// Same order as the normal judgement — hard limits first — but a
+    /// hard limit no longer lands on restore: it lands on "cannot flash
+    /// now", with the reason still naming what forced it. A manual
+    /// restore pick degrades to direct whenever direct is possible; it
+    /// never blocks a selection direct could have carried.
+    private static func judgeRestoreSuspended(identity: DeviceIdentity,
+                                              selection: PosterBoardSelection,
+                                              pick: PosterBoardApplyMode?) -> DriftModeJudgement {
+        func blocked(_ reason: String) -> DriftModeJudgement {
+            DriftModeJudgement(mode: .backup, reason: reason, overriddenPick: nil,
+                               blockedReason: DriftRestoreGate.notice)
+        }
+        if selection.video != nil {
+            return blocked("视频壁纸只能用恢复式，但恢复式暂时停用，现在刷不了")
+        }
+        if selection.fullReset || !selection.resetModes.isEmpty {
+            return blocked("重置壁纸商店只能用恢复式，但恢复式暂时停用，现在做不了")
+        }
+        if selection.tendies.contains(where: \.isUnsafeContainer) {
+            return blocked("包含商店数据库的壁纸包只能用恢复式，但恢复式暂时停用，现在刷不了")
+        }
+        if identity.version.isEmpty {
+            return blocked("暂时读不到设备系统信息，确认不了能不能直刷，恢复式又在停用中，现在先刷不了，稍后再试")
+        }
+        if AirliftAvailability.isHidden(deviceVersion: identity.version, buildVersion: identity.buildVersion) {
+            return blocked("当前系统不在直刷支持范围内，原本只能用恢复式，但恢复式暂时停用，现在刷不了")
+        }
+        if pick == .backup {
+            return DriftModeJudgement(
+                mode: .airlift,
+                reason: "你手动选了恢复式，但恢复式暂时停用，已改用直刷，刷完只注销不重启",
+                overriddenPick: nil)
+        }
+        if let pick {
+            return DriftModeJudgement(
+                mode: pick,
+                reason: "已手动选择直刷，刷完只注销不重启",
                 overriddenPick: nil)
         }
         return DriftModeJudgement(mode: .airlift, reason: "当前系统支持直刷，刷完只注销不重启", overriddenPick: nil)
