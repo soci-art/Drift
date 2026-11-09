@@ -9,11 +9,12 @@ import SwiftUI
 /// steps and only borrows a verdict in one line where a step depends
 /// on it. Nothing here restates About's tables.
 ///
-/// One distinction is made twice, in the route step AND in its own
-/// step, because getting it wrong wastes a whole run: turning off
-/// Find My iPhone is a restore-route chore ONLY. Direct flashes never
-/// need it, and no line on this page says "before flashing, turn off
-/// Find My" without naming the route.
+/// Step 4 used to teach the restore route's Find-My-iPhone chore.
+/// Since feedback #30 the restore route is suspended (a confirmed
+/// restore ended in a factory reset after reboot; cause under audit),
+/// so step 4 is the suspension notice instead — the Find-My chore comes
+/// back with the route, not before. What survives from the old step is
+/// its fence: nothing on this page may read as restore being usable.
 struct DriftTutorialView: View {
     var body: some View {
         ZStack {
@@ -26,10 +27,10 @@ struct DriftTutorialView: View {
                     step(number: 2, title: "导入壁纸包",
                          text: "在壁纸页点「导入」选 .tendies 文件，或者在「文件」App 里对壁纸包点打开方式选 Drift。导入后列表里每个包都带预览图（从包里提取的）；纯动画、没有静态图的包显示占位图，不影响刷入。点包行左侧的圆圈勾选要刷的包；点行的其他地方进详情，详情里能改「刷完出现在哪里」。一次最多刷 10 张。")
                     step(number: 3, title: "选方式，点刷入",
-                         text: "主页「本次刷入方式」卡会按读到的系统版本自动判断走哪种，并写明原因，也可以点卡上的菜单手动选。两种方式的区别：直刷只把壁纸写进壁纸商店，刷完注销让系统重读，不重启；恢复式把壁纸编进一份备份再写回设备，刷完会重启。手动选不能突破硬限制——视频包、容器包、还有系统版本不支持直刷的情况都只能走恢复式，硬选了卡上会用橙字说明并按恢复式处理。方式对了就点「刷入」；过程里保持手机解锁、隧道开着。直刷的话到这里就齐了，下面第四步不用看。")
-                    findMyStep
+                         text: "主页「本次刷入方式」卡会按读到的系统版本自动判断走哪种，并写明原因，也可以点卡上的菜单手动选。两种方式的区别：直刷只把壁纸写进壁纸商店，刷完注销让系统重读，不重启；恢复式把壁纸编进一份备份再写回设备，刷完会重启。手动选不能突破硬限制——视频包、容器包、还有系统版本不支持直刷的情况都只能走恢复式。恢复式目前暂时停用（见第四步），所以只能走恢复式的情况现在都刷不了，能直刷的照常刷。方式对了就点「刷入」；过程里保持手机解锁、隧道开着。")
+                    restoreSuspendedStep
                     step(number: 5, title: "视频壁纸",
-                         text: "想刷视频就去视频页：选好视频、确认，剩下的和普通刷入一样。视频在任何系统上都只能走恢复式、刷完会重启，所以第四步的关「查找我的 iPhone」对视频一样要做。")
+                         text: "想刷视频就去视频页：选好视频、确认，剩下的和普通刷入一样。视频在任何系统上都只能走恢复式、刷完会重启；恢复式停用期间，视频壁纸暂时刷不了。")
                     step(number: 6, title: "旧格式转换（一句带过）",
                          text: "iOS 27 上，旧格式的包要先转换成新格式才显示；勾选时 App 会问你一次、答案会记住，答错了在包的详情页「旧格式处理」里随时改。（iOS 26 不需要转换。）")
                     step(number: 7, title: "出问题怎么办",
@@ -53,12 +54,13 @@ struct DriftTutorialView: View {
         .driftCard()
     }
 
-    /// Step 4 gets its own card rather than the shared step shape: it is
-    /// the one step whose omission fails the run outright (the device
-    /// refuses the restore), so it carries the warning mark and the
-    /// orange badge — and it is fenced to the restore route in its
-    /// first and last sentences.
-    private var findMyStep: some View {
+    /// Step 4 keeps its own card and the warning styling, but what it
+    /// teaches changed with feedback #30: the restore route is
+    /// suspended, so this step is the suspension notice. The old
+    /// Find-My-iPhone chore is deliberately NOT taught here any more —
+    /// it only matters on a route nobody may use until the gate
+    /// reopens, and teaching it would read as restore being available.
+    private var restoreSuspendedStep: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text("4")
@@ -68,10 +70,10 @@ struct DriftTutorialView: View {
                     .background(Color.orange, in: Circle())
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
-                Text("用恢复式之前：先关掉「查找我的 iPhone」")
+                Text("恢复式暂时停用")
                     .font(.subheadline.weight(.semibold))
             }
-            Text("这一步只针对恢复式，直刷不用关。凡是走恢复的——恢复式刷入、视频壁纸、重置壁纸商店、设置里的「恢复备份」——开始之前先去系统「设置 → 你的名字 → 查找 → 查找我的 iPhone」把它关掉：开着它，设备会直接拒绝恢复，壁纸一张都刷不进去。刷完之后可以再打开，不影响已经刷好的壁纸。直刷再说一遍：不用关，打开 Drift 就能刷，刷完只注销、不重启。")
+            Text(DriftRestoreGate.notice + "只能走恢复式的内容——视频壁纸、重置壁纸商店、系统不在直刷范围内的普通包——这段时间都先放一放，等恢复式重新开放再刷。")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
