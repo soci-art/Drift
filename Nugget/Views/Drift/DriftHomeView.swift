@@ -477,7 +477,9 @@ struct DriftPackDetail: View {
     @Binding var imports: [PosterBoardTendie]
     @Binding var selection: PosterBoardSelection
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var identityMonitor: DeviceIdentityMonitor
     @State private var previews: [UIImage] = []
+    @State private var packHasLegacy = false
 
     var body: some View {
         NavigationStack {
@@ -517,6 +519,32 @@ struct DriftPackDetail: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     .driftCard()
+                    // Feedback #22: the conversion answer used to be a
+                    // one-way ratchet — asked once at flash time, stored
+                    // forever, changeable nowhere (not even by deleting and
+                    // re-importing). It is an ordinary setting here now.
+                    // Shown only when the pack actually holds legacy
+                    // content and the device runs a system that can need
+                    // conversion (iOS 27+; an unread version also shows it,
+                    // so a transient read failure cannot hide the setting).
+                    if packHasLegacy && needsConversionUI {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("旧格式处理").font(.subheadline.weight(.semibold))
+                            Picker("旧格式处理", selection: Binding(
+                                get: { current.autoConvert ?? true },
+                                set: { setConvert($0) }
+                            )) {
+                                Text("转换成新格式").tag(true)
+                                Text("按原样安装").tag(false)
+                            }
+                            .pickerStyle(.segmented)
+                            Text(LegacyConversionCopy.why)
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text(LegacyConversionCopy.versions)
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        .driftCard()
+                    }
                     if current.isUnsafeContainer {
                         NativeSafetyNote("这个包带着壁纸商店的数据库，属于「容器包」：刷入可能弄乱现有壁纸索引，只能用恢复式刷入；真乱了用壁纸页底部的「重置壁纸商店」清理。")
                     }
@@ -544,6 +572,7 @@ struct DriftPackDetail: View {
             .task {
                 let urls = await Task.detached { PosterBoardPreview.previews(for: pack) }.value
                 previews = urls.compactMap { (try? Data(contentsOf: $0)).flatMap(UIImage.init(data:)) }
+                packHasLegacy = ((try? pack.legacyFamilies()) ?? []).isEmpty == false
             }
         }
     }
@@ -554,6 +583,25 @@ struct DriftPackDetail: View {
 
     private func setType(_ type: PosterBoardPosterType) {
         let updated = current.settingPosterType(type)
+        if let index = imports.firstIndex(where: { $0.url == updated.url }) {
+            imports[index] = updated
+        }
+        if let index = selection.tendies.firstIndex(where: { $0.url == updated.url }) {
+            selection.tendies[index] = updated
+        }
+    }
+
+    /// The device's major version, or nil while identity is unread — the
+    /// conversion UI shows unless the device is known to be on iOS 26,
+    /// the one supported system that never converts (feedback #22).
+    private var needsConversionUI: Bool {
+        let version = identityMonitor.current.version
+        guard let major = Int(version.split(separator: ".").first ?? "") else { return true }
+        return major >= 27
+    }
+
+    private func setConvert(_ convert: Bool) {
+        let updated = current.settingAutoConvert(convert)
         if let index = imports.firstIndex(where: { $0.url == updated.url }) {
             imports[index] = updated
         }
