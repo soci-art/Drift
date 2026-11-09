@@ -1,0 +1,161 @@
+diff --git a/idevice/src/services/mobilebackup2.rs b/idevice/src/services/mobilebackup2.rs
+--- a/idevice/src/services/mobilebackup2.rs
++++ b/idevice/src/services/mobilebackup2.rs
+@@ -1284,9 +1284,78 @@ impl MobileBackup2Client {
+         let mut tracker = ProgressTracker::default();
+         // The last answer given to `DLMessageGetFreeDiskSpace`, kept so a
+         // following `DLMessagePurgeDiskSpace` can report the byte threshold the
+         // device is actually comparing against instead of a raw purge request.
+         let mut reported_free_space: Option<u64> = None;
++        // [MB2-PULL] Feedback #31: log-only trace state for the pull
++        // diagnosis on a spare device. Nothing here is read by any
++        // protocol path; it only narrates the session into the log, so a
++        // silence can be attributed to the exact exchange that preceded
++        // it instead of to a bare duration.
++        let mut pull_rx_count: u64 = 0;
++        let mut pull_last_rx: Option<std::time::Instant> = None;
++
++        // One-line shape of a DeviceLink payload: the names a
++        // DownloadFiles asks for, the path a ContentsOfDirectory names,
++        // a dictionary's keys and entry counts — never payload bytes.
++        fn mb2_pull_describe(value: &plist::Value) -> String {
++            match value {
++                plist::Value::Array(items) => {
++                    let mut parts: Vec<String> = Vec::new();
++                    for item in items.iter().skip(1).take(10) {
++                        match item {
++                            plist::Value::String(s) => parts.push(s.clone()),
++                            plist::Value::UnsignedInteger(n) => parts.push(n.to_string()),
++                            plist::Value::Integer(n) => parts.push(n.to_string()),
++                            plist::Value::Boolean(b) => parts.push(b.to_string()),
++                            plist::Value::Array(inner) => {
++                                let names: Vec<String> = inner
++                                    .iter()
++                                    .filter_map(|v| v.as_string().map(|s| s.to_string()))
++                                    .take(10)
++                                    .collect();
++                                parts.push(format!(
++                                    "[{} item(s): {}]",
++                                    inner.len(),
++                                    names.join(", ")
++                                ));
++                            }
++                            _ => parts.push("<other>".to_string()),
++                        }
++                    }
++                    format!("array of {}: [{}]", items.len(), parts.join(", "))
++                }
++                plist::Value::Dictionary(d) => {
++                    let mut parts: Vec<String> = Vec::new();
++                    for (k, v) in d.iter() {
++                        let shape = match v {
++                            plist::Value::Array(items) => {
++                                format!("[{} entries]", items.len())
++                            }
++                            plist::Value::String(s) => format!("\"{}\"", s),
++                            plist::Value::UnsignedInteger(n) => n.to_string(),
++                            plist::Value::Integer(n) => n.to_string(),
++                            _ => "<other>".to_string(),
++                        };
++                        parts.push(format!("{}={}", k, shape));
++                    }
++                    format!("dict of {}: {{{}}}", d.len(), parts.join(", "))
++                }
++                plist::Value::String(s) => format!("\"{}\"", s),
++                _ => "<scalar>".to_string(),
++            }
++        }
+         loop {
+             let (tag, value) = self.receive_dl_message().await?;
++
++            pull_rx_count += 1;
++            let pull_gap = pull_last_rx.map(|t| t.elapsed().as_secs()).unwrap_or(0);
++            pull_last_rx = Some(std::time::Instant::now());
++            debug!(
++                "[MB2-PULL] RX #{} {} (+{}s since previous message) {}",
++                pull_rx_count,
++                tag,
++                pull_gap,
++                mb2_pull_describe(&value)
++            );
+ 
+             match tag.as_str() {
+@@ -1323,6 +1394,10 @@ impl MobileBackup2Client {
+                 "DLMessageGetFreeDiskSpace" => {
+                     let freespace = delegate.get_free_disk_space(host_dir);
+                     reported_free_space = Some(freespace);
++                    debug!(
++                        "[MB2-PULL] TX GetFreeDiskSpace answer: {} bytes",
++                        freespace
++                    );
+                     self.send_status_response(
+                         0,
+                         None,
+@@ -1331,5 +1406,6 @@ impl MobileBackup2Client {
+                 }
+                 "DLMessagePurgeDiskSpace" => {
++                    debug!("[MB2-PULL] PurgeDiskSpace arm: answered by the purge patch (status -1, no purge backend); the warn line below carries the byte threshold");
+                     let (amount, urgency) = match &value {
+                         plist::Value::Array(arr) => (
+                             arr.get(1)
+@@ -1389,6 +1465,18 @@ impl MobileBackup2Client {
+                 }
+                 "DLContentsOfDirectory" => {
+                     let listing = Self::list_directory_contents(&value, host_dir, delegate).await;
++                    // [MB2-PULL] First observation point of the pull
++                    // diagnosis (feedback #31): what the host answers a
++                    // directory-listing request with. The FFI delegate's
++                    // list_dir is an always-empty stub, so today this
++                    // reads "dict of 0" for every directory the device
++                    // asks about — which is exactly what has to be
++                    // visible when the device goes quiet right after
++                    // asking, as it does on iOS 27.2 beta 2.
++                    warn!(
++                        "[MB2-PULL] TX ContentsOfDirectory answer: {}",
++                        mb2_pull_describe(&listing)
++                    );
+                     self.send_status_response(0, None, Some(listing)).await?;
+                 }
+                 "DLMessageCreateDirectory" => {
+@@ -1427,19 +1515,28 @@ impl MobileBackup2Client {
+                 }
+                 "DLMessageProcessMessage" => {
++                    warn!(
++                        "[MB2-PULL] session end: DLMessageProcessMessage {}",
++                        mb2_pull_describe(&value)
++                    );
+                     if let plist::Value::Array(arr) = value
+                         && let Some(plist::Value::Dictionary(dict)) = arr.get(1)
+                     {
+                         return Ok(Some(dict.clone()));
+                     }
+                     return Ok(None);
+                 }
+                 "DLMessageDisconnect" => {
++                    warn!("[MB2-PULL] session end: DLMessageDisconnect");
+                     return Ok(None);
+                 }
+                 other => {
+                     warn!("Unsupported DL message: {other}");
+                     self.send_status_response(-1, Some("Operation not supported"), None)
+                         .await?;
++                    warn!(
++                        "[MB2-PULL] UNHANDLED DL message: {} — no arm handles it; answered status -1 \"Operation not supported\"",
++                        other
++                    );
+                 }
+             }
+         }
+@@ -1560,8 +1649,13 @@ impl MobileBackup2Client {
+             // Ask BEFORE touching the filesystem. A protective backup rejects
+             // most of what the device uploads; creating the file first and
+             // deleting it afterwards wrote every rejected payload to flash.
+             let keep = delegate.should_store_file(&dname, &fname);
++
++            debug!(
++                "[MB2-PULL] upload offered: dir={} name={} keep={}",
++                dname, fname, keep
++            );
+ 
+             let dst = host_path(host_dir, &fname);
+             if keep {
