@@ -32,7 +32,7 @@ Drift：只刷交互壁纸的独立应用。基于 GoldenNugget（AGPL-3.0）移
 ### 配对与连接
 
 - 配对文件导入是独立功能：向导、壁纸页、设置页都有入口，设置页可更换/删除。认 `.mobiledevicepairing` / `.mobiledevicepair` / `.mobiledeviceconfig` 三种格式，也支持在「文件」App 里用打开方式送入。
-- 配对文件来源：电脑端 Mobile Helper 用 USB 生成；电脑上 idevicepair / Sideloadly 配对后传入；iOS 27 起可用 App 内无线自配对（iOS 26 没有这条路）。
+- 配对文件来源：在电脑上用 iLoader 配对后导出（.plist 或 .mobiledevicepairing）传入；也可以用 idevicepair / Sideloadly 配对后传入；iOS 27 起可用 App 内无线自配对（iOS 26 没有这条路）。
 - 隧道只用 LocalDevVPN（或同类隧道 App），地址固定使用默认值（本机 10.7.1.1、对端 10.7.0.1、端口 62078、前缀 24），App 只做检测、不可修改。
 - 首次设置向导：隧道说明与检测、配对说明，隧道状态实时显示。
 

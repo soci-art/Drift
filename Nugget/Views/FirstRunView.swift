@@ -244,7 +244,7 @@ struct FirstRunView: View {
                          working: wirelessPair.isRunning,
                          status: pairingReady ? "配对记录已就位" : "尚无配对记录",
                          destination: 2)
-                NativeNote("第 2 步可以让电脑代劳——用 USB 连上这台 iPhone，打开电脑版的 Mobile Helper。")
+                NativeNote("第 2 步可以在电脑上用 iLoader 配对——生成配对文件后传到这台 iPhone 上导入。")
                 NativeNote("如果隧道是在打开 App 之后才连上的，把 Drift 关掉重新打开一次。")
             }
         }
@@ -298,7 +298,7 @@ struct FirstRunView: View {
         SlideLayout(
             art: { FirstRunPairArt(linked: pairingReady, active: page == 2) },
             title: "2 · Pairing",
-            subtitle: "电脑版的 Mobile Helper 是最省事的一条路；下面的两张卡是备选办法。")
+            subtitle: "在电脑上用 iLoader 配对是最省事的一条路；下面的两张卡是备选办法。")
         {
             VStack(alignment: .leading, spacing: 12) {
                 statusPill(done: pairingReady, working: wirelessPair.isRunning,
@@ -333,9 +333,9 @@ struct FirstRunView: View {
                 .frame(width: 34)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 4) {
-                Text("The PC version does this for you")
+                Text("用 iLoader 在电脑上配对")
                     .font(.headline)
-                Text("用 USB 连上这台 iPhone 并点「信任」，然后打开电脑版的 Mobile Helper，它会自己把配对文件发到这台 iPhone 上。")
+                Text("用 USB 连上这台 iPhone 并点「信任」，在电脑上打开 iLoader 完成配对，导出配对文件（.plist 或 .mobiledevicepairing），传到这台 iPhone 后在上方导入。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
