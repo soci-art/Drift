@@ -12,6 +12,7 @@ The prebuilt archive is a binary; these are the deltas that make it reproducible
 | `idevice-ffi/should_preserve.patch` | same two `mobilebackup2.rs` files | Restores the pre-store filter. Without it a *protective* backup writes every photo and video to flash. |
 | `idevice-ffi/log_rotation.patch` | `ffi/src/logging.rs` | Caps the DEBUG file sink at 64 MB per generation. Without it one two-hour backup wrote 18.7 GB into `minimuxer.log`, on the same volume the device's own backup space check measures. |
 | `idevice-ffi/purge_disk_space.patch` | `idevice/src/services/mobilebackup2.rs` | Answers `DLMessagePurgeDiskSpace` the way Apple's DeviceLink does (status -1, "failed to purge") instead of "Operation not supported", and logs the byte threshold the device is comparing against. |
+| `idevice-ffi/pull_trace.patch` | `idevice/src/services/mobilebackup2.rs` | Feedback #31: log-only `[MB2-PULL]` narration of the backup DL loop — every inbound message with its key fields, the ContentsOfDirectory / GetFreeDiskSpace answers with content, each uploaded file's keep verdict, UNHANDLED markers on the catch-all arm, and session-end lines. No protocol behaviour changes; it exists so the spare-device pull diagnosis can attribute the iOS 27.2-beta-2 silence (device asks for state files + a directory listing, then never speaks again) to one exact exchange. Must apply AFTER `purge_disk_space.patch` (it anchors on that patch's lines). |
 
 ## idevice-ffi
 
