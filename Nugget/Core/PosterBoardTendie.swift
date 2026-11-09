@@ -314,9 +314,11 @@ struct LegacyConvertPrompt: Identifiable {
         String(localized: "\(pack.name) uses the legacy \(families.joined(separator: ", ")) format.")
     }
 
-    /// The dialog's `setInformativeText`, verbatim.
+    /// The dialog's informative text. Feedback #22 rewrote it: the old
+    /// "depth effect" wording understated the stakes — an unconverted
+    /// legacy pack on iOS 27 does not look flat, it never appears at all.
     static var message: String {
-        String(localized: "iOS 27 only applies the depth effect to wallpapers in the modern format, so a legacy wallpaper is rewritten on import. Pick “Install as is” to push the original files untouched instead.")
+        String(localized: "iOS 27's wallpaper library cannot read this legacy (WWDC22) layout at all: installed as-is, the wallpaper would never appear — no error, just nothing. Converting rewrites the pack into the modern layout iOS 27 reads. Pick “Install as is” to push the original files untouched instead.")
     }
 
     /// `Convert (may break the wallpaper)` — the reference's accepted-role button,
@@ -324,6 +326,23 @@ struct LegacyConvertPrompt: Identifiable {
     static var convertTitle: String { String(localized: "Convert (may break the wallpaper)") }
     /// `Install as is` — the reference's rejected-role button.
     static var asIsTitle: String { String(localized: "Install as is") }
+}
+
+/// The conversion explanation, worded once and shown wherever the question
+/// comes up — the pack detail page, the About page, and (in its shorter
+/// form above) the convert prompt itself (feedback #22: the three places
+/// must not drift into three different stories).
+enum LegacyConversionCopy {
+    /// Why conversion exists at all: the WWDC22 layout is unreadable to
+    /// iOS 27's store, and the failure mode is silence, not an error.
+    static var why: String {
+        String(localized: "Legacy packs use the WWDC22 layout. iOS 27's wallpaper library cannot read that layout: installed unconverted, a pack raises no error and simply never appears. Converting rewrites the pack into the modern layout iOS 27 reads.")
+    }
+
+    /// Which systems need it: the major version only.
+    static var versions: String {
+        String(localized: "Whether conversion is needed depends only on the major version: every iOS 26 release reads legacy packs as they are — no conversion, and the question is never asked; every iOS 27 release and later needs the conversion. Minor versions and build numbers do not matter. Below iOS 26 is not supported.")
+    }
 }
 
 /// The imported packs, as files in this app's container.
