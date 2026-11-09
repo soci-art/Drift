@@ -203,7 +203,7 @@ final class DriftSession: ObservableObject {
                     let deadline = Date().addingTimeInterval(20)
                     while !isReady, Date() < deadline {
                         poll += 1
-                        let readiness = await core.isReadyResult()
+                        let readiness = await core.isReady()
                         if case .success(true) = readiness { isReady = true; break }
                         if case .failure(let error) = readiness {
                             readinessFailure = core.describeError(error)
