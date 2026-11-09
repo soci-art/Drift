@@ -39,6 +39,29 @@ struct ManifestStore {
         FileManager.default.fileExists(atPath: dbPath)
     }
 
+    /// Create this directory's `Manifest.db` holding nothing but the `Files`
+    /// table — the starting point for a backup synthesised on the host
+    /// (feedback #21: no backup is pulled any more, so the iOS 27 restore
+    /// needs a manifest the injector can write rows into). The statement is
+    /// the one `PosterBoardSnapshot.retainBaseline` stamps its snapshots
+    /// with, and `IF NOT EXISTS` keeps it a no-op over a real manifest.
+    func createEmptyManifestDB() throws {
+        try FileManager.default.createDirectory(at: deviceDir, withIntermediateDirectories: true)
+        var db: OpaquePointer?
+        guard sqlite3_open(dbPath, &db) == SQLITE_OK, let db else {
+            throw GoldenNuggetError("无法创建位于 \(dbPath) 的 Manifest.db")
+        }
+        defer { sqlite3_close(db) }
+        let status = sqlite3_exec(
+            db,
+            "CREATE TABLE IF NOT EXISTS Files (fileID TEXT PRIMARY KEY, domain TEXT, relativePath TEXT, flags INTEGER, file BLOB)",
+            nil, nil, nil)
+        guard status == SQLITE_OK else {
+            throw GoldenNuggetError("无法在 Manifest.db 中创建 Files 表："
+                + String(cString: sqlite3_errmsg(db)))
+        }
+    }
+
     /// The number of rows in the `Files` table.
     ///
     /// Returns 0 — rather than throwing — when the database is absent or is the
