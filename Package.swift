@@ -27,6 +27,11 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "Vendor"),
+        // worse_query (forcequitOS/worse_query), the in-process sandbox escape
+        // the on-device wallpaper route uses. Its own package because it is
+        // Objective-C, separately licensed (GPL-3.0, compatible with this
+        // app's AGPL-3.0) and not part of the vendored golden-nugget stack.
+        .package(path: "WorseQuery"),
     ],
     targets: [
         .target(
@@ -44,6 +49,10 @@ let package = Package(
                 // restore. See Nugget/Core/Airlift.swift for why it is separate
                 // from the Minimuxer gateway.
                 .product(name: "AirliftFFI", package: "Vendor"),
+                // The in-process sandbox escape, used by `PosterBoardLocal`
+                // to write into PosterBoard's container without a pairing
+                // record or a tunnel.
+                .product(name: "WorseQuery", package: "WorseQuery"),
             ],
             path: ".",
             exclude: [
@@ -51,6 +60,10 @@ let package = Package(
                 "scripts",
                 ".github",
                 "Vendor",
+                // A package of its own (a dependency, below). The target path
+                // is the repository root, so without this SwiftPM treats the
+                // package's C sources as unhandled resources of the app.
+                "WorseQuery",
                 // Build products are not sources or resources.  They have to be
                 // named: SwiftPM treats everything under the target path that is
                 // neither a source nor excluded as a resource, and a build tree

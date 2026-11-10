@@ -220,7 +220,7 @@ enum PosterBoardAirlift {
     /// An unreadable archive counts as zero rather than throwing: the count is
     /// only a progress denominator, and a wrong one is recoverable in a way a
     /// failed apply is not — the pack still gets unpacked and injected below.
-    private static func countDescriptors(inArchiveAt url: URL) -> Int {
+    static func countDescriptors(inArchiveAt url: URL) -> Int {
         let archive: Archive
         do {
             archive = try Archive(url: url, accessMode: .read)
@@ -255,7 +255,7 @@ enum PosterBoardAirlift {
         return Set(paths).count
     }
 
-    private struct Descriptor {
+    struct Descriptor {
         let extensionID: String
         let url: URL
     }
@@ -266,7 +266,7 @@ enum PosterBoardAirlift {
     /// A file-scope helper rather than a nested one, because the store walk and
     /// the finder both need it and a nested function is only in scope inside the
     /// declaration it is written in.
-    private static func directories(_ url: URL) -> [URL] {
+    static func directories(_ url: URL) -> [URL] {
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: url, includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles])) ?? []
@@ -330,9 +330,9 @@ enum PosterBoardAirlift {
     /// which matched *nothing* in practice: every pack in the wild is a bare
     /// `descriptors/<UUID>` tree with no `Extensions/` component anywhere in it.
     /// The result was "no descriptor folders found in this pack" for all of them.
-    private static func findDescriptors(in root: URL,
-                                        defaultExtension: String,
-                                        log: (String) -> Void) -> [Descriptor] {
+    static func findDescriptors(in root: URL,
+                                defaultExtension: String,
+                                log: (String) -> Void) -> [Descriptor] {
         let manager = FileManager.default
 
         // 1. A full store snapshot: the extension id is in the path. Every version
@@ -411,8 +411,8 @@ enum PosterBoardAirlift {
     /// Keep the same three identity fields in sync as the backup compiler.
     /// Mercury's identifiers are provider lookup keys, so its entire descriptor
     /// is preserved. Other providers need a sidecar even when the pack omitted it.
-    private static func randomizeIdentifiers(in folder: URL, numericID: Int,
-                                             extensionID: String) throws {
+    static func randomizeIdentifiers(in folder: URL, numericID: Int,
+                                     extensionID: String) throws {
         guard extensionID != "com.apple.MercuryPoster" else { return }
         try Data(String(numericID).utf8).write(to: folder.appendingPathComponent(
             "com.apple.posterkit.provider.descriptor.identifier"))

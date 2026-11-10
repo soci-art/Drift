@@ -90,6 +90,12 @@ options:
 packages:
   Minimuxer:
     path: Vendor
+  # worse_query (forcequitOS/worse_query), the in-process sandbox escape used
+  # by the on-device wallpaper route. A separate local package because it is
+  # Objective-C and GPL-3.0 (compatible with this app's AGPL-3.0), not part of
+  # the vendored golden-nugget stack under Vendor/.
+  WorseQuery:
+    path: WorseQuery
 
 settings:
   base:
@@ -223,6 +229,11 @@ targets:
       # copy into Frameworks/ and nothing to re-sign.
       - package: Minimuxer
         product: AirliftFFI
+      # The same C-module rule as AirliftFFI: `import WorseQuery` needs this
+      # line as well as the one in Package.swift. It is a static ObjC target, so
+      # there is no framework to embed or re-sign.
+      - package: WorseQuery
+        product: WorseQuery
       - sdk: libsqlite3.tbd
       # NeoSpring resprings by loading a payload into a WKWebView
       # (Nugget/Core/NeoSpring.swift), so WebKit has to be linked. It is a

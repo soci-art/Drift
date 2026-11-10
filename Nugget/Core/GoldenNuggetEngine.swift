@@ -364,14 +364,22 @@ class GoldenNuggetEngine {
         // constraints are checked *here*, before `prepareRun`, so a selection the
         // chosen mode cannot honour fails without paying for a tunnel first.
         let modeIdentity = await DeviceIdentity.read()
+        // The in-process route reads its version from the process, not from
+        // lockdown: the app *is* the device. That is not a shortcut, it is the
+        // only answer available when no pairing record exists — which is the
+        // whole point of the route, and the case a `deviceVersion` of "" would
+        // otherwise push into the backup fallback.
+        let modeVersion = modeIdentity.version.isEmpty
+            ? (deviceVersion.isEmpty ? WorseQueryEscape.processVersion : deviceVersion)
+            : modeIdentity.version
         let posterBoardMode = PosterBoardApplyModeSettings.resolved(
-            deviceVersion: modeIdentity.version.isEmpty ? deviceVersion : modeIdentity.version,
+            deviceVersion: modeVersion,
             buildVersion: modeIdentity.buildVersion)
         let hasPosterBoardTemplates = templates.templates.contains { $0.isPosterBoard && !$0.requiresSparserestore }
         if (posterBoard.isActive || hasPosterBoardTemplates) && posterBoardMode == .airlift {
             try checkAirliftCanApply(posterBoard: posterBoard,
                 templates: templates.templates.filter { $0.isPosterBoard && !$0.requiresSparserestore },
-                deviceVersion: deviceVersion, buildVersion: modeIdentity.buildVersion)
+                deviceVersion: modeVersion, buildVersion: modeIdentity.buildVersion)
         }
 
         // A reset and a wallpaper selection cannot ride the same run, and the
@@ -439,6 +447,33 @@ class GoldenNuggetEngine {
                     + ByteCountFormatter.string(fromByteCount: Int64(total), countStyle: .file)
                     + ")")
             }
+        }
+
+        // The in-process route: `worse_query` gives this process a sandbox
+        // extension for PosterBoard's container, so there is no tunnel to open,
+        // no pairing record to consult and no backup to take. It runs here —
+        // after the pack/template lists are built and before `prepareRun` —
+        // because that is the last point at which the whole run can succeed
+        // without a device connection. It carries wallpapers only; anything
+        // else in the same selection is refused rather than silently dropped.
+        if posterBoardMode == .worseQuery && (posterBoard.isActive || !posterBoardTemplates.isEmpty) {
+            try checkLocalCanApply(
+                posterBoard: posterBoard,
+                templates: posterBoardTemplates,
+                hasOtherPayloads: !skipSetup.payloads.isEmpty || !tweakPayloads.isEmpty
+                    || !statusBarPayloads.isEmpty || !templatePayloads.isEmpty
+                    || !communityPayloads.isEmpty,
+                deviceVersion: modeVersion)
+            log("PosterBoard: \(posterBoard.describe) — on-device via worse_query, no tunnel")
+            try await PosterBoardLocal.apply(
+                selection: posterBoard,
+                templates: posterBoardTemplates,
+                deviceVersion: modeVersion,
+                log: { AppLog.write($0) },
+                progress: { overall in self.logProgress("posterboard local", overall) })
+            log("Apply succeeded: the wallpapers are in PosterBoard's container and it has "
+                + "resprung — no pairing, no tunnel and no backup were used.")
+            return
         }
 
         let udid = try await prepareRun()
@@ -606,6 +641,41 @@ class GoldenNuggetEngine {
             throw GoldenNuggetError("AirLift 需要一份配对记录，但还没有保存任何一份。"
                 + "请先在首页导入一份。")
         }
+    }
+
+    /// Refuse a selection the in-process route cannot carry.
+    ///
+    /// The route copies descriptor folders into PosterBoard's container. It has
+    /// no manifest, so tweak/skip-setup/status-bar payloads in the same run would
+    /// be dropped on the floor; a reset is a store operation it cannot express;
+    /// and the video stage's frames are computed for the restore. Each is named
+    /// instead of being silently ignored.
+    private func checkLocalCanApply(posterBoard: PosterBoardSelection,
+                                    templates: [TemplateFile],
+                                    hasOtherPayloads: Bool,
+                                    deviceVersion: String) throws {
+        if hasOtherPayloads {
+            throw GoldenNuggetError("本机直刷只能写入壁纸：所选内容里还有调整、跳过设置、"
+                + "状态栏或其他模板文件，它们不会通过这条路径送达。请只保留壁纸，"
+                + "或改用其他刷入方式。")
+        }
+        if templates.contains(where: \.isContainer) {
+            throw GoldenNuggetError("本机直刷只安装模板描述文件。所选模板还带有容器文件；"
+                + "请改用「保护性备份」来应用全部内容。")
+        }
+        if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
+            throw GoldenNuggetError("本机直刷无法重置 PosterBoard 库——它只会添加壁纸。"
+                + "要重置，请把刷入方式切换到「恢复式」。")
+        }
+        if posterBoard.video != nil {
+            throw GoldenNuggetError("本机直刷无法应用 PosterBoard 视频：它的帧是为恢复准备的。"
+                + "请把刷入方式切换到「恢复式」。")
+        }
+        if posterBoard.tendies.contains(where: \.isUnsafeContainer) {
+            throw GoldenNuggetError("包含商店数据库的壁纸包只能用恢复式。")
+        }
+        let reason = WorseQueryEscape.unavailableReason(deviceVersion: deviceVersion)
+        guard reason.isEmpty else { throw GoldenNuggetError(reason) }
     }
 
     /// Run the AirLift PosterBoard injection, reporting through the run log.

@@ -31,6 +31,16 @@ import Foundation
 
 // MARK: - Stubs
 
+// `PosterBoardApplyMode.swift` is concatenated for its poster-type enum, not
+// for `resolved`, but its availability gates still have to resolve at compile
+// time. Neither is exercised by this harness.
+enum AirliftAvailability {
+    static func isHidden(deviceVersion: String, buildVersion: String) -> Bool { true }
+}
+enum WorseQueryEscape {
+    static func isAvailable(deviceVersion: String) -> Bool { false }
+}
+
 struct Archive: Sequence {
     struct Entry: Hashable {
         enum EntryType { case file, directory, symlink }

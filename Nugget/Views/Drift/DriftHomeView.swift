@@ -26,13 +26,35 @@ struct DriftHomeView: View {
     private var manualPick: PosterBoardApplyMode? {
         manualPickRaw.flatMap(PosterBoardApplyMode.init(rawValue:))
     }
+    /// The system version the judgement uses: the device's when a tunnel has
+    /// answered, otherwise the app's own — the in-process route needs nothing
+    /// but that.
+    private var localVersion: String {
+        identity.version.isEmpty ? WorseQueryEscape.processVersion : identity.version
+    }
+    private var localReady: Bool {
+        WorseQueryEscape.isAvailable(deviceVersion: localVersion)
+    }
+    private var manualLabel: String {
+        manualPick?.shortTitle ?? "自动判断"
+    }
     private var judgement: DriftModeJudgement {
         DriftJudge.judge(identity: identity, selection: selection, pick: manualPick)
     }
     private var selectedDescriptors: Int { selection.tendies.reduce(0) { $0 + $1.descriptorCount } }
     private var overLimit: Bool { selectedDescriptors > PosterBoardImports.descriptorLimit }
     private var canApply: Bool {
-        session.paired && !selection.tendies.isEmpty && !overLimit && !session.running
+        // The in-process route is the one path that does not need a pairing
+        // record; every other mode still does.
+        (session.paired || judgement.mode == .worseQuery)
+            && !selection.tendies.isEmpty && !overLimit && !session.running
+    }
+    private var headerSubtitle: String {
+        if !identity.version.isEmpty { return identity.describe }
+        if localReady {
+            return "本机直刷可用（iOS \(WorseQueryEscape.processVersion)）：不用配对，也不用开隧道。"
+        }
+        return "导入配对文件、打开 LocalDevVPN 后，这里会显示设备系统。"
     }
 
     var body: some View {
@@ -114,9 +136,7 @@ struct DriftHomeView: View {
                     DriftPill(text: "iOS \(identity.version)\(identity.buildVersion.isEmpty ? "" : "（\(identity.buildVersion)）")")
                 }
             }
-            Text(identity.version.isEmpty
-                 ? "导入配对文件、打开 LocalDevVPN 后，这里会显示设备系统。"
-                 : "\(identity.describe)")
+            Text(headerSubtitle)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             if !session.paired {
@@ -143,7 +163,14 @@ struct DriftHomeView: View {
                     // and no sign of which one was in force (Grace, 2026-11-09).
                     Picker("刷入方式", selection: $manualPickRaw) {
                         Text("自动判断").tag(nil as String?)
-                        Text("直刷（只注销）").tag(PosterBoardApplyMode.airlift.rawValue as String?)
+                        // The in-process option is greyed when this signing
+                        // profile has no App Group or the system is outside
+                        // worse_query's range; the caption below says which.
+                        Text("本机直刷（只注销）")
+                            .tag(PosterBoardApplyMode.worseQuery.rawValue as String?)
+                            .disabled(!localReady)
+                        Text("AirLift 直刷（只注销）")
+                            .tag(PosterBoardApplyMode.airlift.rawValue as String?)
                         // Feedback #30: while the restore gate is closed
                         // the restore pick is visible but not selectable —
                         // greyed, with the reason on the card below.
@@ -158,9 +185,7 @@ struct DriftHomeView: View {
                     // looked dead (Grace, 2026-11-09). The effective mode
                     // stays where it belongs — the reason line and the
                     // override note below.
-                    Label(manualPick == nil ? "自动判断"
-                          : manualPick == .airlift ? "直刷" : "恢复式",
-                          systemImage: "chevron.up.chevron.down")
+                    Label(manualLabel, systemImage: "chevron.up.chevron.down")
                         .font(.subheadline.weight(.medium))
                 }
             }
@@ -170,8 +195,12 @@ struct DriftHomeView: View {
                 Text("恢复式暂时停用：菜单里选不了、自动判断也不会选它，原因查清之前先这样。直刷不受影响。")
                     .font(.caption).foregroundStyle(.orange)
             }
-            if judged.overriddenPick != nil {
-                Text("你手动选了直刷，但上面的硬性限制不允许，已按恢复式处理。")
+            if !localReady {
+                Text(WorseQueryEscape.unavailableReason(deviceVersion: localVersion))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let overridden = judged.overriddenPick {
+                Text("你手动选的「\(overridden.shortTitle)」在这里用不了，已按上面的方式处理。")
                     .font(.caption).foregroundStyle(.orange)
             }
         }
@@ -226,8 +255,10 @@ struct DriftHomeView: View {
                 Text(statusLine).font(.subheadline).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if !session.paired {
-                NativeNote("先导入配对文件才能刷入。")
+            if !session.paired && judgement.mode == .worseQuery {
+                NativeNote("本机直刷在本机写入，不需要配对文件，也不用开隧道。")
+            } else if !session.paired {
+                NativeNote("先导入配对文件才能刷入；本机直刷需要签名带 App Group 权限。")
             } else if selection.tendies.isEmpty && !imports.isEmpty {
                 NativeNote("在上面的列表里点圆圈勾选要刷的包。")
             }

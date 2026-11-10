@@ -14,6 +14,15 @@ gate = airlift.split("    // MARK: - Availability", 1)[1].split(
 model = (ROOT / "Nugget/Core/TweakModel.swift").read_text()
 version = "enum TweakVersion {" + model.split("enum TweakVersion {", 1)[1].split(
     "\nextension TweakSpec", 1)[0]
+# `PosterBoardApplyModeSettings.resolved` asks the in-process route whether it
+# can take a saved `.worseQuery` pick. This harness is about the AirLift gate,
+# so the escape is stubbed as unavailable and the saved-pick paths stay the
+# ones under test.
+worse_query_stub = r'''
+enum WorseQueryEscape {
+    static func isAvailable(deviceVersion: String) -> Bool { false }
+}
+'''
 harness = r'''
 var checks = 0
 func check(_ value: Bool, _ label: String) {
@@ -54,6 +63,7 @@ print("\(checks) AirLift availability checks passed")
 with tempfile.TemporaryDirectory(prefix="airlift-availability-") as work:
     main = Path(work) / "main.swift"
     binary = Path(work) / "check"
-    main.write_text(availability + modes + version + "\nenum Airlift {\n" + gate + "\n}\n" + harness)
+    main.write_text(availability + modes + version + "\nenum Airlift {\n" + gate + "\n}\n"
+                    + worse_query_stub + harness)
     subprocess.run(["xcrun", "swiftc", "-warnings-as-errors", str(main), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)

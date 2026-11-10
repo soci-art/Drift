@@ -10,5 +10,22 @@
 		<string>IOHDIXControllerUserClient</string>
 		<string>IOSurfaceRootUserClient</string>
 	</array>
+	<!--
+	  The in-process wallpaper route (Nugget/Core/PosterBoardLocal.swift) needs
+	  this group: worse_query stages its symlink inside the group's
+	  Library/Caches and asks containermanagerd to resolve it.
+
+	  The identifier must match WorseQueryEscape.groupIdentifier and must be
+	  registered to the signing team (Developer → Identifiers → App Groups).
+	  A free personal-team profile cannot grant it, in which case the mode
+	  reports itself unavailable and the app falls back to AirLift. When
+	  building with ⌘R on a personal team, drop this key — Xcode refuses to
+	  sign otherwise; the shipped IPA is unsigned and takes its entitlements
+	  from whichever profile the sideloader uses.
+	-->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.sociart.drift</string>
+	</array>
 </dict>
 </plist>

@@ -367,7 +367,14 @@ final class DriftSession: ObservableObject {
             // The reset flags are one-shot; the calling page clears its own
             // selection on success (this session only ever holds a copy).
             errorText = nil
-            return (true, mode == .airlift ? "刷入完成，设备将注销生效" : "刷入完成，设备将重启生效")
+            switch mode {
+            case .worseQuery:
+                return (true, "刷入完成，设备将注销生效")
+            case .airlift:
+                return (true, "刷入完成，设备将注销生效")
+            case .backup:
+                return (true, "刷入完成，设备将重启生效")
+            }
         } catch {
             if let failure = error as? TransportFailure, failure.isCancellation {
                 GoldenNuggetEngine.shared.log("run cancelled")
@@ -413,6 +420,15 @@ enum DriftJudge {
         set { UserDefaults.standard.set(newValue?.rawValue, forKey: manualKey) }
     }
 
+    /// The version the judgement should decide on.
+    ///
+    /// The device read wins while a tunnel is up; with no pairing record there
+    /// is no device read, and the in-process route only needs the app's own
+    /// system version — which is exactly why it works without pairing.
+    private static func systemVersion(_ identity: DeviceIdentity) -> String {
+        identity.version.isEmpty ? WorseQueryEscape.processVersion : identity.version
+    }
+
     /// Decide the delivery mode for a selection, in Drift's order:
     /// hard limits first (video, store reset, store-database packs, system
     /// out of the direct range, unknown device), then the manual pick, then
@@ -433,33 +449,72 @@ enum DriftJudge {
         if !DriftRestoreGate.isEnabled {
             return judgeRestoreSuspended(identity: identity, selection: selection, pick: pick)
         }
-        func forced(_ reason: String) -> DriftModeJudgement {
+        let version = systemVersion(identity)
+        let localReady = WorseQueryEscape.isAvailable(deviceVersion: version)
+        let localWhy = WorseQueryEscape.unavailableReason(deviceVersion: version)
+        // AirLift is a *paired* route: with no device read there is no device
+        // to open a tunnel to, so it is not judged available on the app's own
+        // version alone. The in-process route is the one that can be.
+        let airliftReady = !identity.version.isEmpty
+            && Airlift.isSupported(deviceVersion: identity.version,
+                                   buildVersion: identity.buildVersion)
+
+        func backup(_ reason: String) -> DriftModeJudgement {
             DriftModeJudgement(mode: .backup, reason: reason,
-                               overriddenPick: pick == .airlift ? .airlift : nil)
+                               overriddenPick: pick == .backup ? nil : pick)
         }
+        func local(_ reason: String, overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
+            DriftModeJudgement(mode: .worseQuery, reason: reason, overriddenPick: overriding)
+        }
+        func airlift(_ reason: String, overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
+            DriftModeJudgement(mode: .airlift, reason: reason, overriddenPick: overriding)
+        }
+
         if selection.video != nil {
-            return forced("视频壁纸只能用恢复式，刷完会重启")
+            return backup("视频壁纸只能用恢复式，刷完会重启")
         }
         if selection.fullReset || !selection.resetModes.isEmpty {
-            return forced("重置壁纸商店只能用恢复式，刷完会重启")
+            return backup("重置壁纸商店只能用恢复式，刷完会重启")
         }
         if selection.tendies.contains(where: \.isUnsafeContainer) {
-            return forced("包含商店数据库的壁纸包只能用恢复式，刷完会重启")
+            return backup("包含商店数据库的壁纸包只能用恢复式，刷完会重启")
         }
-        if identity.version.isEmpty {
-            return forced("暂时读不到设备系统信息，按恢复式处理，刷完会重启")
+        if pick == .backup {
+            return DriftModeJudgement(mode: .backup, reason: "已手动选择恢复式，刷完会重启",
+                                      overriddenPick: nil)
         }
-        if AirliftAvailability.isHidden(deviceVersion: identity.version, buildVersion: identity.buildVersion) {
-            return forced("当前系统不在直刷支持范围内，用恢复式，刷完会重启")
+        if pick == .worseQuery {
+            if localReady {
+                return local("已手动选择本机直刷，刷完只注销不重启")
+            }
+            if airliftReady {
+                return airlift("本机直刷在这台设备上用不了（\(localWhy)），"
+                    + "已改用 AirLift，刷完只注销不重启", overriding: .worseQuery)
+            }
+            return backup("本机直刷在这台设备上用不了（\(localWhy)），已按恢复式处理，刷完会重启")
         }
-        if let pick {
-            return DriftModeJudgement(
-                mode: pick,
-                reason: pick == .airlift ? "已手动选择直刷，刷完只注销不重启"
-                                         : "已手动选择恢复式，刷完会重启",
-                overriddenPick: nil)
+        if identity.version.isEmpty && !localReady {
+            return backup("暂时读不到设备系统信息，按恢复式处理，刷完会重启")
         }
-        return DriftModeJudgement(mode: .airlift, reason: "当前系统支持直刷，刷完只注销不重启", overriddenPick: nil)
+        if pick == .airlift {
+            if airliftReady {
+                return airlift("已手动选择 AirLift 直刷，刷完只注销不重启")
+            }
+            if localReady {
+                return local("AirLift 在这台设备上用不了，已改用本机直刷，刷完只注销不重启",
+                             overriding: .airlift)
+            }
+            return backup("AirLift 在这台设备上用不了，已按恢复式处理，刷完会重启")
+        }
+        // Automatic: the in-process route first, because it asks the least of
+        // the user — no pairing file, no tunnel, no backup — then the tunnel.
+        if localReady {
+            return local("当前系统支持本机直刷：不用配对、不用隧道，刷完只注销不重启")
+        }
+        if airliftReady {
+            return airlift("当前系统支持直刷，刷完只注销不重启")
+        }
+        return backup("当前系统不在直刷支持范围内，用恢复式，刷完会重启")
     }
 
     /// The judgement while the restore route is suspended (feedback #30).
@@ -471,10 +526,24 @@ enum DriftJudge {
     private static func judgeRestoreSuspended(identity: DeviceIdentity,
                                               selection: PosterBoardSelection,
                                               pick: PosterBoardApplyMode?) -> DriftModeJudgement {
+        let version = systemVersion(identity)
+        let localReady = WorseQueryEscape.isAvailable(deviceVersion: version)
+        let localWhy = WorseQueryEscape.unavailableReason(deviceVersion: version)
+        let airliftReady = !identity.version.isEmpty
+            && Airlift.isSupported(deviceVersion: identity.version,
+                                   buildVersion: identity.buildVersion)
+
         func blocked(_ reason: String) -> DriftModeJudgement {
             DriftModeJudgement(mode: .backup, reason: reason, overriddenPick: nil,
                                blockedReason: DriftRestoreGate.notice)
         }
+        func local(_ reason: String, overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
+            DriftModeJudgement(mode: .worseQuery, reason: reason, overriddenPick: overriding)
+        }
+        func airlift(_ reason: String, overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
+            DriftModeJudgement(mode: .airlift, reason: reason, overriddenPick: overriding)
+        }
+
         if selection.video != nil {
             return blocked("视频壁纸只能用恢复式，但恢复式暂时停用，现在刷不了")
         }
@@ -484,24 +553,46 @@ enum DriftJudge {
         if selection.tendies.contains(where: \.isUnsafeContainer) {
             return blocked("包含商店数据库的壁纸包只能用恢复式，但恢复式暂时停用，现在刷不了")
         }
-        if identity.version.isEmpty {
+        if identity.version.isEmpty && !localReady {
             return blocked("暂时读不到设备系统信息，确认不了能不能直刷，恢复式又在停用中，现在先刷不了，稍后再试")
         }
-        if AirliftAvailability.isHidden(deviceVersion: identity.version, buildVersion: identity.buildVersion) {
-            return blocked("当前系统不在直刷支持范围内，原本只能用恢复式，但恢复式暂时停用，现在刷不了")
-        }
+        // A manual restore pick degrades to a direct route whenever one works;
+        // it never blocks a selection a direct route could have carried.
         if pick == .backup {
-            return DriftModeJudgement(
-                mode: .airlift,
-                reason: "你手动选了恢复式，但恢复式暂时停用，已改用直刷，刷完只注销不重启",
-                overriddenPick: nil)
+            if localReady {
+                return local("恢复式暂时停用，已改用本机直刷，刷完只注销不重启", overriding: .backup)
+            }
+            if airliftReady {
+                return airlift("恢复式暂时停用，已改用 AirLift 直刷，刷完只注销不重启", overriding: .backup)
+            }
+            return blocked("恢复式暂时停用，当前系统也没有可用的直刷方式，现在刷不了")
         }
-        if let pick {
-            return DriftModeJudgement(
-                mode: pick,
-                reason: "已手动选择直刷，刷完只注销不重启",
-                overriddenPick: nil)
+        if pick == .worseQuery {
+            if localReady {
+                return local("已手动选择本机直刷，刷完只注销不重启")
+            }
+            if airliftReady {
+                return airlift("本机直刷在这台设备上用不了（\(localWhy)），"
+                    + "已改用 AirLift，刷完只注销不重启", overriding: .worseQuery)
+            }
+            return blocked("本机直刷在这台设备上用不了（\(localWhy)），恢复式又在停用中，现在刷不了")
         }
-        return DriftModeJudgement(mode: .airlift, reason: "当前系统支持直刷，刷完只注销不重启", overriddenPick: nil)
+        if pick == .airlift {
+            if airliftReady {
+                return airlift("已手动选择 AirLift 直刷，刷完只注销不重启")
+            }
+            if localReady {
+                return local("AirLift 在这台设备上用不了，已改用本机直刷，刷完只注销不重启",
+                             overriding: .airlift)
+            }
+            return blocked("AirLift 在这台设备上用不了，恢复式又在停用中，现在刷不了")
+        }
+        if localReady {
+            return local("当前系统支持本机直刷：不用配对、不用隧道，刷完只注销不重启")
+        }
+        if airliftReady {
+            return airlift("当前系统支持直刷，刷完只注销不重启")
+        }
+        return blocked("当前系统不在直刷支持范围内，恢复式又在停用中，现在刷不了")
     }
 }
