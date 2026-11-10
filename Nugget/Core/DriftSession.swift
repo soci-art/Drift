@@ -501,19 +501,7 @@ enum DriftJudge {
             if airliftReady {
                 return airlift("直刷在这台设备上用不了（\(directWhy)），已改用 AirLift，刷完只注销不重启", overriding: .direct)
             }
-            return backup("直刷在这台设备上用不了（\(directWhy)），恢复式又在停用中，现在刷不了")
-        }
-        if pick == .direct {
-            if directReady {
-                return direct("已手动选择直刷：走配对隧道写入，只刷新 PosterBoard，不注销")
-            }
-            if localReady {
-                return local("直刷在这台设备上用不了（\(directWhy)），已改用本机直刷，刷完只注销不重启", overriding: .direct)
-            }
-            if airliftReady {
-                return airlift("直刷在这台设备上用不了（\(directWhy)），已改用 AirLift，刷完只注销不重启", overriding: .direct)
-            }
-            return blocked("直刷在这台设备上用不了（\(directWhy)），恢复式又在停用中，现在刷不了")
+            return backup("直刷在这台设备上用不了（\(directWhy)），已按恢复式处理，刷完会重启")
         }
         if pick == .worseQuery {
             if localReady {
@@ -603,10 +591,25 @@ enum DriftJudge {
             if localReady {
                 return local("恢复式暂时停用，已改用本机直刷，刷完只注销不重启", overriding: .backup)
             }
+            if directReady {
+                return direct("恢复式暂时停用，已改用直刷：只刷新 PosterBoard，免注销", overriding: .backup)
+            }
             if airliftReady {
                 return airlift("恢复式暂时停用，已改用 AirLift 直刷，刷完只注销不重启", overriding: .backup)
             }
             return blocked("恢复式暂时停用，当前系统也没有可用的直刷方式，现在刷不了")
+        }
+        if pick == .direct {
+            if directReady {
+                return direct("已手动选择直刷：走配对隧道写入，只刷新 PosterBoard，不注销")
+            }
+            if localReady {
+                return local("直刷在这台设备上用不了（\(directWhy)），已改用本机直刷，刷完只注销不重启", overriding: .direct)
+            }
+            if airliftReady {
+                return airlift("直刷在这台设备上用不了（\(directWhy)），已改用 AirLift，刷完只注销不重启", overriding: .direct)
+            }
+            return blocked("直刷在这台设备上用不了（\(directWhy)），恢复式又在停用中，现在刷不了")
         }
         if pick == .worseQuery {
             if localReady {
