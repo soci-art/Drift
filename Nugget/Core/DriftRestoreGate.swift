@@ -31,4 +31,11 @@ enum DriftRestoreGate {
     /// wording cannot drift between pages. Plain and factual on purpose:
     /// it says the route is off, why, and what still works.
     static let notice = "恢复式暂时停用：查明一次重启后设备被抹除的原因之前，恢复式刷入、重置和恢复备份都先停用。直刷不受影响。"
+
+    /// Appended to an error that points at the restore route while the gate is
+    /// closed, so the sentence does not tell the user to switch to something
+    /// they cannot use right now.
+    static var unavailableSuffix: String {
+        isEnabled ? "" : "（恢复式目前暂时停用，现在刷不了。）"
+    }
 }

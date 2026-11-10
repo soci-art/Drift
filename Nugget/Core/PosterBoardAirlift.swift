@@ -143,7 +143,8 @@ enum PosterBoardAirlift {
                                                 log: log)
                 guard !descriptors.isEmpty else {
                     throw GoldenNuggetError("在 \(source.name) 中没有找到壁纸描述文件。"
-                        + "对于交付容器文件的模板，请改用「恢复式」。")
+                        + "对于交付容器文件的模板，需要走「恢复式」。"
+                        + DriftRestoreGate.unavailableSuffix)
                 }
                 log("  \(descriptors.count) descriptor(s)")
 

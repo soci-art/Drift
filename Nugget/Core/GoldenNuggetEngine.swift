@@ -649,15 +649,18 @@ class GoldenNuggetEngine {
                                      buildVersion: String) throws {
         if templates.contains(where: \.isContainer) {
             throw GoldenNuggetError("直刷只安装模板描述文件。所选模板还带有容器文件；"
-                + "请切换到「恢复式」来应用全部内容。")
+                + "请切换到「恢复式」来应用全部内容。"
+                + DriftRestoreGate.unavailableSuffix)
         }
         if selection.fullReset || !selection.resetModes.isEmpty {
             throw GoldenNuggetError("直刷无法重置 PosterBoard 库——它只会添加壁纸。"
-                + "要重置，请把刷入方式切换到「恢复式」。")
+                + "要重置，请把刷入方式切换到「恢复式」。"
+                + DriftRestoreGate.unavailableSuffix)
         }
         if selection.video != nil {
             throw GoldenNuggetError("直刷无法应用 PosterBoard 视频：它的帧是为恢复准备的。"
-                + "请把刷入方式切换到「恢复式」。")
+                + "请把刷入方式切换到「恢复式」。"
+                + DriftRestoreGate.unavailableSuffix)
         }
         if selection.tendies.contains(where: \.isUnsafeContainer) {
             throw GoldenNuggetError("包含商店数据库的壁纸包只能用恢复式。")
@@ -701,15 +704,18 @@ class GoldenNuggetEngine {
                                      templates: [TemplateFile] = [], deviceVersion: String, buildVersion: String = "") throws {
         if templates.contains(where: \.isContainer) {
             throw GoldenNuggetError("AirLift 只安装模板描述文件。所选模板"
-                + "还带有容器文件；请切换到「恢复式」来应用全部内容。")
+                + "还带有容器文件；请切换到「恢复式」来应用全部内容。"
+                + DriftRestoreGate.unavailableSuffix)
         }
         if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
             throw GoldenNuggetError("AirLift 无法重置 PosterBoard 库——它只会添加"
-                + "壁纸。要重置，请把应用模式切换到「恢复式」。")
+                + "壁纸。要重置，请把应用模式切换到「恢复式」。"
+                + DriftRestoreGate.unavailableSuffix)
         }
         if posterBoard.video != nil {
             throw GoldenNuggetError("AirLift 无法应用 PosterBoard 视频：它的帧是"
-                + "是为恢复准备的。请把应用模式切换到「恢复式」。")
+                + "是为恢复准备的。请把应用模式切换到「恢复式」。"
+                + DriftRestoreGate.unavailableSuffix)
         }
         let reason = Airlift.unsupportedReason(deviceVersion: deviceVersion, buildVersion: buildVersion)
         guard reason.isEmpty else { throw GoldenNuggetError(reason) }
@@ -737,15 +743,18 @@ class GoldenNuggetEngine {
         }
         if templates.contains(where: \.isContainer) {
             throw GoldenNuggetError("本机直刷只安装模板描述文件。所选模板还带有容器文件；"
-                + "请改用「恢复式」来应用全部内容。")
+                + "请改用「恢复式」来应用全部内容。"
+                + DriftRestoreGate.unavailableSuffix)
         }
         if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
             throw GoldenNuggetError("本机直刷无法重置 PosterBoard 库——它只会添加壁纸。"
-                + "要重置，请把刷入方式切换到「恢复式」。")
+                + "要重置，请把刷入方式切换到「恢复式」。"
+                + DriftRestoreGate.unavailableSuffix)
         }
         if posterBoard.video != nil {
             throw GoldenNuggetError("本机直刷无法应用 PosterBoard 视频：它的帧是为恢复准备的。"
-                + "请把刷入方式切换到「恢复式」。")
+                + "请把刷入方式切换到「恢复式」。"
+                + DriftRestoreGate.unavailableSuffix)
         }
         if posterBoard.tendies.contains(where: \.isUnsafeContainer) {
             throw GoldenNuggetError("包含商店数据库的壁纸包只能用恢复式。")
