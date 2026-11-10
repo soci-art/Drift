@@ -19,6 +19,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7.0.1
 
+      - name: Cache Rust dependencies and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            Vendor/AirliftFFI/rust-core/target
+          key: ${{ runner.os }}-airlift-${{ hashFiles('Vendor/AirliftFFI/rust-core/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-airlift-
+
       - name: Check toolchain
         run: bash scripts/check-xcode-toolchain.sh
 
@@ -86,6 +97,11 @@ jobs:
           zsh ./scripts/build-ipa.sh Release 2>&1 | tee /tmp/build-ipa.log
           status=${PIPESTATUS[0]}
           if [[ $status -ne 0 ]]; then
+            # Surface the first compiler/linker errors as annotations, which
+            # are readable on the public run page without signing in.
+            grep -E "error:|fatal error:|Undefined symbols|duplicate symbol|ld: " /tmp/build-ipa.log \
+              | head -12 \
+              | while IFS= read -r line; do echo "::error::$line"; done
             {
               echo "### Build failed (exit $status)"
               echo '```'
