@@ -101,7 +101,18 @@ jobs:
           TAG="v$VERSION"
           ASSET="build/Drift-$VERSION-unsigned.ipa"
           cp build/Drift.ipa "$ASSET"
-          NOTES="未签名 IPA，需自签安装（AltStore / SideStore / Sideloadly 等，付费证书还可启用本机直刷）。由 GitHub Actions 的 macOS 运行器从 ${GITHUB_SHA:0:12} 构建。"
+          NOTES="$(cat <<'EOF'
+          **未签名 IPA**，需自签安装（AltStore / SideStore / Sideloadly 等）。
+
+          ## 1.1.0
+          - 新增「本机直刷（worse_query）」：不需要配对文件、不需要 LocalDevVPN，直接在 App 内写进 PosterBoard 容器，刷完只注销、不重启。
+          - 支持 iOS 26.0–26.7.2、27.0–27.2；需要签名带 App Group `group.com.sociart.drift`（免费 Apple ID 签不了，需要付费证书）。
+          - 自动判断优先选本机直刷；不可用时回落到 AirLift 直刷 / 恢复式。视频壁纸、重置商店、带数据库的容器包仍只能走恢复式。
+          - 完整说明与风险见仓库 README。
+
+          由 GitHub Actions 的 macOS 运行器从 ${GITHUB_SHA:0:12} 构建。
+          EOF
+          )"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$ASSET" --clobber
             gh release edit "$TAG" --title "Drift $VERSION" --notes "$NOTES" --latest
