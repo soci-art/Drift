@@ -161,9 +161,10 @@ jobs:
           - 自动判断顺序：本机直刷（可用时）→ 直刷 → AirLift → 恢复式；每次都会在卡上写明理由。
           - 完整说明与风险见仓库 README。
 
-          由 GitHub Actions 的 macOS 运行器从 ${GITHUB_SHA:0:12} 构建。
+          由 GitHub Actions 的 macOS 运行器从 __COMMIT__ 构建。
           EOF
           )"
+          NOTES="${NOTES//__COMMIT__/${GITHUB_SHA:0:12}}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$ASSET" --clobber
             gh release edit "$TAG" --title "Drift $VERSION" --notes "$NOTES" --latest
