@@ -21,10 +21,10 @@ struct DriftAboutView: View {
                                          text: DriftRestoreGate.notice + "下面凡是写「恢复式」的地方都先按停用看：只能走恢复式的内容（视频壁纸、重置商店、系统不在直刷范围内的普通包）暂时都刷不了。")
                         }
                         rangeTable
-                        DriftFactRow(title: "三种刷入方式",
-                                     text: "本机直刷：在 App 内用 worse_query 取得壁纸商店容器的沙盒扩展，直接把壁纸写进去，不用配对文件、不用隧道，刷完注销、不重启。AirLift 直刷：通过隧道写进同一个容器，需要配对和 LocalDevVPN，刷完注销、不重启。恢复式：把壁纸编进一份在手机外合成的系统备份再恢复写回，覆盖全部受支持系统，刷完重启。视频壁纸和重置商店只能走恢复式。")
+                        DriftFactRow(title: "四种刷入方式",
+                                     text: "直刷：通过配对隧道把壁纸写进商店容器，再只重启 PosterBoard 守护进程，免注销生效，需要配对和 LocalDevVPN。本机直刷：在 App 内用 worse_query 取得壁纸商店容器的沙盒扩展，直接把壁纸写进去，不用配对文件、不用隧道，刷完注销、不重启。AirLift 直刷：通过隧道写进同一个容器，需要配对和 LocalDevVPN，刷完注销、不重启。恢复式：把壁纸编进一份在手机外合成的系统备份再恢复写回，覆盖全部受支持系统，刷完重启。视频壁纸和重置商店只能走恢复式。")
                         DriftFactRow(title: "系统范围",
-                                     text: "本机直刷：iOS 26.0–26.7.2、27.0–27.2，且签名要带 App Group。AirLift：iOS 26.2–27.1、27.2 测试版 1/2。AirLift 在 27.2 测试版 3 起被关闭，27.3 以上两种直刷都不可用。App 会自动判断并写明理由；没有配对时，本机直刷按 App 自己的系统版本判断。")
+                                     text: "直刷：iOS 26.0–27.1，需要配对。本机直刷：iOS 26.0–26.7.2、27.0–27.2，且签名要带 App Group。AirLift：iOS 26.2–27.1、27.2 测试版 1/2，需要配对。直刷从 27.2 起被关闭；AirLift 在 27.2 测试版 3 起被关闭；27.3 以上三种直刷都不可用。App 会自动判断并写明理由；没有配对时，本机直刷按 App 自己的系统版本判断。")
                         DriftFactRow(title: "旧格式转换",
                                      text: LegacyConversionCopy.why + LegacyConversionCopy.versions)
                         DriftFactRow(title: "隧道",
@@ -58,7 +58,7 @@ struct DriftAboutView: View {
     private var rangeTable: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("版本对照").font(.subheadline.weight(.semibold))
-            rangeRow("26.0 – 26.1", "本机直刷*", "不重启")
+            rangeRow("26.0 – 26.1", "直刷 / 本机直刷*", "免注销 / 不重启")
             rangeRow("26.2 – 27.1", "可直刷", "不重启")
             rangeRow("27.2 测试版 1 / 2", "可直刷", "不重启")
             rangeRow("27.2（测试版 3 起）", "本机直刷*", "不重启")

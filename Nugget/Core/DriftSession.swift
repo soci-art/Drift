@@ -370,6 +370,8 @@ final class DriftSession: ObservableObject {
             switch mode {
             case .worseQuery:
                 return (true, "刷入完成，设备将注销生效")
+            case .direct:
+                return (true, "刷入完成，壁纸已刷新，免注销生效")
             case .airlift:
                 return (true, "刷入完成，设备将注销生效")
             case .backup:
@@ -455,6 +457,9 @@ enum DriftJudge {
         // AirLift is a *paired* route: with no device read there is no device
         // to open a tunnel to, so it is not judged available on the app's own
         // version alone. The in-process route is the one that can be.
+        let directReady = !identity.version.isEmpty
+            && PosterBoardDirect.isAvailable(deviceVersion: identity.version)
+        let directWhy = PosterBoardDirect.unavailableReason(deviceVersion: identity.version)
         let airliftReady = !identity.version.isEmpty
             && Airlift.isSupported(deviceVersion: identity.version,
                                    buildVersion: identity.buildVersion)
@@ -465,6 +470,9 @@ enum DriftJudge {
         }
         func local(_ reason: String, overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
             DriftModeJudgement(mode: .worseQuery, reason: reason, overriddenPick: overriding)
+        }
+        func direct(_ reason: String, overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
+            DriftModeJudgement(mode: .direct, reason: reason, overriddenPick: overriding)
         }
         func airlift(_ reason: String, overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
             DriftModeJudgement(mode: .airlift, reason: reason, overriddenPick: overriding)
@@ -482,6 +490,30 @@ enum DriftJudge {
         if pick == .backup {
             return DriftModeJudgement(mode: .backup, reason: "已手动选择恢复式，刷完会重启",
                                       overriddenPick: nil)
+        }
+        if pick == .direct {
+            if directReady {
+                return direct("已手动选择直刷：走配对隧道写入，只刷新 PosterBoard，不注销")
+            }
+            if localReady {
+                return local("直刷在这台设备上用不了（\(directWhy)），已改用本机直刷，刷完只注销不重启", overriding: .direct)
+            }
+            if airliftReady {
+                return airlift("直刷在这台设备上用不了（\(directWhy)），已改用 AirLift，刷完只注销不重启", overriding: .direct)
+            }
+            return backup("直刷在这台设备上用不了（\(directWhy)），恢复式又在停用中，现在刷不了")
+        }
+        if pick == .direct {
+            if directReady {
+                return direct("已手动选择直刷：走配对隧道写入，只刷新 PosterBoard，不注销")
+            }
+            if localReady {
+                return local("直刷在这台设备上用不了（\(directWhy)），已改用本机直刷，刷完只注销不重启", overriding: .direct)
+            }
+            if airliftReady {
+                return airlift("直刷在这台设备上用不了（\(directWhy)），已改用 AirLift，刷完只注销不重启", overriding: .direct)
+            }
+            return blocked("直刷在这台设备上用不了（\(directWhy)），恢复式又在停用中，现在刷不了")
         }
         if pick == .worseQuery {
             if localReady {
@@ -511,6 +543,9 @@ enum DriftJudge {
         if localReady {
             return local("当前系统支持本机直刷：不用配对、不用隧道，刷完只注销不重启")
         }
+        if directReady {
+            return direct("当前系统支持直刷：走配对隧道写入，只刷新 PosterBoard，免注销")
+        }
         if airliftReady {
             return airlift("当前系统支持直刷，刷完只注销不重启")
         }
@@ -529,6 +564,9 @@ enum DriftJudge {
         let version = systemVersion(identity)
         let localReady = WorseQueryEscape.isAvailable(deviceVersion: version)
         let localWhy = WorseQueryEscape.unavailableReason(deviceVersion: version)
+        let directReady = !identity.version.isEmpty
+            && PosterBoardDirect.isAvailable(deviceVersion: identity.version)
+        let directWhy = PosterBoardDirect.unavailableReason(deviceVersion: identity.version)
         let airliftReady = !identity.version.isEmpty
             && Airlift.isSupported(deviceVersion: identity.version,
                                    buildVersion: identity.buildVersion)
@@ -539,6 +577,9 @@ enum DriftJudge {
         }
         func local(_ reason: String, overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
             DriftModeJudgement(mode: .worseQuery, reason: reason, overriddenPick: overriding)
+        }
+        func direct(_ reason: String, overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
+            DriftModeJudgement(mode: .direct, reason: reason, overriddenPick: overriding)
         }
         func airlift(_ reason: String, overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
             DriftModeJudgement(mode: .airlift, reason: reason, overriddenPick: overriding)
@@ -589,6 +630,9 @@ enum DriftJudge {
         }
         if localReady {
             return local("当前系统支持本机直刷：不用配对、不用隧道，刷完只注销不重启")
+        }
+        if directReady {
+            return direct("当前系统支持直刷：走配对隧道写入，只刷新 PosterBoard，免注销")
         }
         if airliftReady {
             return airlift("当前系统支持直刷，刷完只注销不重启")

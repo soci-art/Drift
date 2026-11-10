@@ -150,6 +150,34 @@ int32_t al_device_respring(const char *pairing_path,
                           char **out_error);
 
 
+// Inject one descriptor folder into the PRIMARY spot only and write the
+// reload-preferences file to both targets in one combined AirTraffic sync,
+// inside a single Books snapshot/restore cycle. Walllive-shaped transaction.
+// Returns 0 on success, 1 on error (with out_error set).
+int32_t al_exploit_flash_transaction(const char *pairing_path,
+                                     const char *folder_path,
+                                     const char *target_parent_dir,
+                                     const char *dest_name,
+                                     const char *pref_file_path,
+                                     const char *pref_target_a,
+                                     const char *pref_target_b,
+                                     ALLogCallback log_cb,
+                                     void *ctx,
+                                     char **out_error);
+
+// Restart only the PosterBoard daemon via DVT ProcessControl over the RSD
+// tunnel, so a newly written wallpaper is re-read without a full respring.
+// Returns 0 when the refresh is confirmed (out_status == "confirmed"), 1
+// otherwise with a machine-readable out_status ("connectFailed" /
+// "serviceUnavailable" / "pidNotFound" / "killFailed" / "verifyTimeout")
+// and a human-readable out_error.
+int32_t al_poster_refresh(const char *pairing_path,
+                          ALLogCallback log_cb,
+                          void *ctx,
+                          char **out_status,
+                          char **out_error);
+
+
 #ifdef __cplusplus
 }
 #endif

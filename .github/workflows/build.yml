@@ -22,6 +22,22 @@ jobs:
       - name: Check toolchain
         run: bash scripts/check-xcode-toolchain.sh
 
+      - name: Install Rust and the iOS target
+        # The direct route and the PosterBoard-only refresh add FFI symbols to
+        # the vendored Rust core, so the checked-in archive alone is stale.
+        # Build it here, on the same runner that links it, and install it into
+        # Vendor/AirliftFFI.xcframework before xcodebuild runs.
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain stable
+          . "$HOME/.cargo/env"
+          rustup target add aarch64-apple-ios
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Rebuild AirliftFFI
+        run: bash scripts/build-airlift-ffi-ios.sh --install
+
       - name: Install XcodeGen
         # Pinned to the version project.yml is written against (2.46 — see the
         # "quirks this file works around" note there), not brew's latest, so the
@@ -104,10 +120,11 @@ jobs:
           NOTES="$(cat <<'EOF'
           **未签名 IPA**，需自签安装（AltStore / SideStore / Sideloadly 等）。
 
-          ## 1.1.0
-          - 新增「本机直刷（worse_query）」：不需要配对文件、不需要 LocalDevVPN，直接在 App 内写进 PosterBoard 容器，刷完只注销、不重启。
-          - 支持 iOS 26.0–26.7.2、27.0–27.2；需要签名带 App Group `group.com.sociart.drift`（免费 Apple ID 签不了，需要付费证书）。
-          - 自动判断优先选本机直刷；不可用时回落到 AirLift 直刷 / 恢复式。视频壁纸、重置商店、带数据库的容器包仍只能走恢复式。
+          ## 1.2.0
+          - 新增「直刷（免注销）」：通过配对隧道写入 PosterBoard，再只重启 PosterBoard 守护进程，不注销、不重启；支持 iOS 26.0–27.1，免费签名也能用。
+          - 保留「本机直刷（worse_query）」：不需要配对和隧道，但签名必须带 App Group `group.com.sociart.drift`。
+          - 保留「AirLift 直刷」与「恢复式」；恢复式仍暂时停用。视频壁纸、重置商店、带数据库的容器包仍只能走恢复式。
+          - 自动判断顺序：本机直刷（可用时）→ 直刷 → AirLift → 恢复式；每次都会在卡上写明理由。
           - 完整说明与风险见仓库 README。
 
           由 GitHub Actions 的 macOS 运行器从 ${GITHUB_SHA:0:12} 构建。

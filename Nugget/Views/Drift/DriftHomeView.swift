@@ -35,6 +35,9 @@ struct DriftHomeView: View {
     private var localReady: Bool {
         WorseQueryEscape.isAvailable(deviceVersion: localVersion)
     }
+    private var directReady: Bool {
+        !identity.version.isEmpty && PosterBoardDirect.isAvailable(deviceVersion: identity.version)
+    }
     private var manualLabel: String {
         manualPick?.shortTitle ?? "自动判断"
     }
@@ -166,6 +169,9 @@ struct DriftHomeView: View {
                         // The in-process option is greyed when this signing
                         // profile has no App Group or the system is outside
                         // worse_query's range; the caption below says which.
+                        Text("直刷（免注销）")
+                            .tag(PosterBoardApplyMode.direct.rawValue as String?)
+                            .disabled(!directReady)
                         Text("本机直刷（只注销）")
                             .tag(PosterBoardApplyMode.worseQuery.rawValue as String?)
                             .disabled(!localReady)
@@ -194,6 +200,10 @@ struct DriftHomeView: View {
             if !DriftRestoreGate.isEnabled {
                 Text("恢复式暂时停用：菜单里选不了、自动判断也不会选它，原因查清之前先这样。直刷不受影响。")
                     .font(.caption).foregroundStyle(.orange)
+            }
+            if !directReady && PosterBoardDirect.isAvailable(deviceVersion: localVersion) {
+                Text("直刷需要先导入配对文件并读到设备系统版本。")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if !localReady {
                 Text(WorseQueryEscape.unavailableReason(deviceVersion: localVersion))

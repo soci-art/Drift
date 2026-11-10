@@ -295,6 +295,44 @@ impl<'a, R: ReadWrite> ProcessControlClient<'a, R> {
         Ok(())
     }
 
+    /// Sends an arbitrary POSIX signal to a running process and waits
+    /// for the service's reply.
+    ///
+    /// Local addition (Drift, ported from CocoWall): upstream has only
+    /// the fire-and-forget `killPid:`, which does not reach processes
+    /// the instruments server did not spawn and can be dropped before
+    /// the channel is torn down. PosterBoard is launched by launchd,
+    /// so the refresh needs this form. Arguments travel as
+    /// NSKeyedArchiver-encoded NSNumbers (`sendSignal:toPid:` expects
+    /// archived values, not raw integers).
+    ///
+    /// # Arguments
+    /// * `pid` - Process ID to signal
+    /// * `signal` - POSIX signal number (e.g. 9 for SIGKILL)
+    ///
+    /// # Returns
+    /// * `Ok(Some(value))` - The service replied with a payload
+    /// * `Ok(None)` - The service replied with no payload
+    /// * `Err(IdeviceError)` - If communication fails
+    pub async fn send_signal(
+        &mut self,
+        pid: u64,
+        signal: u32,
+    ) -> Result<Option<Value>, IdeviceError> {
+        let res = self
+            .channel
+            .call_method_with_reply(
+                Some(Value::String("sendSignal:toPid:".into())),
+                Some(vec![
+                    AuxValue::archived_value(Value::Integer((signal as i64).into())),
+                    AuxValue::archived_value(Value::Integer((pid as i64).into())),
+                ]),
+            )
+            .await?;
+
+        Ok(res.data)
+    }
+
     /// Disables memory limits for a process
     ///
     /// # Arguments

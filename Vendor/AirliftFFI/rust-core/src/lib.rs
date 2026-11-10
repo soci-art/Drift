@@ -14,6 +14,7 @@ pub mod ffi_util;
 pub mod grappa;
 pub mod logging;
 pub mod pairing;
+pub mod poster_refresh;
 
 // Re-export idevice-ffi's symbols into our staticlib (tunnel_create_rppairing,
 // afc_*, rsd_*, adapter_*, etc.) so Swift can call them directly.
@@ -162,6 +163,45 @@ pub unsafe extern "C" fn al_exploit_inject_folder(
         Err(e) => {
             if !out_error.is_null() {
                 *out_error = ffi_util::cstr(format!("Rust panic in al_exploit_inject_folder: {e:?}"));
+            }
+            1
+        }
+    }
+}
+
+
+/// Walllive-shaped install transaction: inject one descriptor folder into
+/// the primary spot only, then write the reload-preferences file to both
+/// targets in a single combined AirTraffic sync — one tunnel connection,
+/// one Books snapshot/restore cycle.
+///
+/// # Safety
+/// All pointer arguments must be null or valid for their documented use.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn al_exploit_flash_transaction(
+    pairing_path: *const c_char,
+    folder_path: *const c_char,
+    target_parent_dir: *const c_char,
+    dest_name: *const c_char,
+    pref_file_path: *const c_char,
+    pref_target_a: *const c_char,
+    pref_target_b: *const c_char,
+    log_cb: exploit::ALLogCallback,
+    ctx: *mut c_void,
+    out_error: *mut *mut c_char,
+) -> i32 {
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        exploit::flash_transaction(
+            pairing_path, folder_path, target_parent_dir, dest_name,
+            pref_file_path, pref_target_a, pref_target_b, log_cb, ctx, out_error,
+        )
+    }));
+    match res {
+        Ok(rc) => rc,
+        Err(e) => {
+            if !out_error.is_null() {
+                *out_error = ffi_util::cstr(format!("Rust panic in al_exploit_flash_transaction: {e:?}"));
             }
             1
         }
@@ -383,6 +423,40 @@ pub unsafe extern "C" fn al_device_respring(
         Err(e) => {
             if !out_error.is_null() {
                 *out_error = ffi_util::cstr(format!("Rust panic in al_device_respring: {e:?}"));
+            }
+            1
+        }
+    }
+}
+
+/// PosterBoard-only refresh via DVT ProcessControl over the RSD tunnel.
+/// Restarts only the PosterBoard daemon so it re-reads its data store —
+/// no full-device respring. Returns 0 when confirmed (out_status ==
+/// "confirmed"), 1 otherwise with a machine-readable out_status
+/// ("connectFailed" / "serviceUnavailable" / "pidNotFound" /
+/// "killFailed" / "verifyTimeout") and a human-readable out_error.
+///
+/// # Safety
+/// All pointer arguments must be null or valid for their documented use.
+#[no_mangle]
+pub unsafe extern "C" fn al_poster_refresh(
+    pairing_path: *const c_char,
+    log_cb: exploit::ALLogCallback,
+    ctx: *mut c_void,
+    out_status: *mut *mut c_char,
+    out_error: *mut *mut c_char,
+) -> i32 {
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        poster_refresh::poster_refresh(pairing_path, log_cb, ctx, out_status, out_error)
+    }));
+    match res {
+        Ok(rc) => rc,
+        Err(e) => {
+            if !out_status.is_null() {
+                *out_status = ffi_util::cstr("connectFailed");
+            }
+            if !out_error.is_null() {
+                *out_error = ffi_util::cstr(format!("Rust panic in al_poster_refresh: {e:?}"));
             }
             1
         }

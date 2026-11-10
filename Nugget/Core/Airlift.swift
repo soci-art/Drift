@@ -195,13 +195,44 @@ enum Airlift {
         }
     }
 
+    /// Copy one descriptor folder into `targetParentDir/destName` and write the
+    /// reload-preferences file to both targets in the *same* AirTraffic sync —
+    /// one tunnel, one Books snapshot/restore cycle. The transaction is faster
+    /// than a folder injection followed by a separate preferences write, and it
+    /// is the shape Walllive uses for a single-wallpaper install.
+    static func flashTransaction(pairingPath: String,
+                                 folderPath: String,
+                                 targetParentDir: String,
+                                 destName: String,
+                                 preferenceFile: String,
+                                 preferenceTargetA: String,
+                                 preferenceTargetB: String) async throws {
+        // No AirLift version gate here: the transaction is the older
+        // AirTraffic/Books pipeline, and the direct mode runs it on systems
+        // (26.0–26.1) that are below the AirLift escape's floor. The caller
+        // has already judged whether the direct route is supported.
+        try await offMainActor {
+            var outError: UnsafeMutablePointer<CChar>?
+            let rc = al_exploit_flash_transaction(
+                pairingPath, folderPath, targetParentDir, destName,
+                preferenceFile, preferenceTargetA, preferenceTargetB,
+                logTrampoline, nil, &outError)
+            guard rc == 0 else {
+                throw GoldenNuggetError(take(outError) ?? "AirLift 写入事务返回了 \(rc)。")
+            }
+        }
+    }
+
     /// Resolve an app's Data Application Container by bundle id.
     ///
     /// This is the lookup Wallet and PosterBoard both need, and the reason it is
     /// not hardcoded anywhere: the UUID changes on every reinstall and on some
     /// OS updates, so a stored path is a path to nothing.
-    static func appContainer(pairingPath: String, bundleID: String) async throws -> String {
-        try await requireSupported()
+    static func appContainer(pairingPath: String, bundleID: String,
+                             allowUnsupportedVersion: Bool = false) async throws -> String {
+        if !allowUnsupportedVersion {
+            try await requireSupported()
+        }
         return try await offMainActor {
             var outContainer: UnsafeMutablePointer<CChar>?
             var outError: UnsafeMutablePointer<CChar>?

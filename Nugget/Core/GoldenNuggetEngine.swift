@@ -492,12 +492,19 @@ class GoldenNuggetEngine {
         // container *is* the apply.
         var posterBoardPayloads: [TweakPayload] = []
         var posterBoardSnapshotDirectory: URL?
-        var posterBoardInjectedOverAirlift = false
-        if (posterBoard.isActive || !posterBoardTemplates.isEmpty) && posterBoardMode == .airlift {
+        var posterBoardInjectedInContainer = false
+        if (posterBoard.isActive || !posterBoardTemplates.isEmpty) && posterBoardMode == .direct {
+            log("PosterBoard: \(posterBoard.describe) — direct over the pairing tunnel, no backup")
+            try checkDirectCanApply(selection: posterBoard, templates: posterBoardTemplates,
+                                    deviceVersion: version)
+            try await applyPosterBoardOverDirect(selection: posterBoard,
+                                                 templates: posterBoardTemplates, deviceVersion: version)
+            posterBoardInjectedInContainer = true
+        } else if (posterBoard.isActive || !posterBoardTemplates.isEmpty) && posterBoardMode == .airlift {
             log("PosterBoard: \(posterBoard.describe) — over AirLift, no backup")
             try await applyPosterBoardOverAirlift(selection: posterBoard,
                                                  templates: posterBoardTemplates, deviceVersion: version)
-            posterBoardInjectedOverAirlift = true
+            posterBoardInjectedInContainer = true
         } else if posterBoard.isActive || !posterBoardTemplates.isEmpty {
             // A PosterBoard template is a wallpaper source even when no pack and
             // no video were picked, so it opens this branch by itself — the
@@ -561,9 +568,9 @@ class GoldenNuggetEngine {
         // Wallpapers-only run in AirLift mode: the injection already happened and
         // it resprings on its way out, so running the backup/restore tail here
         // would buy a full protective pull for an empty payload list.
-        if payloads.isEmpty && posterBoardInjectedOverAirlift {
+        if payloads.isEmpty && posterBoardInjectedInContainer {
             log("Apply succeeded: the wallpapers are in PosterBoard's container and it has "
-                + "resprung — no backup was taken.")
+                + "refreshed — no backup was taken.")
             return
         }
 
@@ -571,9 +578,9 @@ class GoldenNuggetEngine {
                           posterBoardSnapshot: posterBoardSnapshotDirectory) {
             log("Apply succeeded: the device confirmed it finished.")
             log("Reboot the device so the injected preferences take effect.")
-            if posterBoardInjectedOverAirlift {
-                log("The wallpapers went in over AirLift and are already live; only the tweaks "
-                    + "above needed the reboot.")
+            if posterBoardInjectedInContainer {
+                log("The wallpapers went in through a direct route and are already live; only "
+                    + "the tweaks above needed the reboot.")
             } else if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
                 log("The PosterBoard store was cleared. Reboot the device, then add wallpapers "
                     + "again — a reset makes the locally cached database copy stale, so the "
@@ -614,6 +621,54 @@ class GoldenNuggetEngine {
             }
             try CommunityApplyRecord.didReset(udid)
         }
+    }
+
+    /// Refuse a selection the direct route cannot carry.
+    ///
+    /// Same limits as AirLift: the transaction installs descriptor folders,
+    /// so a reset, a video stage, a container template or any non-wallpaper
+    /// payload cannot travel it. Unlike AirLift it also has its own closed
+    /// version range (26.0–27.1), checked here rather than in the judge so a
+    /// manual pick cannot bypass it.
+    private func checkDirectCanApply(selection: PosterBoardSelection,
+                                     templates: [TemplateFile],
+                                     deviceVersion: String) throws {
+        if templates.contains(where: \.isContainer) {
+            throw GoldenNuggetError("直刷只安装模板描述文件。所选模板还带有容器文件；"
+                + "请切换到「保护性备份」来应用全部内容。")
+        }
+        if selection.fullReset || !selection.resetModes.isEmpty {
+            throw GoldenNuggetError("直刷无法重置 PosterBoard 库——它只会添加壁纸。"
+                + "要重置，请把刷入方式切换到「恢复式」。")
+        }
+        if selection.video != nil {
+            throw GoldenNuggetError("直刷无法应用 PosterBoard 视频：它的帧是为恢复准备的。"
+                + "请把刷入方式切换到「恢复式」。")
+        }
+        if selection.tendies.contains(where: \.isUnsafeContainer) {
+            throw GoldenNuggetError("包含商店数据库的壁纸包只能用恢复式。")
+        }
+        let reason = PosterBoardDirect.unavailableReason(deviceVersion: deviceVersion)
+        guard reason.isEmpty else { throw GoldenNuggetError(reason) }
+        guard FileManager.default.fileExists(atPath: AppPaths.pairingFile.path) else {
+            throw GoldenNuggetError("直刷需要一份配对记录，但还没有保存任何一份。"
+                + "请先在首页导入一份，或者改用「本机直刷」。")
+        }
+    }
+
+    /// Run the direct PosterBoard transaction, reporting through the run log.
+    private func applyPosterBoardOverDirect(selection: PosterBoardSelection,
+                                            templates: [TemplateFile] = [],
+                                            deviceVersion: String) async throws {
+        try await PosterBoardDirect.apply(
+            selection: selection,
+            templates: templates,
+            structureVersion: PosterBoard.fallbackStructureVersion,
+            deviceVersion: deviceVersion,
+            pairingPath: AppPaths.pairingFile.path,
+            log: { AppLog.write($0) },
+            progress: { overall in self.logProgress("posterboard direct", overall) }
+        )
     }
 
     /// Refuse a selection the AirLift path cannot carry, before anything is opened.

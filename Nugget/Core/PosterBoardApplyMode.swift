@@ -14,6 +14,11 @@ import Foundation
 ///    record this app already holds and write straight into PosterBoard's data
 ///    container. No backup, no reboot — a respring is enough — but it needs
 ///    iOS 26.2+, LocalDevVPN, an unlocked device, and it cannot do a store reset.
+///  - `.direct` is the pairing-tunnel path: one descriptor at a time through a
+///    single AirTraffic/Books snapshot-restore cycle, then only PosterBoard is
+///    restarted (DVT ProcessControl) so the wallpaper appears without a
+///    respring. It works from iOS 26.0 to 27.1, needs a pairing record and
+///    LocalDevVPN, and cannot reset the store.
 ///  - `.worseQuery` is the in-process path: `worse_query` consumes a sandbox
 ///    extension for PosterBoard's container from inside this app, so the copy
 ///    needs neither a pairing record nor a tunnel. No backup, a respring only —
@@ -28,6 +33,7 @@ import Foundation
 /// actually usable, because it demands the least from the user.
 enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
     case backup
+    case direct
     case airlift
     case worseQuery
 
@@ -36,6 +42,7 @@ enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
     var title: String {
         switch self {
         case .backup: return String(localized: "Protective backup")
+        case .direct: return "直刷（回环配对 · 免注销）"
         case .airlift: return String(localized: "AirLift (AirTraffic)")
         // Chinese-first, like the rest of Drift's own UI: `shortTitle` is what
         // the mode menu shows, and a String Catalog key added here would ship
@@ -51,6 +58,7 @@ enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
     var shortTitle: String {
         switch self {
         case .backup: return "恢复式"
+        case .direct: return "直刷（免注销）"
         case .airlift: return "AirLift 直刷"
         case .worseQuery: return "本机直刷"
         }
@@ -59,6 +67,7 @@ enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
     var symbol: String {
         switch self {
         case .backup: return "externaldrive.fill"
+        case .direct: return "arrow.down.circle.fill"
         case .airlift: return "bolt.horizontal.circle.fill"
         case .worseQuery: return "bolt.fill"
         }
@@ -69,6 +78,8 @@ enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .backup:
             return "先从设备获取商店数据库，再通过保护性备份送入壁纸。适用于所有受支持的设备，最后会重启设备。"
+        case .direct:
+            return "通过配对隧道直写 PosterBoard 的容器，再只重启 PosterBoard 守护进程——不注销、不重启。需要 iOS 26.0–27.1、LocalDevVPN，且设备保持解锁。"
         case .airlift:
             return "通过隧道直接写进 PosterBoard 的容器——不做备份，以注销代替重启。需要 iOS 26.2 或更高版本、LocalDevVPN，且设备保持解锁。"
         case .worseQuery:
@@ -102,6 +113,14 @@ enum PosterBoardApplyModeSettings {
         switch current {
         case .backup:
             return .backup
+        case .direct:
+            // A saved direct pick survives for a supported system; on one that
+            // is not, prefer the in-process route, then AirLift, then the
+            // (currently suspended) backup route.
+            if PosterBoardDirect.isAvailable(deviceVersion: deviceVersion) { return .direct }
+            if WorseQueryEscape.isAvailable(deviceVersion: deviceVersion) { return .worseQuery }
+            return AirliftAvailability.isHidden(deviceVersion: deviceVersion, buildVersion: buildVersion)
+                ? .backup : .airlift
         case .worseQuery:
             // A saved in-process pick survives for a device that supports it;
             // on one that does not, fall back the same way a saved AirLift pick
