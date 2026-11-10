@@ -56,7 +56,7 @@ enum PosterRefresh {
     /// the main actor. Safe to call after any write path that has a pairing
     /// record.
     static func attempt(pairingPath: String) async -> (confirmed: Bool, status: Status) {
-        await withCheckedContinuation { continuation in
+        await withCheckedContinuation { (continuation: CheckedContinuation<(confirmed: Bool, status: Status), Never>) in
             DispatchQueue.global(qos: .userInitiated).async {
                 var outStatus: UnsafeMutablePointer<CChar>?
                 var outError: UnsafeMutablePointer<CChar>?
@@ -67,7 +67,7 @@ enum PosterRefresh {
                 if let outStatus { al_string_free(outStatus) }
                 if let outError { al_string_free(outError) }
 
-                let status = statusText.flatMap(Status.init(rawValue:)) ?? .unknown
+                let status = statusText.flatMap { Status(rawValue: $0) } ?? .unknown
                 if let errorText, !errorText.isEmpty {
                     AppLog.write("poster refresh: \(errorText)")
                 }
