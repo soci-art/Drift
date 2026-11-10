@@ -114,7 +114,7 @@ Drift：只刷交互壁纸的独立应用。基于 GoldenNugget（AGPL-3.0）移
 
 ## 构建
 
-源码构建需要云端 Mac（Xcode 26）：XcodeGen 生成工程后 `scripts/build-ipa.sh Release` 产出未签名 IPA。本仓库的发行版提供已构建的未签名 IPA，下载后用自己的证书/账号自签安装。
+源码构建需要云端 Mac（Xcode 26）。直刷与免注销刷新新增了 Rust FFI，仓库里的预编译归档可能落后于源码，所以先装 Rust 的 `aarch64-apple-ios` target，运行 `scripts/build-airlift-ffi-ios.sh --install` 重建并安装归档，再用 XcodeGen 生成工程、`scripts/build-ipa.sh Release` 产出未签名 IPA（CI 的构建流程已经包含这一步）。本仓库的发行版提供已构建的未签名 IPA，下载后用自己的证书/账号自签安装。
 
 界面文案为中文优先，直接以中文书写；继承自上游的向导等页面沿用其字符串目录。
 
