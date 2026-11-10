@@ -101,6 +101,7 @@ Drift：只刷交互壁纸的独立应用。基于 GoldenNugget（AGPL-3.0）移
 
 - 独立四页界面（壁纸 / 视频 / 说明 / 设置）与独立会话层；
 - 壁纸包预览图提取与缓存、包详情页逐张预览；
+- 直刷通道：移植 cocowall 的 AirTraffic/Books 写入事务与 PosterBoard 单守护进程刷新，刷完免注销（源码在 `Nugget/Core/PosterBoardDirect.swift`、`PosterRefresh.swift`）；
 - 本机直刷通道：移植 [worse_query](https://github.com/forcequitOS/worse_query)，不配对、不开隧道直接写 PosterBoard 容器（GPL-3.0，与本项目 AGPL-3.0 兼容，源码在 `WorseQuery/`）；
 - 刷入方式判断卡：结果＋理由展示，手动改方式＋硬限制拦截；
 - `.tendies` 与配对文件的「打开方式」文件关联导入。
@@ -120,3 +121,11 @@ Drift：只刷交互壁纸的独立应用。基于 GoldenNugget（AGPL-3.0）移
 ## 许可证
 
 AGPL-3.0（与上游一致）。壁纸包格式、PosterBoard 写入与连接层核心代码来自 GoldenNugget 项目，特此致谢。
+
+## 更新日志
+
+### 1.2.0
+
+- 新增「直刷（免注销）」：配对隧道写入 + 只重启 PosterBoard，支持 iOS 26.0–27.1，免费签名可用。
+- 保留「本机直刷（worse_query）」「AirLift 直刷」「恢复式」；恢复式仍停用。
+- 自动判断顺序：本机直刷 → 直刷 → AirLift → 恢复式。
