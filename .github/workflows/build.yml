@@ -5,6 +5,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# The release step below creates/updates a GitHub release with this run's IPA,
+# which needs a write token. Nothing else in the workflow writes to the repo.
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build unsigned IPA
@@ -73,5 +78,38 @@ jobs:
           name: Drift
           path: build/Drift.ipa
           if-no-files-found: error
+
+      # Publish a curated release, but only when the pushed commit says so:
+      # an ordinary push still just produces the artifact above. The tag and
+      # asset name come from MARKETING_VERSION in project.yml, so a release
+      # cannot advertise a version the binary does not carry.
+      - name: Publish unsigned IPA to Releases
+        if: >-
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          contains(github.event.head_commit.message, '[release]')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*//p' project.yml | tr -d '"' | head -1)"
+          if [ -z "$VERSION" ]; then
+            echo "error: MARKETING_VERSION not found in project.yml" >&2
+            exit 1
+          fi
+          TAG="v$VERSION"
+          ASSET="build/Drift-$VERSION-unsigned.ipa"
+          cp build/Drift.ipa "$ASSET"
+          NOTES="未签名 IPA，需自签安装（AltStore / SideStore / Sideloadly 等，付费证书还可启用本机直刷）。由 GitHub Actions 的 macOS 运行器从 ${GITHUB_SHA:0:12} 构建。"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ASSET" --clobber
+            gh release edit "$TAG" --title "Drift $VERSION" --notes "$NOTES" --latest
+          else
+            gh release create "$TAG" "$ASSET" \
+              --title "Drift $VERSION" \
+              --notes "$NOTES" \
+              --latest
+          fi
 
 # Manual rebuild trigger
