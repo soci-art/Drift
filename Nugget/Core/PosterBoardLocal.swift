@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import Network
 
 /// PosterBoard wallpapers written from inside the app, through `worse_query`.
 ///
@@ -15,14 +16,26 @@ import Darwin
 ///
 /// ## What it costs
 ///
-/// The signing profile must grant an App Group (`WorseQueryEscape.groupIdentifier`);
-/// without it the route refuses itself and the judgement falls back. It can add
-/// descriptors but not remove them, so a store reset still needs the backup
-/// route. Everything it writes goes to the same place AirLift writes to:
+/// The signing profile must grant a usable App Group
+/// (`WorseQueryEscape.discoveredGroupIdentifier`, resolved at runtime from the
+/// embedded provisioning profile); without one the route refuses itself and the
+/// judgement falls back. It can add descriptors but not remove them, so a store
+/// reset still needs the restore route. Everything it writes goes to the same
+/// place AirLift writes to:
 ///
 ///     <PosterBoard container>/Library/Application Support/
 ///       PRBPosterExtensionDataStore/<structure version>/Extensions/
 ///       <provider>/descriptors/<random UUID>
+///
+/// ## How it takes effect
+///
+/// The write itself never needs a pairing record. What happens *after* the write
+/// is decided by the device's state at that moment: when a saved RemotePairing
+/// record, the LocalDevVPN interface and Wi-Fi are all present, the tunnel can
+/// restart only the PosterBoard daemon (`PosterRefresh`) and the wallpaper
+/// appears without a respring. When any of the three is missing, or the refresh
+/// is not confirmed twice, the app stops at "written" and offers a manual
+/// respring button — it never triggers a respring on its own.
 ///
 /// ## Why it shares AirLift's discovery code
 ///
@@ -32,6 +45,37 @@ import Darwin
 /// bar, and randomizes the three identity fields on the way in. Doing it twice
 /// would mean two opinions about what a pack contains; the only difference here
 /// is that the copy is a local `FileManager` operation instead of an FFI one.
+/// What a finished in-process write did about making the wallpaper visible.
+///
+/// The write succeeds whether or not anything afterwards can run, so this is
+/// deliberately separate from the apply's success: a `.manualRespring` outcome is
+/// still a successful write that the user has to make visible.
+enum PosterBoardEffectKind: String, Sendable {
+    /// PosterBoard was restarted over the tunnel; the wallpaper is visible now.
+    case noRespring
+    /// The wallpaper is written but not visible yet. The completion prompt
+    /// carries a manual respring button.
+    case manualRespring
+}
+
+struct PosterBoardEffect: Equatable, Sendable {
+    let kind: PosterBoardEffectKind
+    /// One line for the completion prompt and the history record.
+    let headline: String
+    /// Why, in the user's terms.
+    let detail: String
+
+    var needsManualRespring: Bool { kind == .manualRespring }
+
+    /// The short text the apply history stores and the settings list shows.
+    var historyLabel: String {
+        switch kind {
+        case .noRespring: return "免注销"
+        case .manualRespring: return "写入后手动注销"
+        }
+    }
+}
+
 enum PosterBoardLocal {
     /// The bundle whose container holds the store.
     static let bundleID = "com.apple.PosterBoard"
@@ -58,7 +102,7 @@ enum PosterBoardLocal {
 
     // MARK: - Apply
 
-    /// Inject the selected packs and respring.
+    /// Inject the selected packs, then decide how they take effect.
     ///
     /// - Parameters:
     ///   - selection: the page's selection. Packs are honoured; the video stage
@@ -68,13 +112,14 @@ enum PosterBoardLocal {
     ///   - deviceVersion: the system version the legacy-conversion gate should
     ///     use. The judgement supplies the app's own version, because this route
     ///     never reads the device over a tunnel.
+    @discardableResult
     static func apply(
         selection: PosterBoardSelection,
         templates: [TemplateFile] = [],
         deviceVersion: String,
         log: @escaping @Sendable (String) -> Void,
         progress: @escaping (Double) -> Void
-    ) async throws {
+    ) async throws -> PosterBoardEffect {
         // Unpacking and copying are blocking file work and a pack can be large,
         // so they run off the caller (which is the main actor when the page's
         // apply is tapped). Progress is marshalled back to the main queue
@@ -87,17 +132,83 @@ enum PosterBoardLocal {
                        deviceVersion: deviceVersion, log: log, progress: reported)
         }
 
-        log("Respring so PosterBoard re-reads the store…")
-        // The writes are the queue, so the bar is full before the respring; a
-        // bar that sits at 100% through it reads as finished.
+        // The writes are the queue, so the bar is full before the effect step;
+        // a bar that sits at 100% through a refresh reads as finished.
         progress(99)
-        let triggered = await MainActor.run { NeoSpring.trigger() }
-        guard triggered else {
-            throw GoldenNuggetError("壁纸已经写入，但现在没有可用的窗口来触发注销。手动注销一次，"
-                + "PosterBoard 就会读到它们。")
-        }
+        let effect = await determineEffect(log: log)
         progress(100)
-        log("Injected \(injected) descriptor(s) locally.")
+        log("Injected \(injected) descriptor(s) locally. Effect: \(effect.headline)")
+        return effect
+    }
+
+    /// Decide, from the state *after* the write, how the wallpaper takes effect.
+    ///
+    /// Three things have to be true for the tunnel refresh: a saved
+    /// RemotePairing record, the LocalDevVPN interface, and Wi-Fi (the loopback
+    /// tunnel runs over it; cellular alone cannot carry it). When they are, the
+    /// refresh is attempted twice — the first attempt can lose a race with a
+    /// device that is still writing, and the second is the retry the checklist
+    /// asks for. If neither is confirmed the wallpaper is still written, so the
+    /// outcome is a prompt with a manual respring button, never an automatic
+    /// respring.
+    private static func determineEffect(log: @escaping @Sendable (String) -> Void) async -> PosterBoardEffect {
+        var missing: [String] = []
+        let record = (try? String(contentsOf: AppPaths.pairingFile, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !PairingRecord.hasRemotePairingCredentials(record) {
+            missing.append("配对文件（含 Remote Pairing 凭据）")
+        }
+        let tunnelUp = await MainActor.run { TunnelMonitor.shared.status != .down }
+        if !tunnelUp { missing.append("LocalDevVPN") }
+        if !(await wifiIsOn()) { missing.append("Wi-Fi") }
+
+        guard missing.isEmpty else {
+            let reason = missing.joined(separator: "、")
+            log("PosterBoard written; no automatic refresh because \(reason) is missing")
+            return PosterBoardEffect(
+                kind: .manualRespring,
+                headline: "壁纸已写入",
+                detail: "当前缺少\(reason)，所以没有自动刷新。壁纸已经在商店里，点「手动注销」"
+                    + "让 PosterBoard 读到它们。App 不会自动注销。")
+        }
+
+        log("Tunnel prerequisites complete — restarting only the PosterBoard daemon…")
+        var refresh = await PosterRefresh.attempt(pairingPath: AppPaths.pairingFile.path)
+        if !refresh.confirmed {
+            log("PosterBoard refresh not confirmed (\(refresh.status.explanation)) — retrying once")
+            refresh = await PosterRefresh.attempt(pairingPath: AppPaths.pairingFile.path)
+        }
+        if refresh.confirmed {
+            log("✅ \(refresh.status.explanation) — 免注销生效。")
+            return PosterBoardEffect(
+                kind: .noRespring,
+                headline: "刷入完成，免注销生效",
+                detail: "只重启了 PosterBoard，壁纸已经可见，其他 App 不受影响。")
+        }
+        log("⚠️ PosterBoard refresh not confirmed twice (\(refresh.status.explanation)); "
+            + "leaving the wallpaper written and offering a manual respring")
+        return PosterBoardEffect(
+            kind: .manualRespring,
+            headline: "壁纸已写入（免注销未确认）",
+            detail: "两次刷新都没有确认（\(refresh.status.explanation)）。壁纸已经在商店里，"
+                + "点「手动注销」让 PosterBoard 读到它们。App 不会自动注销。")
+    }
+
+    /// Whether Wi-Fi is currently usable.
+    ///
+    /// `NWPathMonitor` reports its first path asynchronously after `start`, so
+    /// this waits for a settled path (bounded) instead of reading an
+    /// all-default snapshot. Uses a Wi-Fi-required monitor: a satisfied cellular
+    /// path is not enough for the loopback tunnel.
+    private static func wifiIsOn() async -> Bool {
+        let monitor = NWPathMonitor(requiredInterfaceType: .wifi)
+        monitor.start(queue: DispatchQueue(label: "com.sociart.drift.wifi-probe"))
+        defer { monitor.cancel() }
+        for _ in 0..<10 {
+            if monitor.currentPath.status == .satisfied { return true }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return false
     }
 
     /// The synchronous half: stage each source, then copy its descriptors into
@@ -172,7 +283,7 @@ enum PosterBoardLocal {
                     in: stage, defaultExtension: source.defaultExtension, log: log)
                 guard !descriptors.isEmpty else {
                     throw GoldenNuggetError("在 \(source.name) 中没有找到壁纸描述文件。"
-                        + "对于交付容器文件的模板，请使用「保护性备份」。")
+                        + "对于交付容器文件的模板，请改用「恢复式」。")
                 }
                 log("  \(descriptors.count) descriptor(s)")
 
@@ -212,8 +323,8 @@ enum PosterBoardLocal {
         }
 
         guard injected > 0 else {
-            throw GoldenNuggetError("没有写入任何 PosterBoard 描述文件。请确认签名带 App Group 权限，"
-                + "并且设备系统在 worse_query 的支持范围内；缓存已过期的话，下一次会重新查找容器。")
+            throw GoldenNuggetError("没有写入任何 PosterBoard 描述文件。请确认签名授予了可用的 App Group，"
+                + "并且设备系统在本机直刷的支持范围内；缓存已过期的话，下一次会重新查找容器。")
         }
         return injected
     }

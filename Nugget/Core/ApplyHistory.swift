@@ -25,6 +25,9 @@ enum ApplyHistory {
         let model: String
         let ios: String
         let udid: String
+        /// How the wallpaper actually took effect ("免注销" / "写入后手动注销").
+        /// Optional so records written by 1.2.0 and earlier still decode.
+        var effect: String? = nil
 
         /// `datetime.now().astimezone().isoformat(timespec="seconds")`, which is
         /// local time with the offset (`"2026-10-12T14:05:33+03:00"`).
@@ -54,7 +57,7 @@ enum ApplyHistory {
     /// equivalent.  Any failure is swallowed.
     static func record(mode: String, success: Bool, error: String = "",
                        device: String = "", model: String = "", ios: String = "",
-                       udid: String = "") {
+                       udid: String = "", effect: String? = nil) {
         let item = Record(timestamp: Record.now(),
                           mode: mode,
                           success: success,
@@ -62,7 +65,8 @@ enum ApplyHistory {
                           device: device,
                           model: model,
                           ios: ios,
-                          udid: udid)
+                          udid: udid,
+                          effect: effect)
         var records = load() + [item]
         if records.count > maxEntries {
             records = Array(records.suffix(maxEntries))

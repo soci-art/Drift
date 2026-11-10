@@ -15,16 +15,18 @@ import Foundation
 ///    container. No backup, no reboot — a respring is enough — but it needs
 ///    iOS 26.2+, LocalDevVPN, an unlocked device, and it cannot do a store reset.
 ///  - `.direct` is the pairing-tunnel path: one descriptor at a time through a
-///    single AirTraffic/Books snapshot-restore cycle, then only PosterBoard is
-///    restarted (DVT ProcessControl) so the wallpaper appears without a
-///    respring. It works from iOS 26.0 to 27.1, needs a pairing record and
-///    LocalDevVPN, and cannot reset the store.
+///    single AirTraffic/Books transaction (the same write module AirLift uses,
+///    with the reload preferences merged into that transaction), then only
+///    PosterBoard is restarted (DVT ProcessControl) so the wallpaper appears
+///    without a respring. It works from iOS 26.0 to 27.1 and on 27.2 beta 1/2,
+///    needs a pairing record and LocalDevVPN, and cannot reset the store.
 ///  - `.worseQuery` is the in-process path: `worse_query` consumes a sandbox
 ///    extension for PosterBoard's container from inside this app, so the copy
-///    needs neither a pairing record nor a tunnel. No backup, a respring only —
-///    but the signing profile must grant an App Group, and the system has to be
+///    needs neither a pairing record nor a tunnel. The signing profile must
+///    grant a usable App Group (discovered at runtime), and the system has to be
 ///    in worse_query's range (26.0–26.7.2 / 27.0–27.2). Like AirLift, it can add
-///    descriptors but not reset the store.
+///    descriptors but not reset the store. What happens afterwards depends on
+///    the tunnel prerequisites at that moment — see `PosterBoardLocal`.
 ///
 /// AirLift is the default *stored* preference. The backup path is this port's
 /// original mechanism, not a better one: it costs a full protective backup and a
@@ -41,13 +43,18 @@ enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
 
     var title: String {
         switch self {
-        case .backup: return String(localized: "Protective backup")
-        case .direct: return "直刷（回环配对 · 免注销）"
-        case .airlift: return String(localized: "AirLift (AirTraffic)")
+        case .backup:
+            // The long title is what the history stores, so it states the
+            // suspension for as long as the gate is closed.
+            return DriftRestoreGate.isEnabled ? "恢复式" : "恢复式（暂时关闭）"
+        case .direct: return "直刷免注销"
+        case .airlift: return "AirLift 直刷"
         // Chinese-first, like the rest of Drift's own UI: `shortTitle` is what
         // the mode menu shows, and a String Catalog key added here would ship
-        // untranslated until the catalog is regenerated on macOS.
-        case .worseQuery: return "本机直刷（worse_query）"
+        // untranslated until the catalog is regenerated on macOS. The short
+        // name is deliberately the *only* user-facing name — no `worse_query`
+        // in menus or history.
+        case .worseQuery: return "本机直刷"
         }
     }
 
@@ -58,7 +65,7 @@ enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
     var shortTitle: String {
         switch self {
         case .backup: return "恢复式"
-        case .direct: return "直刷（免注销）"
+        case .direct: return "直刷免注销"
         case .airlift: return "AirLift 直刷"
         case .worseQuery: return "本机直刷"
         }
@@ -77,13 +84,13 @@ enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
     var summary: String {
         switch self {
         case .backup:
-            return "先从设备获取商店数据库，再通过保护性备份送入壁纸。适用于所有受支持的设备，最后会重启设备。"
+            return "先从设备获取商店数据库，再通过恢复式写入壁纸。适用于所有受支持的设备，最后会重启设备。"
         case .direct:
-            return "通过配对隧道直写 PosterBoard 的容器，再只重启 PosterBoard 守护进程——不注销、不重启。需要 iOS 26.0–27.1、LocalDevVPN，且设备保持解锁。"
+            return "通过配对隧道直写 PosterBoard 的容器，再只重启 PosterBoard 守护进程——不注销、不重启。支持 iOS 26.0–27.1 及 27.2 测试版 1/2；需要配对、隧道、LocalDevVPN，且设备保持解锁。"
         case .airlift:
-            return "通过隧道直接写进 PosterBoard 的容器——不做备份，以注销代替重启。需要 iOS 26.2 或更高版本、LocalDevVPN，且设备保持解锁。"
+            return "通过隧道直接写进 PosterBoard 的容器——不做备份，以注销代替重启。需要 iOS 26.2–27.1 或 27.2 测试版 1/2、LocalDevVPN，且设备保持解锁。"
         case .worseQuery:
-            return "在本机直接写进 PosterBoard 的容器——不用配对文件、不用隧道，以注销代替重启。需要 iOS 26.0–26.7.2 或 27.0–27.2，且签名里带 App Group 权限。"
+            return "在本机直接写进 PosterBoard 的容器——不用配对文件、不用隧道。写完按当时的配对/隧道/Wi-Fi 情况决定免注销还是只提示；需要 iOS 26.0–26.7.2 或 27.0–27.2，且签名授予可用的 App Group。"
         }
     }
 
@@ -109,28 +116,42 @@ enum PosterBoardApplyModeSettings {
     /// default is what such a device gets.
     /// Resolve saved AirLift selections against the actual target without erasing
     /// the user's preference for another, supported device.
+    ///
+    /// The fallback is the same for every saved pick — the automatic order
+    /// (in-process, then direct, then AirLift) minus the pick itself — because
+    /// the old per-mode special cases made a saved direct pick try a different
+    /// chain than a saved AirLift pick. A saved restore pick is returned as-is:
+    /// the session's funnel refuses it while the gate is closed, and this
+    /// function has no business silently rewriting an explicit choice.
     static func resolved(deviceVersion: String, buildVersion: String) -> PosterBoardApplyMode {
-        switch current {
+        let pick = current
+        if pick == .backup { return .backup }
+        if isAvailable(pick, deviceVersion: deviceVersion, buildVersion: buildVersion) {
+            return pick
+        }
+        for candidate in [PosterBoardApplyMode.worseQuery, .direct, .airlift]
+        where isAvailable(candidate, deviceVersion: deviceVersion, buildVersion: buildVersion) {
+            return candidate
+        }
+        return .backup
+    }
+
+    /// One availability rule for the saved-pick fallback, mirroring
+    /// `DriftJudge`'s per-mode checks.
+    private static func isAvailable(_ mode: PosterBoardApplyMode,
+                                    deviceVersion: String,
+                                    buildVersion: String) -> Bool {
+        switch mode {
         case .backup:
-            return .backup
+            return DriftRestoreGate.isEnabled
         case .direct:
-            // A saved direct pick survives for a supported system; on one that
-            // is not, prefer the in-process route, then AirLift, then the
-            // (currently suspended) backup route.
-            if PosterBoardDirect.isAvailable(deviceVersion: deviceVersion) { return .direct }
-            if WorseQueryEscape.isAvailable(deviceVersion: deviceVersion) { return .worseQuery }
-            return AirliftAvailability.isHidden(deviceVersion: deviceVersion, buildVersion: buildVersion)
-                ? .backup : .airlift
+            return PosterBoardDirect.isAvailable(deviceVersion: deviceVersion,
+                                                 buildVersion: buildVersion)
         case .worseQuery:
-            // A saved in-process pick survives for a device that supports it;
-            // on one that does not, fall back the same way a saved AirLift pick
-            // does instead of failing the run at the injection.
-            if WorseQueryEscape.isAvailable(deviceVersion: deviceVersion) { return .worseQuery }
-            return AirliftAvailability.isHidden(deviceVersion: deviceVersion, buildVersion: buildVersion)
-                ? .backup : .airlift
+            return WorseQueryEscape.isAvailable(deviceVersion: deviceVersion)
         case .airlift:
-            return AirliftAvailability.isHidden(deviceVersion: deviceVersion, buildVersion: buildVersion)
-                ? .backup : .airlift
+            return Airlift.isSupported(deviceVersion: deviceVersion,
+                                       buildVersion: buildVersion)
         }
     }
 

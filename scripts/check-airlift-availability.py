@@ -22,6 +22,16 @@ worse_query_stub = r'''
 enum WorseQueryEscape {
     static func isAvailable(deviceVersion: String) -> Bool { false }
 }
+// `resolved` now also asks the direct route and consults the restore gate for
+// the mode titles. Both are stubbed unavailable/false so the saved-pick paths
+// stay what this harness exercises.
+enum PosterBoardDirect {
+    static func isAvailable(deviceVersion: String, buildVersion: String) -> Bool { false }
+}
+enum DriftRestoreGate {
+    static let isEnabled = false
+    static let notice = "restore suspended"
+}
 '''
 harness = r'''
 var checks = 0

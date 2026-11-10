@@ -21,10 +21,13 @@ import WorseQuery
 /// ## What it is not
 ///
 /// It is not an entitlement bypass. The App Group has to be real and has to be
-/// granted by the signing profile (`com.apple.security.application-groups` in
-/// `entitlements.plist`). Without it `containerURL(forSecurityApplicationGroupIdentifier:)`
-/// returns nil, every call fails with `-1`, and `isAvailable` says no — so a
-/// free "personal team" install simply keeps using AirLift or the backup route.
+/// granted by the signing profile the app was installed with
+/// (`com.apple.security.application-groups` in its embedded
+/// `.mobileprovision`). The bridge discovers which groups that profile grants at
+/// runtime and uses the first whose container opens
+/// (`discoveredGroupIdentifier`); without one every call fails with `-1` and
+/// `isAvailable` says no, so a free "personal team" install simply keeps using
+/// the tunnel routes.
 ///
 /// ## Supported systems
 ///
@@ -34,13 +37,80 @@ import WorseQuery
 enum WorseQueryEscape {
     // MARK: - Configuration
 
-    /// The App Group the escape stages its symlink in.
+    /// The App Group the escape stages its symlink in, discovered at runtime.
     ///
-    /// This is not a free choice: it has to be a group the signing profile
-    /// grants. It is written once here and once in `entitlements.plist`, and the
-    /// two must stay in step — a profile that grants a different group makes
-    /// this mode report itself unavailable rather than fail a run half-way.
-    static let groupIdentifier = "group.com.sociart.drift"
+    /// A group name is not a free choice: it has to be one the *installed*
+    /// signing profile actually grants. The hard-coded name this used to carry
+    /// (`group.com.sociart.drift`) only matches some paid profiles — a p12
+    /// certificate often gets `group.<hash>.1`, and SideStore / AltStore re-sign
+    /// with their own prefix — and a mismatch made
+    /// `containerURL(forSecurityApplicationGroupIdentifier:)` return nil, so the
+    /// whole in-process route reported "no App Group" on a build that had one.
+    ///
+    /// The bridge therefore reads the entitlements of the provisioning profile
+    /// embedded in the installed app (`embedded.mobileprovision`), asks the
+    /// system to open each granted group in order, and keeps the first that
+    /// opens. The container resolution and every `worse_query` call use that
+    /// discovered name. No group, or none that opens, means the route is
+    /// unavailable — there is deliberately no hard-coded fallback.
+    static let discoveredGroupIdentifier: String? = discoverGroupIdentifier()
+
+    /// The App Group's container, or nil when the profile grants none this
+    /// process can open. Resolved once per process.
+    private static let resolvedGroupContainer: URL? =
+        discoveredGroupIdentifier.flatMap {
+            FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0)
+        }
+
+    /// The entitlement that carries the granted App Group list.
+    private static let applicationGroupsKey = "com.apple.security.application-groups"
+
+    /// The profile the installed app was signed with, if the bundle has one.
+    ///
+    /// Read from the app bundle rather than from the build's entitlements: the
+    /// profile that matters is the one the installer actually used, which is
+    /// exactly what a reset (SideStore / AltStore / a p12) rewrites.
+    private static func embeddedProvisioningProfile() -> Data? {
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision") else {
+            return nil
+        }
+        return try? Data(contentsOf: url)
+    }
+
+    /// The first granted group whose container opens, or nil.
+    ///
+    /// Order is the profile's own: the first entry is the one the signing tool
+    /// put there first, and any of them is enough for the escape.
+    static func discoverGroupIdentifier(profileData: Data? = WorseQueryEscape.embeddedProvisioningProfile()) -> String? {
+        guard let profileData else { return nil }
+        for group in applicationGroups(inProvisioningProfile: profileData) {
+            if FileManager.default.containerURL(
+                forSecurityApplicationGroupIdentifier: group) != nil {
+                return group
+            }
+        }
+        return nil
+    }
+
+    /// The `application-groups` list from a provisioning profile.
+    ///
+    /// A `.mobileprovision` is a CMS signature wrapped around the plist; the
+    /// plist is the `<?xml … </plist>` slice inside it, so the bytes are cut at
+    /// those markers and parsed as XML rather than fed to
+    /// `PropertyListSerialization` whole (which only accepts the CMS blob as an
+    /// opaque signature and finds no entitlements in it).
+    static func applicationGroups(inProvisioningProfile data: Data) -> [String] {
+        guard let start = data.range(of: Data("<?xml".utf8)),
+              let end = data.range(of: Data("</plist>".utf8),
+                                   options: [],
+                                   in: start.lowerBound..<data.endIndex) else { return [] }
+        let plistData = data.subdata(in: start.lowerBound..<end.upperBound)
+        guard let plist = try? PropertyListSerialization.propertyList(
+                from: plistData, options: [], format: nil) as? [String: Any],
+              let entitlements = plist["Entitlements"] as? [String: Any],
+              let groups = entitlements[applicationGroupsKey] as? [String] else { return [] }
+        return groups
+    }
 
     // MARK: - Failures
 
@@ -58,8 +128,8 @@ enum WorseQueryEscape {
                 return "本机直刷只支持 iOS 26.0–26.7.2 和 27.0–27.2；"
                     + "这台设备报告的是 \(version.isEmpty ? "未知系统" : "iOS \(version)")。"
             case .groupUnavailable:
-                return "本机直刷需要签名里带 App Group \(WorseQueryEscape.groupIdentifier)，"
-                    + "当前签名没有这个权限。免费 Apple ID 签不了 App Group，需要付费证书。"
+                return "当前签名没有授予可用的 App Group，本机直刷用不了。"
+                    + "App 会读取安装包签名里实际授予的组；组名单为空或一个都打不开时才会报这一条。"
             case .refused(let code):
                 return WorseQueryEscape.describe(code: code)
             }
@@ -75,9 +145,9 @@ enum WorseQueryEscape {
     private static func describe(code: Int64) -> String {
         switch code {
         case -1:
-            return "拿不到 App Group 容器：签名里没有 \(groupIdentifier) 权限。"
+            return "拿不到 App Group 容器：当前签名没有授予可用的 App Group。"
         case -2:
-            return "这台系统上找不到 worse_query 需要的私有接口（系统可能已不在支持范围内）。"
+            return "这台系统上找不到本机直刷需要的私有接口（系统可能已不在支持范围内）。"
         case -3:
             return "containermanagerd 查询创建失败。"
         case -4:
@@ -89,7 +159,7 @@ enum WorseQueryEscape {
         case -255:
             return "目标路径不存在。"
         default:
-            return "worse_query 失败（代码 \(code)）。"
+            return "本机直刷写入失败（代码 \(code)）。"
         }
     }
 
@@ -136,10 +206,6 @@ enum WorseQueryEscape {
     /// app runs, and this is read from a view body (the mode menu, the
     /// judgement card and the apply button all consult it), which must not ask
     /// containermanagerd on every redraw.
-    private static let resolvedGroupContainer: URL? =
-        FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: groupIdentifier)
-
     static var groupContainer: URL? { resolvedGroupContainer }
 
     /// Whether a run may use this route right now.
@@ -160,8 +226,8 @@ enum WorseQueryEscape {
                 + "这台设备报告的是 \(deviceVersion.isEmpty ? "未知系统" : "iOS \(deviceVersion)")。"
         }
         if groupContainer == nil {
-            return "本机直刷需要签名里带 App Group \(groupIdentifier)（付费证书），"
-                + "当前签名没有这个权限。"
+            return "本机直刷需要签名授予可用的 App Group，但这份签名没有可用的组。"
+                + "App 会读取安装包里签名授予的组名单并逐个试开；付费证书、SideStore / AltStore 改签都可以。"
         }
         return ""
     }
@@ -190,7 +256,8 @@ enum WorseQueryEscape {
         let alternate = path.contains("/var/mobile/Containers/Shared/AppGroup")
             && ProcessInfo.processInfo.operatingSystemVersion.majorVersion == 26
 
-        let handle = worse_query(path, groupIdentifier, alternate, createDirectory)
+        guard let group = discoveredGroupIdentifier else { throw Failure.groupUnavailable }
+        let handle = worse_query(path, group, alternate, createDirectory)
         guard handle > 0 else { throw Failure.refused(code: handle) }
         return handle
     }

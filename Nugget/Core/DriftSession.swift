@@ -23,6 +23,10 @@ final class DriftSession: ObservableObject {
     /// True while a wallpaper run is in flight.
     @Published private(set) var running = false
 
+    /// How the last finished run took effect, when it used the in-process
+    /// route. The home page shows a manual-respring button from this.
+    @Published private(set) var lastEffect: PosterBoardEffect?
+
     private var didBootstrap = false
     private static let startLock = NSLock()
     private static var startInFlight = false
@@ -332,21 +336,23 @@ final class DriftSession: ObservableObject {
     func cancelRun() { GoldenNuggetEngine.shared.requestCancel() }
 
     /// Run one wallpaper apply in an already-decided mode and record it.
-    /// Returns a one-line outcome for the page's status area.
+    /// Returns a one-line outcome for the page's status area, plus the actual
+    /// effect when the in-process route produced one.
     func run(selection: PosterBoardSelection, mode: PosterBoardApplyMode,
-             identity: DeviceIdentity) async -> (ok: Bool, message: String) {
+             identity: DeviceIdentity) async -> (ok: Bool, message: String, effect: PosterBoardEffect?) {
         // An abandoned run (its calls walked away from) does not block a
         // successor — `beginRun` inside the engine makes the final call.
         guard !InFlightCall.shared.hasLiveRun else {
-            return (false, "已有一轮刷入正在进行")
+            return (false, "已有一轮刷入正在进行", nil)
         }
+        lastEffect = nil
         // Feedback #30: the funnel refuses a restore run while the gate
         // is closed, even if a caller forgot to consult it — judgement,
         // reset and video all arrive here, so this is the one place a
         // restore run cannot slip past.
         if mode == .backup && !DriftRestoreGate.isEnabled {
             GoldenNuggetEngine.shared.log("run refused: restore route is suspended (feedback #30)")
-            return (false, DriftRestoreGate.notice)
+            return (false, DriftRestoreGate.notice, nil)
         }
         PosterBoardApplyModeSettings.current = mode
         running = true
@@ -361,21 +367,27 @@ final class DriftSession: ObservableObject {
                 deviceVersion: identity.version,
                 isIPhone: identity.isIPhone,
                 deviceModel: identity.productType)
+            let effect = GoldenNuggetEngine.shared.lastPosterBoardEffect
+            lastEffect = effect
             ApplyHistory.record(mode: mode.title, success: true,
                                 device: identity.describe,
-                                model: identity.productType, ios: identity.version)
+                                model: identity.productType, ios: identity.version,
+                                effect: effect?.historyLabel)
             // The reset flags are one-shot; the calling page clears its own
             // selection on success (this session only ever holds a copy).
             errorText = nil
             switch mode {
             case .worseQuery:
-                return (true, "刷入完成，设备将注销生效")
+                if let effect {
+                    return (true, "\(effect.headline)。\(effect.detail)", effect)
+                }
+                return (true, "刷入完成，壁纸已写入", nil)
             case .direct:
-                return (true, "刷入完成，壁纸已刷新，免注销生效")
+                return (true, "刷入完成，壁纸已刷新，免注销生效", nil)
             case .airlift:
-                return (true, "刷入完成，设备将注销生效")
+                return (true, "刷入完成，设备将注销生效", nil)
             case .backup:
-                return (true, "刷入完成，设备将重启生效")
+                return (true, "刷入完成，设备将重启生效", nil)
             }
         } catch {
             if let failure = error as? TransportFailure, failure.isCancellation {
@@ -383,30 +395,45 @@ final class DriftSession: ObservableObject {
                 ApplyHistory.record(mode: mode.title, success: false, error: "已取消",
                                     device: identity.describe,
                                     model: identity.productType, ios: identity.version)
-                return (false, "刷入已取消")
+                return (false, "刷入已取消", nil)
             }
             GoldenNuggetEngine.shared.log("posterboard apply failed: \(error.localizedDescription)")
             ApplyHistory.record(mode: mode.title, success: false, error: error.localizedDescription,
                                 device: identity.describe,
                                 model: identity.productType, ios: identity.version)
-            return (false, error.localizedDescription)
+            return (false, error.localizedDescription, nil)
         }
     }
 }
 
 // MARK: - Mode judgement
 
+/// Why one delivery mode is or is not usable right now.
+struct DriftModeAvailability: Identifiable, Equatable {
+    let mode: PosterBoardApplyMode
+    let available: Bool
+    let reason: String
+    /// What finishing the run in this mode would do about making the wallpaper
+    /// visible — the card previews this before the user taps Apply.
+    let effect: String
+    var id: String { mode.rawValue }
+}
+
 /// Why a run will use the mode it uses, in one user-facing sentence.
 struct DriftModeJudgement {
     var mode: PosterBoardApplyMode
     var reason: String
-    /// Set when the user's manual pick was overridden by a hard limit.
+    /// Set when the user's manual pick was overridden by a hard limit or by an
+    /// unavailable route falling back.
     var overriddenPick: PosterBoardApplyMode?
-    /// Set when no run may start at all right now (feedback #30: the
-    /// restore route is suspended, and this selection can only travel
-    /// it). `mode` is then a placeholder — callers must check
-    /// `isBlocked` before running anything.
+    /// Set when no run may start at all right now (the restore route is
+    /// suspended, and this selection can only travel it). `mode` is then a
+    /// placeholder — callers must check `isBlocked` before running anything.
     var blockedReason: String?
+    /// One row per mode, with its own reason and expected effect.
+    var options: [DriftModeAvailability] = []
+    /// How the chosen mode is expected to take effect.
+    var expectedEffect: String = ""
     var isBlocked: Bool { blockedReason != nil }
 }
 
@@ -422,224 +449,241 @@ enum DriftJudge {
         set { UserDefaults.standard.set(newValue?.rawValue, forKey: manualKey) }
     }
 
-    /// The version the judgement should decide on.
+    /// The two premise classes, kept apart on purpose.
     ///
-    /// The device read wins while a tunnel is up; with no pairing record there
-    /// is no device read, and the in-process route only needs the app's own
-    /// system version — which is exactly why it works without pairing.
-    private static func systemVersion(_ identity: DeviceIdentity) -> String {
-        identity.version.isEmpty ? WorseQueryEscape.processVersion : identity.version
+    /// * **Local premise** — the app's own system version plus a granted App
+    ///   Group. Both are readable in-process, so this is decided without a
+    ///   pairing record, a tunnel or Wi-Fi.
+    /// * **Tunnel premise** — a saved pairing record, a connected tunnel and a
+    ///   real device identity (version *and* build). Both tunnel modes need all
+    ///   three; when one is missing they are unavailable and say which, and the
+    ///   app's own version is never substituted for the device's.
+    private struct Premises {
+        let appVersion: String
+        let localReady: Bool
+        let localWhy: String
+        let directReady: Bool
+        let directWhy: String
+        let airliftReady: Bool
+        let airliftWhy: String
+        let restoreReady: Bool
+        let restoreWhy: String
+
+        func isAvailable(_ mode: PosterBoardApplyMode) -> Bool {
+            switch mode {
+            case .backup: return restoreReady
+            case .direct: return directReady
+            case .airlift: return airliftReady
+            case .worseQuery: return localReady
+            }
+        }
+
+        func why(_ mode: PosterBoardApplyMode) -> String {
+            switch mode {
+            case .backup: return restoreWhy
+            case .direct: return directWhy
+            case .airlift: return airliftWhy
+            case .worseQuery: return localWhy
+            }
+        }
     }
 
-    /// Decide the delivery mode for a selection, in Drift's order:
-    /// hard limits first (video, store reset, store-database packs, system
-    /// out of the direct range, unknown device), then the manual pick, then
-    /// the automatic default (direct whenever the system allows it).
+    private static func premises(identity: DeviceIdentity, tunnelReady: Bool) -> Premises {
+        // The in-process route judges the app's *own* system, always. Its
+        // device read is irrelevant: the app is the device.
+        let appVersion = WorseQueryEscape.processVersion
+        let localReady = WorseQueryEscape.isAvailable(deviceVersion: appVersion)
+        let localWhy = WorseQueryEscape.unavailableReason(deviceVersion: appVersion)
+
+        var tunnelMissing: String?
+        if !PairingRecord.isInstalled {
+            tunnelMissing = "还没有配对文件（配对只是隧道方式的前提，本机直刷不需要）"
+        } else if !tunnelReady {
+            tunnelMissing = "隧道未连通（打开 LocalDevVPN 并连上 Wi-Fi）"
+        } else if identity.version.isEmpty {
+            tunnelMissing = "还没有读到设备系统版本"
+        } else if identity.buildVersion.isEmpty {
+            tunnelMissing = "还没有读到设备构建号（27.2 的可用范围按构建号判断）"
+        }
+
+        let directReady = tunnelMissing == nil
+            && PosterBoardDirect.isAvailable(deviceVersion: identity.version,
+                                             buildVersion: identity.buildVersion)
+        let directWhy = tunnelMissing
+            ?? PosterBoardDirect.unavailableReason(deviceVersion: identity.version,
+                                                   buildVersion: identity.buildVersion)
+        let airliftReady = tunnelMissing == nil
+            && Airlift.isSupported(deviceVersion: identity.version,
+                                   buildVersion: identity.buildVersion)
+        let airliftWhy = tunnelMissing
+            ?? Airlift.unsupportedReason(deviceVersion: identity.version,
+                                         buildVersion: identity.buildVersion)
+
+        return Premises(
+            appVersion: appVersion,
+            localReady: localReady,
+            localWhy: localWhy,
+            directReady: directReady,
+            directWhy: directWhy,
+            airliftReady: airliftReady,
+            airliftWhy: airliftWhy,
+            restoreReady: DriftRestoreGate.isEnabled,
+            restoreWhy: DriftRestoreGate.isEnabled ? "可用：刷完重启" : "暂时停用")
+    }
+
+    /// How a mode makes the wallpaper visible, in the user's terms.
+    static func expectedEffect(for mode: PosterBoardApplyMode) -> String {
+        switch mode {
+        case .worseQuery:
+            return "写完判定：配对、LocalDevVPN、Wi-Fi 齐全则免注销；否则只提示，可手动注销"
+        case .direct:
+            return "免注销（只重启 PosterBoard；未确认时回落注销）"
+        case .airlift:
+            return "注销生效"
+        case .backup:
+            return "重启生效"
+        }
+    }
+
+    /// The per-mode rows the judgement card prints.
+    private static func optionRows(_ p: Premises, identity: DeviceIdentity) -> [DriftModeAvailability] {
+        let appVersion = p.appVersion
+        let device = identity.version.isEmpty
+            ? "设备系统版本未读到"
+            : "设备 iOS \(identity.version)\(identity.buildVersion.isEmpty ? "" : "（\(identity.buildVersion)）")"
+        let group = WorseQueryEscape.discoveredGroupIdentifier ?? "已发现"
+        return [
+            DriftModeAvailability(
+                mode: .worseQuery,
+                available: p.localReady,
+                reason: p.localReady
+                    ? "可用：iOS \(appVersion)，签名授予的 App Group 可打开（\(group)）"
+                    : p.localWhy,
+                effect: expectedEffect(for: .worseQuery)),
+            DriftModeAvailability(
+                mode: .direct,
+                available: p.directReady,
+                reason: p.directReady
+                    ? "可用：\(device) 在 26.0–27.1 及 27.2 测试版 1/2 内"
+                    : p.directWhy,
+                effect: expectedEffect(for: .direct)),
+            DriftModeAvailability(
+                mode: .airlift,
+                available: p.airliftReady,
+                reason: p.airliftReady
+                    ? "可用：\(device) 在 26.2–27.1 及 27.2 测试版 1/2 内"
+                    : p.airliftWhy,
+                effect: expectedEffect(for: .airlift)),
+            DriftModeAvailability(
+                mode: .backup,
+                available: p.restoreReady,
+                reason: p.restoreWhy,
+                effect: expectedEffect(for: .backup)),
+        ]
+    }
+
+    /// The automatic order: the in-process route first (it asks the least of
+    /// the user), then the two tunnel routes, then restore where it is open.
+    private static func firstAvailable(_ p: Premises) -> PosterBoardApplyMode? {
+        for mode in [PosterBoardApplyMode.worseQuery, .direct, .airlift, .backup]
+        where p.isAvailable(mode) {
+            return mode
+        }
+        return nil
+    }
+
+    private static func automaticReason(_ mode: PosterBoardApplyMode) -> String {
+        switch mode {
+        case .worseQuery:
+            return "当前系统支持本机直刷：写入不用配对、不用隧道；生效方式写完再判定"
+        case .direct:
+            return "当前系统支持直刷免注销：走配对隧道写入，只重启 PosterBoard，不注销"
+        case .airlift:
+            return "当前系统支持 AirLift 直刷：刷完只注销不重启"
+        case .backup:
+            return "当前系统没有可用的直刷方式，用恢复式，刷完会重启"
+        }
+    }
+
+    private static func manualReason(_ mode: PosterBoardApplyMode) -> String {
+        switch mode {
+        case .worseQuery:
+            return "已手动选择本机直刷：写入不用配对或隧道，生效方式写完再判定"
+        case .direct:
+            return "已手动选择直刷免注销：走配对隧道写入，只重启 PosterBoard，不注销"
+        case .airlift:
+            return "已手动选择 AirLift 直刷：刷完只注销不重启"
+        case .backup:
+            return "已手动选择恢复式，刷完会重启"
+        }
+    }
+
+    /// Decide the delivery mode for a selection.
     ///
-    /// The pick arrives as a parameter, not from `manualPick`: the pages hold
-    /// it in `@AppStorage` so a menu tap re-renders the judgement card at
-    /// once. Reading the UserDefaults-backed static here made the card a
-    /// snapshot — it only caught up when some unrelated state (an imported
-    /// pack) happened to redraw the page.
+    /// Hard limits come first (video, store reset, store-database packs), then
+    /// the manual pick, then the automatic order. An unavailable manual pick
+    /// falls back through the **same full order** as an automatic run — the old
+    /// asymmetric fallbacks (a direct pick trying only AirLift, an AirLift pick
+    /// trying only the in-process route) are gone — and the note says why the
+    /// pick was dropped and what replaced it.
+    ///
+    /// - Parameter tunnelReady: whether the loopback tunnel currently carries
+    ///   traffic. The tunnel premise needs it, so the card must pass it on every
+    ///   redraw; it defaults to false for callers that only need a static answer.
     static func judge(identity: DeviceIdentity, selection: PosterBoardSelection,
-                      pick: PosterBoardApplyMode?) -> DriftModeJudgement {
-        // Feedback #30: while the restore gate is closed the judgement
-        // is a different shape — restore is never the answer, and a
-        // selection that can only travel restore is "cannot flash now",
-        // not "restore". The normal judgement below stays untouched for
-        // the day the gate reopens.
-        if !DriftRestoreGate.isEnabled {
-            return judgeRestoreSuspended(identity: identity, selection: selection, pick: pick)
-        }
-        let version = systemVersion(identity)
-        let localReady = WorseQueryEscape.isAvailable(deviceVersion: version)
-        let localWhy = WorseQueryEscape.unavailableReason(deviceVersion: version)
-        // AirLift is a *paired* route: with no device read there is no device
-        // to open a tunnel to, so it is not judged available on the app's own
-        // version alone. The in-process route is the one that can be.
-        let directReady = !identity.version.isEmpty
-            && PosterBoardDirect.isAvailable(deviceVersion: identity.version)
-        let directWhy = PosterBoardDirect.unavailableReason(deviceVersion: identity.version)
-        let airliftReady = !identity.version.isEmpty
-            && Airlift.isSupported(deviceVersion: identity.version,
-                                   buildVersion: identity.buildVersion)
+                      pick: PosterBoardApplyMode?,
+                      tunnelReady: Bool = false) -> DriftModeJudgement {
+        let p = premises(identity: identity, tunnelReady: tunnelReady)
+        let rows = optionRows(p, identity: identity)
 
-        func backup(_ reason: String) -> DriftModeJudgement {
-            DriftModeJudgement(mode: .backup, reason: reason,
-                               overriddenPick: pick == .backup ? nil : pick)
+        func judged(_ mode: PosterBoardApplyMode, _ reason: String,
+                    overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
+            DriftModeJudgement(mode: mode, reason: reason, overriddenPick: overriding,
+                               options: rows, expectedEffect: expectedEffect(for: mode))
         }
-        func local(_ reason: String, overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
-            DriftModeJudgement(mode: .worseQuery, reason: reason, overriddenPick: overriding)
-        }
-        func direct(_ reason: String, overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
-            DriftModeJudgement(mode: .direct, reason: reason, overriddenPick: overriding)
-        }
-        func airlift(_ reason: String, overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
-            DriftModeJudgement(mode: .airlift, reason: reason, overriddenPick: overriding)
-        }
-
-        if selection.video != nil {
-            return backup("视频壁纸只能用恢复式，刷完会重启")
-        }
-        if selection.fullReset || !selection.resetModes.isEmpty {
-            return backup("重置壁纸商店只能用恢复式，刷完会重启")
-        }
-        if selection.tendies.contains(where: \.isUnsafeContainer) {
-            return backup("包含商店数据库的壁纸包只能用恢复式，刷完会重启")
-        }
-        if pick == .backup {
-            return DriftModeJudgement(mode: .backup, reason: "已手动选择恢复式，刷完会重启",
-                                      overriddenPick: nil)
-        }
-        if pick == .direct {
-            if directReady {
-                return direct("已手动选择直刷：走配对隧道写入，只刷新 PosterBoard，不注销")
-            }
-            if localReady {
-                return local("直刷在这台设备上用不了（\(directWhy)），已改用本机直刷，刷完只注销不重启", overriding: .direct)
-            }
-            if airliftReady {
-                return airlift("直刷在这台设备上用不了（\(directWhy)），已改用 AirLift，刷完只注销不重启", overriding: .direct)
-            }
-            return backup("直刷在这台设备上用不了（\(directWhy)），已按恢复式处理，刷完会重启")
-        }
-        if pick == .worseQuery {
-            if localReady {
-                return local("已手动选择本机直刷，刷完只注销不重启")
-            }
-            if airliftReady {
-                return airlift("本机直刷在这台设备上用不了（\(localWhy)），"
-                    + "已改用 AirLift，刷完只注销不重启", overriding: .worseQuery)
-            }
-            return backup("本机直刷在这台设备上用不了（\(localWhy)），已按恢复式处理，刷完会重启")
-        }
-        if identity.version.isEmpty && !localReady {
-            return backup("暂时读不到设备系统信息，按恢复式处理，刷完会重启")
-        }
-        if pick == .airlift {
-            if airliftReady {
-                return airlift("已手动选择 AirLift 直刷，刷完只注销不重启")
-            }
-            if localReady {
-                return local("AirLift 在这台设备上用不了，已改用本机直刷，刷完只注销不重启",
-                             overriding: .airlift)
-            }
-            return backup("AirLift 在这台设备上用不了，已按恢复式处理，刷完会重启")
-        }
-        // Automatic: the in-process route first, because it asks the least of
-        // the user — no pairing file, no tunnel, no backup — then the tunnel.
-        if localReady {
-            return local("当前系统支持本机直刷：不用配对、不用隧道，刷完只注销不重启")
-        }
-        if directReady {
-            return direct("当前系统支持直刷：走配对隧道写入，只刷新 PosterBoard，免注销")
-        }
-        if airliftReady {
-            return airlift("当前系统支持直刷，刷完只注销不重启")
-        }
-        return backup("当前系统不在直刷支持范围内，用恢复式，刷完会重启")
-    }
-
-    /// The judgement while the restore route is suspended (feedback #30).
-    /// Same order as the normal judgement — hard limits first — but a
-    /// hard limit no longer lands on restore: it lands on "cannot flash
-    /// now", with the reason still naming what forced it. A manual
-    /// restore pick degrades to direct whenever direct is possible; it
-    /// never blocks a selection direct could have carried.
-    private static func judgeRestoreSuspended(identity: DeviceIdentity,
-                                              selection: PosterBoardSelection,
-                                              pick: PosterBoardApplyMode?) -> DriftModeJudgement {
-        let version = systemVersion(identity)
-        let localReady = WorseQueryEscape.isAvailable(deviceVersion: version)
-        let localWhy = WorseQueryEscape.unavailableReason(deviceVersion: version)
-        let directReady = !identity.version.isEmpty
-            && PosterBoardDirect.isAvailable(deviceVersion: identity.version)
-        let directWhy = PosterBoardDirect.unavailableReason(deviceVersion: identity.version)
-        let airliftReady = !identity.version.isEmpty
-            && Airlift.isSupported(deviceVersion: identity.version,
-                                   buildVersion: identity.buildVersion)
-
         func blocked(_ reason: String) -> DriftModeJudgement {
             DriftModeJudgement(mode: .backup, reason: reason, overriddenPick: nil,
-                               blockedReason: DriftRestoreGate.notice)
-        }
-        func local(_ reason: String, overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
-            DriftModeJudgement(mode: .worseQuery, reason: reason, overriddenPick: overriding)
-        }
-        func direct(_ reason: String, overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
-            DriftModeJudgement(mode: .direct, reason: reason, overriddenPick: overriding)
-        }
-        func airlift(_ reason: String, overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
-            DriftModeJudgement(mode: .airlift, reason: reason, overriddenPick: overriding)
+                               blockedReason: DriftRestoreGate.notice,
+                               options: rows,
+                               expectedEffect: expectedEffect(for: .backup))
         }
 
+        // Hard limits: these leave only one route, and while it is suspended the
+        // answer is "cannot flash now" rather than a route the user may not use.
         if selection.video != nil {
-            return blocked("视频壁纸只能用恢复式，但恢复式暂时停用，现在刷不了")
+            return p.restoreReady
+                ? judged(.backup, "视频壁纸只能用恢复式，刷完会重启",
+                         overriding: pick == nil || pick == .backup ? nil : pick)
+                : blocked("视频壁纸只能用恢复式，但恢复式暂时停用，现在刷不了")
         }
         if selection.fullReset || !selection.resetModes.isEmpty {
-            return blocked("重置壁纸商店只能用恢复式，但恢复式暂时停用，现在做不了")
+            return p.restoreReady
+                ? judged(.backup, "重置壁纸商店只能用恢复式，刷完会重启",
+                         overriding: pick == nil || pick == .backup ? nil : pick)
+                : blocked("重置壁纸商店只能用恢复式，但恢复式暂时停用，现在做不了")
         }
         if selection.tendies.contains(where: \.isUnsafeContainer) {
-            return blocked("包含商店数据库的壁纸包只能用恢复式，但恢复式暂时停用，现在刷不了")
+            return p.restoreReady
+                ? judged(.backup, "包含商店数据库的壁纸包只能用恢复式，刷完会重启",
+                         overriding: pick == nil || pick == .backup ? nil : pick)
+                : blocked("包含商店数据库的壁纸包只能用恢复式，但恢复式暂时停用，现在刷不了")
         }
-        if identity.version.isEmpty && !localReady {
-            return blocked("暂时读不到设备系统信息，确认不了能不能直刷，恢复式又在停用中，现在先刷不了，稍后再试")
+
+        if let pick {
+            if p.isAvailable(pick) {
+                return judged(pick, manualReason(pick))
+            }
+            if let fallback = firstAvailable(p) {
+                return judged(fallback,
+                              "\(pick.shortTitle) 在这里用不了（\(p.why(pick))），已改用\(fallback.shortTitle)",
+                              overriding: pick)
+            }
+            return blocked("\(pick.shortTitle) 在这里用不了（\(p.why(pick))），恢复式又在停用中，现在刷不了")
         }
-        // A manual restore pick degrades to a direct route whenever one works;
-        // it never blocks a selection a direct route could have carried.
-        if pick == .backup {
-            if localReady {
-                return local("恢复式暂时停用，已改用本机直刷，刷完只注销不重启", overriding: .backup)
-            }
-            if directReady {
-                return direct("恢复式暂时停用，已改用直刷：只刷新 PosterBoard，免注销", overriding: .backup)
-            }
-            if airliftReady {
-                return airlift("恢复式暂时停用，已改用 AirLift 直刷，刷完只注销不重启", overriding: .backup)
-            }
-            return blocked("恢复式暂时停用，当前系统也没有可用的直刷方式，现在刷不了")
+
+        if let fallback = firstAvailable(p) {
+            return judged(fallback, automaticReason(fallback))
         }
-        if pick == .direct {
-            if directReady {
-                return direct("已手动选择直刷：走配对隧道写入，只刷新 PosterBoard，不注销")
-            }
-            if localReady {
-                return local("直刷在这台设备上用不了（\(directWhy)），已改用本机直刷，刷完只注销不重启", overriding: .direct)
-            }
-            if airliftReady {
-                return airlift("直刷在这台设备上用不了（\(directWhy)），已改用 AirLift，刷完只注销不重启", overriding: .direct)
-            }
-            return blocked("直刷在这台设备上用不了（\(directWhy)），恢复式又在停用中，现在刷不了")
-        }
-        if pick == .worseQuery {
-            if localReady {
-                return local("已手动选择本机直刷，刷完只注销不重启")
-            }
-            if airliftReady {
-                return airlift("本机直刷在这台设备上用不了（\(localWhy)），"
-                    + "已改用 AirLift，刷完只注销不重启", overriding: .worseQuery)
-            }
-            return blocked("本机直刷在这台设备上用不了（\(localWhy)），恢复式又在停用中，现在刷不了")
-        }
-        if pick == .airlift {
-            if airliftReady {
-                return airlift("已手动选择 AirLift 直刷，刷完只注销不重启")
-            }
-            if localReady {
-                return local("AirLift 在这台设备上用不了，已改用本机直刷，刷完只注销不重启",
-                             overriding: .airlift)
-            }
-            return blocked("AirLift 在这台设备上用不了，恢复式又在停用中，现在刷不了")
-        }
-        if localReady {
-            return local("当前系统支持本机直刷：不用配对、不用隧道，刷完只注销不重启")
-        }
-        if directReady {
-            return direct("当前系统支持直刷：走配对隧道写入，只刷新 PosterBoard，免注销")
-        }
-        if airliftReady {
-            return airlift("当前系统支持直刷，刷完只注销不重启")
-        }
-        return blocked("当前系统不在直刷支持范围内，恢复式又在停用中，现在刷不了")
+        return blocked("当前系统没有可用的刷入方式，恢复式又在停用中，现在刷不了")
     }
 }

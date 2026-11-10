@@ -92,6 +92,27 @@ enum PairingRecord {
         return !dict.isEmpty
     }
 
+    /// Whether the record is a RemotePairing one, i.e. carries the three keys
+    /// the tunnel refresh needs. A lockdown-era record has `UDID` and no
+    /// `identifier`, and minimuxer can still use it for some things, but
+    /// `PosterRefresh` cannot open its RSD tunnel with it.
+    ///
+    /// Used only to decide whether the *automatic* refresh after an in-process
+    /// write is worth attempting; it never gates importing or the tunnel routes
+    /// themselves.
+    static func hasRemotePairingCredentials(_ raw: String) -> Bool {
+        guard let data = raw.data(using: .utf8),
+              let dict = try? PropertyListSerialization.propertyList(
+                from: data, options: [], format: nil) as? [String: Any] else { return false }
+        func present(_ key: String) -> Bool {
+            guard let value = dict[key] else { return false }
+            if let string = value as? String { return !string.isEmpty }
+            if let data = value as? Data { return !data.isEmpty }
+            return false
+        }
+        return present("identifier") && present("private_key") && present("public_key")
+    }
+
     /// The record's top-level keys, for import and start diagnostics.
     ///
     /// Keys only — deliberately no judgement about which of them *should* be
@@ -125,6 +146,16 @@ enum PairingRecord {
         guard let raw = try? String(contentsOf: AppPaths.pairingFile, encoding: .utf8) else { return nil }
         let record = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return usable(record) ? record : nil
+    }
+
+    /// Whether a pairing record is installed at all — the file, or the copy
+    /// persisted at import time. This is the judgement's pairing premise; it
+    /// deliberately does not require the record to be shape-valid here, because
+    /// the tunnel start reports a bad record in its own words.
+    static var isInstalled: Bool {
+        if onDisk() != nil { return true }
+        guard let stored = UserDefaults.standard.string(forKey: Key.stored) else { return false }
+        return usable(stored.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     // MARK: - Acceptance

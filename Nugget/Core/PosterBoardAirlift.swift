@@ -49,8 +49,9 @@ enum PosterBoardAirlift {
     ///     by the caller, because its frames are computed and staged locally and
     ///     this path does not carry them.
     ///   - templates: configured before descriptor discovery, alongside the packs.
-    ///   - structureVersion: the store directory version. 61 for everything this
-    ///     supports, matching `PosterBoard.fallbackStructureVersion`.
+    ///   - structureVersion: the store directory version, from
+    ///     `PosterBoard.verifiedTunnelStructureVersion` (61 on every system this
+    ///     route supports; the tunnel itself cannot read it from the device).
     ///   - deviceVersion: the device's iOS version, for the legacy-conversion gate
     ///     only. Same number, same gate and same conversion as the backup path —
     ///     see the note at the conversion itself.
@@ -98,7 +99,7 @@ enum PosterBoardAirlift {
         // The version directory is not read back from the device — the FFI has no
         // readdir — so it is the one this port knows, and saying so in the log is
         // what makes a descriptor that does not show up diagnosable afterwards.
-        log("Store version directory: \(structureVersion)")
+        log("Store version directory: \(structureVersion) (checked against the verified map for this OS)")
 
         var injected = 0
 
@@ -142,7 +143,7 @@ enum PosterBoardAirlift {
                                                 log: log)
                 guard !descriptors.isEmpty else {
                     throw GoldenNuggetError("在 \(source.name) 中没有找到壁纸描述文件。"
-                        + "对于交付容器文件的模板，请使用「保护性备份」。")
+                        + "对于交付容器文件的模板，请改用「恢复式」。")
                 }
                 log("  \(descriptors.count) descriptor(s)")
 

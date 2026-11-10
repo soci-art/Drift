@@ -247,9 +247,14 @@ struct FirstRunView: View {
         SlideLayout(
             art: { FirstRunWelcomeArt(active: page == 0) },
             title: "Drift",
-            subtitle: "给这台 iPhone 刷入交互壁纸。开始之前还有两个步骤。")
+            subtitle: LocalizedStringKey(localReady
+                ? "给这台 iPhone 刷入交互壁纸。本机直刷已可用，可以直接完成设置。"
+                : "给这台 iPhone 刷入交互壁纸。本机直刷不可用，先走完隧道与配对两个步骤。"))
         {
             VStack(alignment: .leading, spacing: 12) {
+                if localReady {
+                    NativeNote("本机直刷可用（iOS \(WorseQueryEscape.processVersion)，签名授予了可用的 App Group）：直接点「完成设置」就能刷，下面的隧道与配对只是要用隧道方式时才需要。")
+                }
                 stepCard(number: 1, title: "Tunnel", done: tunnel.isReady,
                          working: tunnel == .peerUnreachable, status: tunnel.shortText,
                          destination: 1)
@@ -257,9 +262,10 @@ struct FirstRunView: View {
                          working: wirelessPair.isRunning,
                          status: pairingReady ? "配对记录已就位" : "尚无配对记录",
                          destination: 2)
-                NativeNote("第 2 步可以在电脑上用 iLoader 配对——生成配对文件后传到这台 iPhone 上导入。")
+                NativeNote(localReady
+                    ? "第 1、2 步可选：只有想用直刷免注销或 AirLift 时才需要；本机直刷不用配对，也不用隧道。"
+                    : "第 2 步可以在电脑上用 iLoader 配对——生成配对文件后传到这台 iPhone 上导入。")
                 NativeNote("隧道状态实时检测：打开 App 之后再连上隧道，这一页会自动变绿，不用重开 App。")
-                NativeNote("签名里带 App Group 的话，也可以用「本机直刷」（worse_query）：不需要配对，也不需要隧道。")
             }
         }
     }
@@ -270,7 +276,7 @@ struct FirstRunView: View {
         SlideLayout(
             art: { FirstRunTunnelArt(ready: tunnel.isReady, active: page == 1) },
             title: "1 · Tunnel",
-            subtitle: "Install LocalDevVPN (or any tunnel app), enter the values below, and leave it on — every connection needs it.")
+            subtitle: "Install LocalDevVPN (or any tunnel app), enter the values below, and leave it on — the tunnel routes (直刷免注销 / AirLift) need it; the in-process route does not.")
         {
             VStack(alignment: .leading, spacing: 12) {
                 statusPill(done: tunnel.isReady, working: tunnel == .peerUnreachable,
@@ -371,16 +377,19 @@ struct FirstRunView: View {
             subtitle: "Finishing connects to the device and opens the home page.")
         {
             VStack(alignment: .leading, spacing: 12) {
-                stepCard(number: 1, title: "Tunnel", done: tunnel.isReady,
+                if localReady {
+                    NativeNote("本机直刷可用：现在就能完成设置并刷壁纸，不需要配对或隧道。下面的两步可以以后在设置里补。")
+                }
+                stepCard(number: 1, title: "Tunnel（可选）", done: tunnel.isReady,
                          working: tunnel == .peerUnreachable, status: tunnel.shortText,
                          destination: 1)
-                stepCard(number: 2, title: "Pairing", done: pairingReady,
+                stepCard(number: 2, title: "Pairing（可选）", done: pairingReady,
                          working: wirelessPair.isRunning,
                          status: pairingReady ? "配对记录已就位" : "尚无配对记录",
                          destination: 2)
-                NativeNote("点「完成设置」后会连接设备并打开壁纸页。")
+                NativeNote("点「完成设置」后打开壁纸页。")
                 if !canFinish {
-                    NativeNote("Finish stays greyed out until both steps are ready.")
+                    NativeNote("本机直刷不可用，所以完成按钮要等隧道和配对都就绪。")
                 }
             }
         }
@@ -503,7 +512,14 @@ struct FirstRunView: View {
                     in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    private var canFinish: Bool { tunnel.isReady && pairingReady }
+    /// The in-process route needs neither the tunnel nor a pairing record, so
+    /// when it is usable the guide must not put its two optional steps in front
+    /// of Finish. Only a device that cannot use it walks the full flow.
+    private var localReady: Bool {
+        WorseQueryEscape.isAvailable(deviceVersion: WorseQueryEscape.processVersion)
+    }
+
+    private var canFinish: Bool { localReady || (tunnel.isReady && pairingReady) }
 
     // MARK: - Actions
 
@@ -512,7 +528,9 @@ struct FirstRunView: View {
     /// Drift has no media feature: unlike the app this guide came from,
     /// finishing setup here deliberately does NOT start a photo/video copy.
     private func finish() {
-        firstRun.complete(reason: "tunnel and pairing record both ready")
+        firstRun.complete(reason: localReady
+            ? "in-process route ready; tunnel and pairing optional"
+            : "tunnel and pairing record both ready")
         onClose?()
     }
 

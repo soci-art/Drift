@@ -29,6 +29,7 @@ struct DriftSettingsView: View {
         NavigationStack {
             List {
                 connectionSection
+                localRouteSection
                 applySection
                 backupSection
                 historySection
@@ -71,7 +72,9 @@ struct DriftSettingsView: View {
     // MARK: - Connection
 
     private var connectionSection: some View {
-        Section("连接") {
+        Section("隧道方式前提（直刷免注销 / AirLift）") {
+            Text("配对文件与隧道只是两种隧道方式的前提；本机直刷不需要它们。想用隧道方式时，再在这里配好。")
+                .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Label("配对文件", systemImage: "link")
                 Spacer()
@@ -117,6 +120,43 @@ struct DriftSettingsView: View {
             } label: {
                 Label("使用教程", systemImage: "book")
             }
+        }
+    }
+
+    // MARK: - In-process route
+
+    /// The in-process route's premise, shown where the user can act on it:
+    /// whether this system is in range, and which App Group the installed
+    /// signing profile actually granted.
+    private var localRouteSection: some View {
+        Section("本机直刷") {
+            HStack {
+                Label("系统版本", systemImage: "iphone")
+                Spacer()
+                Text(WorseQueryEscape.isSupported(deviceVersion: WorseQueryEscape.processVersion)
+                     ? "iOS \(WorseQueryEscape.processVersion)（在范围内）"
+                     : "iOS \(WorseQueryEscape.processVersion)（不在范围内）")
+                    .foregroundStyle(.secondary)
+            }
+            HStack(alignment: .top) {
+                Label("App Group", systemImage: "person.2")
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    if let group = WorseQueryEscape.discoveredGroupIdentifier {
+                        Text(group).font(.caption.monospaced())
+                        Text("签名授予，容器可打开")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    } else {
+                        Text("没有可用的组")
+                            .foregroundStyle(.orange)
+                        Text("签名没有授予 App Group，或授予的组都打不开")
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+            }
+            Text("组名在运行时从安装包内嵌的签名描述文件读取，不再写死——付费证书、开发者注册的组、SideStore / AltStore 改签都可以。")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -262,6 +302,10 @@ struct DriftSettingsView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("\(record.mode) · \(record.ios.isEmpty ? "未知系统" : "iOS \(record.ios)")")
                                         .font(.subheadline)
+                                    if let effect = record.effect, !effect.isEmpty {
+                                        Text("生效：\(effect)")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
                                     Text(record.timestamp).font(.caption).foregroundStyle(.secondary)
                                     if !record.success && !record.error.isEmpty {
                                         Text(record.error).font(.caption).foregroundStyle(.secondary).lineLimit(2)

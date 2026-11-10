@@ -58,6 +58,51 @@ enum PosterBoard {
     static let storeRoot = "/Library/Application Support/\(storeDirectoryName)"
     static let fallbackStructureVersion = 61
 
+    /// The structure version a **tunnel write** may use, or a refusal.
+    ///
+    /// The direct and AirLift routes both used to pass
+    /// `fallbackStructureVersion` straight into the destination path at their
+    /// call sites — a constant that says "61" whether or not 61 is what this
+    /// device's store uses. The tunnel FFI cannot read the device, so the one
+    /// honest thing this port can do is state the versions it has verified and
+    /// refuse the rest instead of silently writing into a directory the system
+    /// may not read:
+    ///
+    ///   * verified: iOS 26.0 – 27.1, and 27.2 beta 1 / beta 2 (the same
+    ///     builds `AirliftAvailability` names), all use structure 61;
+    ///   * refused: anything else, including a 27.2 build we cannot identify.
+    ///
+    /// The check is repeated per run because the device can be updated between
+    /// runs, and the refusal is thrown before the first descriptor is staged.
+    /// `log` records both the verdict and the fact that it was *not* read from
+    /// the device, so a wallpaper that does not show up stays diagnosable.
+    static func verifiedTunnelStructureVersion(deviceVersion: String,
+                                               buildVersion: String,
+                                               log: (String) -> Void) throws -> Int {
+        let build = buildVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let floor = compareVersion(deviceVersion, "26.0"), floor >= 0,
+              let ceiling = compareVersion(deviceVersion, "27.2") else {
+            let message = "隧道写入需要读到设备系统版本与构建号，现在读不到"
+                + "（\(deviceVersion.isEmpty ? "系统版本未知" : "iOS \(deviceVersion)")），"
+                + "不往不确定的商店目录里写。"
+            log("Store structure version check failed: \(message)")
+            throw GoldenNuggetError(message)
+        }
+        let closed272 = ceiling == 0
+            && !AirliftAvailability.early272Builds.contains(build)
+        if ceiling > 0 || closed272 {
+            let message = "隧道写入还没有在 iOS \(deviceVersion)"
+                + "（\(build.isEmpty ? "构建号未知" : build)）上验证过商店结构版本，"
+                + "已停止写入；请改用其他刷入方式。"
+            log("Store structure version check failed: \(message)")
+            throw GoldenNuggetError(message)
+        }
+        log("Store structure version \(fallbackStructureVersion) — verified for iOS "
+            + "\(deviceVersion)\(build.isEmpty ? "" : " (\(build))")，"
+            + "not read from the device (the tunnel FFI has no readdir)")
+        return fallbackStructureVersion
+    }
+
     /// The store's database, by the name the reference matches on.  The store
     /// directory is matched by **file name** rather than path because iOS 27
     /// uploads the container under the raw file tree (`/.b/<n>/Containers/…`)

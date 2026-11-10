@@ -5,7 +5,11 @@ import Foundation
 /// Verified with `ipsw download appledb --os iOS --version "27.2 beta" --json`
 /// and the beta 3 IPSW BuildManifest on Apple's CDN.
 enum AirliftAvailability {
-    private static let early272Builds: Set<String> = ["24B5084k", "24B5089g"]
+    /// The only 27.2 builds where the tunnel write routes still work: beta 1
+    /// (`24B5084k`) and beta 2 (`24B5089g`). Shared with the direct route's
+    /// availability check (`PosterBoardDirect`), so both close on the same
+    /// build instead of keeping two lists that can drift apart.
+    static let early272Builds: Set<String> = ["24B5084k", "24B5089g"]
 
     static func isHidden(deviceVersion: String, buildVersion: String) -> Bool {
         let parts = deviceVersion.trimmingCharacters(in: .whitespacesAndNewlines)

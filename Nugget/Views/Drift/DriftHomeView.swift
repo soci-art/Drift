@@ -26,23 +26,29 @@ struct DriftHomeView: View {
     private var manualPick: PosterBoardApplyMode? {
         manualPickRaw.flatMap(PosterBoardApplyMode.init(rawValue:))
     }
-    /// The system version the judgement uses: the device's when a tunnel has
-    /// answered, otherwise the app's own — the in-process route needs nothing
-    /// but that.
-    private var localVersion: String {
-        identity.version.isEmpty ? WorseQueryEscape.processVersion : identity.version
-    }
+    /// The in-process route's premise: the app's own system only. It never
+    /// looks at the device read, pairing or the tunnel.
+    private var localVersion: String { WorseQueryEscape.processVersion }
     private var localReady: Bool {
         WorseQueryEscape.isAvailable(deviceVersion: localVersion)
     }
+    private var tunnelReady: Bool { tunnelMonitor.status == .ready }
     private var directReady: Bool {
-        !identity.version.isEmpty && PosterBoardDirect.isAvailable(deviceVersion: identity.version)
+        tunnelReady && PairingRecord.isInstalled
+            && PosterBoardDirect.isAvailable(deviceVersion: identity.version,
+                                             buildVersion: identity.buildVersion)
+    }
+    private var airliftReady: Bool {
+        tunnelReady && PairingRecord.isInstalled
+            && Airlift.isSupported(deviceVersion: identity.version,
+                                   buildVersion: identity.buildVersion)
     }
     private var manualLabel: String {
-        manualPick?.shortTitle ?? "自动判断"
+        manualPick?.shortTitle ?? "自动选择"
     }
     private var judgement: DriftModeJudgement {
-        DriftJudge.judge(identity: identity, selection: selection, pick: manualPick)
+        DriftJudge.judge(identity: identity, selection: selection, pick: manualPick,
+                         tunnelReady: tunnelReady)
     }
     private var selectedDescriptors: Int { selection.tendies.reduce(0) { $0 + $1.descriptorCount } }
     private var overLimit: Bool { selectedDescriptors > PosterBoardImports.descriptorLimit }
@@ -53,11 +59,11 @@ struct DriftHomeView: View {
             && !selection.tendies.isEmpty && !overLimit && !session.running
     }
     private var headerSubtitle: String {
-        if !identity.version.isEmpty { return identity.describe }
         if localReady {
-            return "本机直刷可用（iOS \(WorseQueryEscape.processVersion)）：不用配对，也不用开隧道。"
+            return "本机直刷可用（iOS \(localVersion)）：现在就能刷，不用配对，也不用开隧道。"
         }
-        return "导入配对文件、打开 LocalDevVPN 后，这里会显示设备系统。"
+        if !identity.version.isEmpty { return identity.describe }
+        return "本机直刷不可用；要用隧道方式，请导入配对文件并打开 LocalDevVPN。"
     }
 
     var body: some View {
@@ -126,7 +132,23 @@ struct DriftHomeView: View {
 
     private var headerCard: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // The premises are listed per route, not as one global gate: the
+            // in-process route only needs the app's own version and a granted
+            // App Group, so pairing and the tunnel must not sit in front of it.
             HStack(spacing: 8) {
+                DriftPill(text: localReady ? "本机直刷可用" : "本机直刷不可用",
+                          tint: localReady ? .green : .orange)
+                DriftPill(text: "iOS \(localVersion)")
+            }
+            Text(headerSubtitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            if !localReady {
+                Text(WorseQueryEscape.unavailableReason(deviceVersion: localVersion))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                DriftPill(text: "隧道方式前提", tint: .secondary)
                 DriftPill(text: session.paired ? "已配对" : "未配对",
                           tint: session.paired ? .green : .orange)
                 DriftPill(text: tunnelMonitor.status == .ready ? "隧道已连通"
@@ -136,15 +158,12 @@ struct DriftHomeView: View {
                 if identity.version.isEmpty {
                     DriftPill(text: "设备信息未读到", tint: .orange)
                 } else {
-                    DriftPill(text: "iOS \(identity.version)\(identity.buildVersion.isEmpty ? "" : "（\(identity.buildVersion)）")")
+                    DriftPill(text: "设备 iOS \(identity.version)\(identity.buildVersion.isEmpty ? "" : "（\(identity.buildVersion)）")")
                 }
             }
-            Text(headerSubtitle)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
             if !session.paired {
                 Button { importingPairing = true } label: {
-                    Label("导入配对文件", systemImage: "link.badge.plus")
+                    Label("导入配对文件（只用隧道方式时才需要）", systemImage: "link.badge.plus")
                 }
                 .buttonStyle(.glass)
             }
@@ -165,22 +184,23 @@ struct DriftHomeView: View {
                     // pick. With buttons the menu showed three identical rows
                     // and no sign of which one was in force (Grace, 2026-11-09).
                     Picker("刷入方式", selection: $manualPickRaw) {
-                        Text("自动判断").tag(nil as String?)
-                        // The in-process option is greyed when this signing
-                        // profile has no App Group or the system is outside
-                        // worse_query's range; the caption below says which.
-                        Text("直刷（免注销）")
+                        Text("自动选择").tag(nil as String?)
+                        // Every row is greyed on the same rule — the mode's own
+                        // premise — and the judgement card below carries the
+                        // reason. AirLift used to have no disabled state at all.
+                        Text("直刷免注销")
                             .tag(PosterBoardApplyMode.direct.rawValue as String?)
                             .disabled(!directReady)
-                        Text("本机直刷（只注销）")
+                        Text("本机直刷")
                             .tag(PosterBoardApplyMode.worseQuery.rawValue as String?)
                             .disabled(!localReady)
-                        Text("AirLift 直刷（只注销）")
+                        Text("AirLift 直刷")
                             .tag(PosterBoardApplyMode.airlift.rawValue as String?)
+                            .disabled(!airliftReady)
                         // Feedback #30: while the restore gate is closed
                         // the restore pick is visible but not selectable —
                         // greyed, with the reason on the card below.
-                        Text("恢复式（会重启）").tag(PosterBoardApplyMode.backup.rawValue as String?)
+                        Text("恢复式（暂时关闭）").tag(PosterBoardApplyMode.backup.rawValue as String?)
                             .disabled(!DriftRestoreGate.isEnabled)
                     }
                 } label: {
@@ -197,17 +217,32 @@ struct DriftHomeView: View {
             }
             Text(judged.reason).font(.subheadline).foregroundStyle(.secondary)
                 .onChange(of: manualPickRaw) { statusLine = nil }
+            if !judged.expectedEffect.isEmpty && !judged.isBlocked {
+                Label("预计生效：\(judged.expectedEffect)", systemImage: "sparkles")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            // Per-mode reasons, so every route says why it is or is not usable
+            // instead of the card carrying one sentence for all four.
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(judged.options) { option in
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: option.available ? "checkmark.circle.fill" : "xmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(option.available ? Color.green : Color.secondary)
+                            .padding(.top, 1)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(option.mode.shortTitle)
+                                .font(.caption.weight(option.mode == judged.mode ? .semibold : .regular))
+                            Text(option.reason)
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding(.top, 2)
             if !DriftRestoreGate.isEnabled {
-                Text("恢复式暂时停用：菜单里选不了、自动判断也不会选它，原因查清之前先这样。直刷不受影响。")
+                Text("恢复式暂时停用：菜单里选不了、自动选择也不会选它。直刷不受影响。")
                     .font(.caption).foregroundStyle(.orange)
-            }
-            if !directReady && PosterBoardDirect.isAvailable(deviceVersion: localVersion) {
-                Text("直刷需要先导入配对文件并读到设备系统版本。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if !localReady {
-                Text(WorseQueryEscape.unavailableReason(deviceVersion: localVersion))
-                    .font(.caption).foregroundStyle(.secondary)
             }
             if let overridden = judged.overriddenPick {
                 Text("你手动选的「\(overridden.shortTitle)」在这里用不了，已按上面的方式处理。")
@@ -265,10 +300,25 @@ struct DriftHomeView: View {
                 Text(statusLine).font(.subheadline).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            // A written wallpaper that is not visible yet is not a failed run:
+            // the user decides whether to respring. Drift never does it itself.
+            if session.lastEffect?.needsManualRespring == true {
+                Button {
+                    Task {
+                        let triggered = await MainActor.run { NeoSpring.trigger() }
+                        statusLine = triggered
+                            ? "已触发注销；PosterBoard 重新启动后会读到新壁纸。"
+                            : "现在没有可用的窗口触发注销，请手动从系统里注销一次。"
+                    }
+                } label: {
+                    Label("手动注销", systemImage: "arrow.clockwise.circle")
+                }
+                .buttonStyle(.glass)
+            }
             if !session.paired && judgement.mode == .worseQuery {
-                NativeNote("本机直刷在本机写入，不需要配对文件，也不用开隧道。")
+                NativeNote("本机直刷在本机写入，不需要配对文件，也不用开隧道。写完按当时的配对/隧道/Wi-Fi 情况决定免注销还是只提示。")
             } else if !session.paired {
-                NativeNote("先导入配对文件才能刷入；本机直刷需要签名带 App Group 权限。")
+                NativeNote("隧道方式（直刷免注销 / AirLift）需要先导入配对文件；本机直刷不需要，但签名要授予可用的 App Group。")
             } else if selection.tendies.isEmpty && !imports.isEmpty {
                 NativeNote("在上面的列表里点圆圈勾选要刷的包。")
             }
@@ -359,19 +409,29 @@ struct DriftHomeView: View {
     }
 
     private func runApply() {
-        let judged = judgement
         // Feedback #30: a blocked judgement starts nothing — the tap
         // only explains. (The session funnel refuses restore runs too,
         // but a blocked selection must never even be shaped into one.)
-        if judged.isBlocked {
-            statusLine = judged.blockedReason
+        if judgement.isBlocked {
+            statusLine = judgement.blockedReason
             return
         }
         var runSelection = selection
         runSelection.resetModes = []
         runSelection.fullReset = false
         Task {
-            let outcome = await session.run(selection: runSelection, mode: judged.mode, identity: identity)
+            // Re-check before touching anything: refresh the device identity
+            // when a tunnel is configured, then re-run the judgement on the
+            // state as it is now. The card's answer is not the run's answer if
+            // the device was updated or the tunnel dropped in between.
+            if session.paired { await session.refreshIdentity() }
+            let checked = DriftJudge.judge(identity: identity, selection: runSelection,
+                                           pick: manualPick, tunnelReady: tunnelReady)
+            if checked.isBlocked {
+                statusLine = checked.blockedReason
+                return
+            }
+            let outcome = await session.run(selection: runSelection, mode: checked.mode, identity: identity)
             statusLine = outcome.message
         }
     }

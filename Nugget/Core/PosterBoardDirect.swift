@@ -6,13 +6,16 @@ import ZIPFoundation
 ///
 /// ## What it is
 ///
-/// This is the original tunnel pipeline, not the AirLift escape: one bundled
-/// descriptor goes into PosterBoard's data store through a single Books
-/// snapshot/restore cycle, and the reload preferences are written to both the
-/// container and `/var/mobile/Library/Preferences` in that same cycle. It
+/// This is the tunnel write path, not the restore route: it runs the same
+/// one-cycle AirTraffic/Books transaction AirLift uses
+/// (`Airlift.flashTransaction`), with one difference — the reload preferences
+/// are merged into that same transaction instead of opening a second one. It
 /// needs a pairing record, LocalDevVPN and an unlocked device, exactly like
 /// AirLift — but it works from iOS 26.0, while AirLift's escape starts at
-/// 26.2 and is closed again from 27.2 beta 3.
+/// 26.2 and is closed again from 27.2 beta 3. What it does afterwards is the
+/// other difference: only the PosterBoard daemon is restarted (`PosterRefresh`),
+/// so the wallpaper appears without a respring. It is not related to the
+/// protective-backup route.
 ///
 /// ## What it does not do
 ///
@@ -42,24 +45,41 @@ enum PosterBoardDirect {
 
     /// Whether the route is in its supported range.
     ///
-    /// iOS 27.2 is the version where the direct route was closed; the AirLift
-    /// escape is still usable on its beta 1 / 2 builds, which the AirLift
-    /// availability check handles separately.
-    static func isAvailable(deviceVersion: String) -> Bool {
+    /// The version alone cannot decide 27.2 any more: the route still works on
+    /// beta 1 (`24B5084k`) and beta 2 (`24B5089g`) and is closed from beta 3,
+    /// and all three report `27.2`. The early-build list is
+    /// `AirliftAvailability.early272Builds` — one list for both tunnel routes,
+    /// so they cannot disagree about which build closed. An unreadable or empty
+    /// build on 27.2 fails closed rather than guessing.
+    static func isAvailable(deviceVersion: String, buildVersion: String) -> Bool {
         guard let floor = PosterBoard.compareVersion(deviceVersion, minimumVersion), floor >= 0,
-              let ceiling = PosterBoard.compareVersion(deviceVersion, "27.2"), ceiling < 0 else {
+              let ceiling = PosterBoard.compareVersion(deviceVersion, "27.2") else {
             return false
+        }
+        if ceiling > 0 { return false }
+        if ceiling == 0 {
+            return AirliftAvailability.early272Builds.contains(
+                buildVersion.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         return true
     }
 
-    static func unavailableReason(deviceVersion: String) -> String {
+    static func unavailableReason(deviceVersion: String, buildVersion: String = "") -> String {
         if deviceVersion.isEmpty { return "还没有读到设备系统版本。" }
-        if let ceiling = PosterBoard.compareVersion(deviceVersion, "27.2"), ceiling >= 0 {
+        if let ceiling = PosterBoard.compareVersion(deviceVersion, "27.2"), ceiling > 0 {
             return "直刷在 iOS 27.2 已被系统修复。"
         }
         if let floor = PosterBoard.compareVersion(deviceVersion, minimumVersion), floor < 0 {
             return "直刷需要 iOS \(minimumVersion) 或更高版本。"
+        }
+        if PosterBoard.compareVersion(deviceVersion, "27.2") == 0 {
+            if buildVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "iOS 27.2 要按构建号判断：还没有读到设备构建号。"
+            }
+            if !AirliftAvailability.early272Builds.contains(
+                buildVersion.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                return "直刷在 iOS 27.2 测试版 3 起已关闭，只有测试版 1/2（24B5084k、24B5089g）可用。"
+            }
         }
         return ""
     }
@@ -72,10 +92,17 @@ enum PosterBoardDirect {
         templates: [TemplateFile] = [],
         structureVersion: Int,
         deviceVersion: String,
+        buildVersion: String,
         pairingPath: String,
         log: @escaping @Sendable (String) -> Void,
         progress: @escaping (Double) -> Void
     ) async throws {
+        // The engine checks this too; repeating it here means a caller cannot
+        // start a transaction the route knows is closed for this build.
+        guard isAvailable(deviceVersion: deviceVersion, buildVersion: buildVersion) else {
+            throw GoldenNuggetError(unavailableReason(deviceVersion: deviceVersion,
+                                                       buildVersion: buildVersion))
+        }
         let packs = selection.tendies
         struct Source {
             let name: String
@@ -148,7 +175,7 @@ enum PosterBoardDirect {
                     in: stage, defaultExtension: source.defaultExtension, log: log)
                 guard !descriptors.isEmpty else {
                     throw GoldenNuggetError("在 \(source.name) 中没有找到壁纸描述文件。"
-                        + "对于交付容器文件的模板，请使用「保护性备份」。")
+                        + "对于交付容器文件的模板，请改用「恢复式」。")
                 }
                 log("  \(descriptors.count) descriptor(s)")
 

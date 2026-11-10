@@ -193,6 +193,11 @@ class GoldenNuggetEngine {
     /// while nothing is running).
     private(set) var etaText: String = ""
 
+    /// How the last run's in-process write decided to take effect, if this run
+    /// used that route. Reset at the start of every run; the session reads it
+    /// after the run to word the completion prompt and the history record.
+    private(set) var lastPosterBoardEffect: PosterBoardEffect?
+
     /// The `eta.py` port.  Recreated per run so a new apply starts estimating
     /// from a clean slate even though the engine object is a singleton.
     private var etaEstimator = ProgressEta()
@@ -279,6 +284,7 @@ class GoldenNuggetEngine {
         AppLog.shared.memory.reset()
         clearCancel()
         clearProgress()
+        lastPosterBoardEffect = nil
         let runStage = StageTimer("RUN apply")
         defer { runStage.done() }
 
@@ -464,15 +470,17 @@ class GoldenNuggetEngine {
                     || !statusBarPayloads.isEmpty || !templatePayloads.isEmpty
                     || !communityPayloads.isEmpty,
                 deviceVersion: modeVersion)
-            log("PosterBoard: \(posterBoard.describe) — on-device via worse_query, no tunnel")
-            try await PosterBoardLocal.apply(
+            log("PosterBoard: \(posterBoard.describe) — on-device, no tunnel")
+            let effect = try await PosterBoardLocal.apply(
                 selection: posterBoard,
                 templates: posterBoardTemplates,
                 deviceVersion: modeVersion,
                 log: { AppLog.write($0) },
                 progress: { overall in self.logProgress("posterboard local", overall) })
-            log("Apply succeeded: the wallpapers are in PosterBoard's container and it has "
-                + "resprung — no pairing, no tunnel and no backup were used.")
+            lastPosterBoardEffect = effect
+            log("Apply succeeded: the wallpapers are in PosterBoard's container; "
+                + "effect — \(effect.headline). No pairing, no tunnel and no backup "
+                + "were needed for the write.")
             return
         }
 
@@ -496,14 +504,18 @@ class GoldenNuggetEngine {
         if (posterBoard.isActive || !posterBoardTemplates.isEmpty) && posterBoardMode == .direct {
             log("PosterBoard: \(posterBoard.describe) — direct over the pairing tunnel, no backup")
             try checkDirectCanApply(selection: posterBoard, templates: posterBoardTemplates,
-                                    deviceVersion: version)
+                                    deviceVersion: version, buildVersion: modeIdentity.buildVersion)
             try await applyPosterBoardOverDirect(selection: posterBoard,
-                                                 templates: posterBoardTemplates, deviceVersion: version)
+                                                 templates: posterBoardTemplates,
+                                                 deviceVersion: version,
+                                                 buildVersion: modeIdentity.buildVersion)
             posterBoardInjectedInContainer = true
         } else if (posterBoard.isActive || !posterBoardTemplates.isEmpty) && posterBoardMode == .airlift {
             log("PosterBoard: \(posterBoard.describe) — over AirLift, no backup")
             try await applyPosterBoardOverAirlift(selection: posterBoard,
-                                                 templates: posterBoardTemplates, deviceVersion: version)
+                                                 templates: posterBoardTemplates,
+                                                 deviceVersion: version,
+                                                 buildVersion: modeIdentity.buildVersion)
             posterBoardInjectedInContainer = true
         } else if posterBoard.isActive || !posterBoardTemplates.isEmpty {
             // A PosterBoard template is a wallpaper source even when no pack and
@@ -628,14 +640,16 @@ class GoldenNuggetEngine {
     /// Same limits as AirLift: the transaction installs descriptor folders,
     /// so a reset, a video stage, a container template or any non-wallpaper
     /// payload cannot travel it. Unlike AirLift it also has its own closed
-    /// version range (26.0–27.1), checked here rather than in the judge so a
+    /// version range (26.0–27.1, plus 27.2 beta 1/2), checked here rather than
+    /// in the judge so a
     /// manual pick cannot bypass it.
     private func checkDirectCanApply(selection: PosterBoardSelection,
                                      templates: [TemplateFile],
-                                     deviceVersion: String) throws {
+                                     deviceVersion: String,
+                                     buildVersion: String) throws {
         if templates.contains(where: \.isContainer) {
             throw GoldenNuggetError("直刷只安装模板描述文件。所选模板还带有容器文件；"
-                + "请切换到「保护性备份」来应用全部内容。")
+                + "请切换到「恢复式」来应用全部内容。")
         }
         if selection.fullReset || !selection.resetModes.isEmpty {
             throw GoldenNuggetError("直刷无法重置 PosterBoard 库——它只会添加壁纸。"
@@ -648,7 +662,8 @@ class GoldenNuggetEngine {
         if selection.tendies.contains(where: \.isUnsafeContainer) {
             throw GoldenNuggetError("包含商店数据库的壁纸包只能用恢复式。")
         }
-        let reason = PosterBoardDirect.unavailableReason(deviceVersion: deviceVersion)
+        let reason = PosterBoardDirect.unavailableReason(deviceVersion: deviceVersion,
+                                                         buildVersion: buildVersion)
         guard reason.isEmpty else { throw GoldenNuggetError(reason) }
         guard FileManager.default.fileExists(atPath: AppPaths.pairingFile.path) else {
             throw GoldenNuggetError("直刷需要一份配对记录，但还没有保存任何一份。"
@@ -659,12 +674,18 @@ class GoldenNuggetEngine {
     /// Run the direct PosterBoard transaction, reporting through the run log.
     private func applyPosterBoardOverDirect(selection: PosterBoardSelection,
                                             templates: [TemplateFile] = [],
-                                            deviceVersion: String) async throws {
+                                            deviceVersion: String,
+                                            buildVersion: String) async throws {
+        let structureVersion = try PosterBoard.verifiedTunnelStructureVersion(
+            deviceVersion: deviceVersion,
+            buildVersion: buildVersion,
+            log: { AppLog.write($0) })
         try await PosterBoardDirect.apply(
             selection: selection,
             templates: templates,
-            structureVersion: PosterBoard.fallbackStructureVersion,
+            structureVersion: structureVersion,
             deviceVersion: deviceVersion,
+            buildVersion: buildVersion,
             pairingPath: AppPaths.pairingFile.path,
             log: { AppLog.write($0) },
             progress: { overall in self.logProgress("posterboard direct", overall) }
@@ -680,15 +701,15 @@ class GoldenNuggetEngine {
                                      templates: [TemplateFile] = [], deviceVersion: String, buildVersion: String = "") throws {
         if templates.contains(where: \.isContainer) {
             throw GoldenNuggetError("AirLift 只安装模板描述文件。所选模板"
-                + "还带有容器文件；请切换到「保护性备份」来应用全部内容。")
+                + "还带有容器文件；请切换到「恢复式」来应用全部内容。")
         }
         if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
             throw GoldenNuggetError("AirLift 无法重置 PosterBoard 库——它只会添加"
-                + "壁纸。要重置，请把应用模式切换到「保护性备份」。")
+                + "壁纸。要重置，请把应用模式切换到「恢复式」。")
         }
         if posterBoard.video != nil {
             throw GoldenNuggetError("AirLift 无法应用 PosterBoard 视频：它的帧是"
-                + "是为恢复准备的。请把应用模式切换到「保护性备份」。")
+                + "是为恢复准备的。请把应用模式切换到「恢复式」。")
         }
         let reason = Airlift.unsupportedReason(deviceVersion: deviceVersion, buildVersion: buildVersion)
         guard reason.isEmpty else { throw GoldenNuggetError(reason) }
@@ -716,7 +737,7 @@ class GoldenNuggetEngine {
         }
         if templates.contains(where: \.isContainer) {
             throw GoldenNuggetError("本机直刷只安装模板描述文件。所选模板还带有容器文件；"
-                + "请改用「保护性备份」来应用全部内容。")
+                + "请改用「恢复式」来应用全部内容。")
         }
         if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
             throw GoldenNuggetError("本机直刷无法重置 PosterBoard 库——它只会添加壁纸。"
@@ -736,11 +757,16 @@ class GoldenNuggetEngine {
     /// Run the AirLift PosterBoard injection, reporting through the run log.
     private func applyPosterBoardOverAirlift(selection: PosterBoardSelection,
                                              templates: [TemplateFile] = [],
-                                             deviceVersion: String) async throws {
+                                             deviceVersion: String,
+                                             buildVersion: String) async throws {
+        let structureVersion = try PosterBoard.verifiedTunnelStructureVersion(
+            deviceVersion: deviceVersion,
+            buildVersion: buildVersion,
+            log: { AppLog.write($0) })
         try await PosterBoardAirlift.apply(
             selection: selection,
             templates: templates,
-            structureVersion: PosterBoard.fallbackStructureVersion,
+            structureVersion: structureVersion,
             deviceVersion: deviceVersion,
             pairingPath: AppPaths.pairingFile.path,
             log: { AppLog.write($0) },
@@ -811,11 +837,14 @@ class GoldenNuggetEngine {
 
         try await HotLoadService.requireAllowed(features: ["PosterBoard"])
         let identity = await DeviceIdentity.read()
+        let version = identity.version.isEmpty ? deviceVersion : identity.version
         try checkAirliftCanApply(posterBoard: selection,
-            deviceVersion: identity.version.isEmpty ? deviceVersion : identity.version,
+            deviceVersion: version,
             buildVersion: identity.buildVersion)
         log("PosterBoard: \(selection.describe) — over AirLift, no backup")
-        try await applyPosterBoardOverAirlift(selection: selection, deviceVersion: deviceVersion)
+        try await applyPosterBoardOverAirlift(selection: selection,
+                                              deviceVersion: version,
+                                              buildVersion: identity.buildVersion)
         log("PosterBoard: injected over AirLift and resprung. No backup was taken, and no "
             + "tweak was delivered — the home page's Apply is what delivers those.")
     }
@@ -1242,10 +1271,12 @@ class GoldenNuggetEngine {
             clearProgress()
             let udid = try await prepareRun()
             let identity = await DeviceIdentity.read()
+            let tunnelReady = await MainActor.run { TunnelMonitor.shared.status == .ready }
             let verdict = DriftJudge.judge(
                 identity: identity,
                 selection: PosterBoardSelection(),
-                pick: nil)
+                pick: nil,
+                tunnelReady: tunnelReady)
             log("[MB2-PULL] research pull: device ProductVersion="
                 + "\(identity.version.isEmpty ? "<unread>" : identity.version) "
                 + "BuildVersion=\(identity.buildVersion.isEmpty ? "<unread>" : identity.buildVersion) "
