@@ -71,7 +71,7 @@ enum PosterRefresh {
                 if let errorText, !errorText.isEmpty {
                     AppLog.write("poster refresh: \(errorText)")
                 }
-                continuation.resume(returning: (rc == 0 && status.isConfirmed, status))
+                continuation.resume(returning: (confirmed: rc == 0 && status.isConfirmed, status: status))
             }
         }
     }
