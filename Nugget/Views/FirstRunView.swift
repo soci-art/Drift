@@ -48,7 +48,7 @@ struct FirstRunView: View {
     private enum TunnelStep: Equatable {
         /// Not probed yet, or the last probe was interrupted.
         case unchecked
-                    NativeNote("没有接口带 \(Tunnel.ifaceIP) 这个地址——隧道 App 可能连错了网络，或者隧道 IP 还留着默认值。")
+        /// 没有接口带 Tunnel.ifaceIP 这个地址——隧道 App 可能连错了网络，或者隧道 IP 还留着默认值。
         case interfaceMissing
         /// Interface up, peer port not answering yet.
         case peerUnreachable
