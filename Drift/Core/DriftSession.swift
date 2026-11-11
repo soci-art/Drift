@@ -373,10 +373,11 @@ final class DriftSession: ObservableObject {
                 Set($0.expected.map { String($0.split(separator: "/").first ?? "") })
                     .sorted().joined(separator: "、")
             }
+            let iosVersion = (mode == .worseQuery) ? WorseQueryEscape.processVersion : identity.version
             ApplyHistory.record(mode: selectedLabel,
                                 success: true,
                                 device: identity.describe,
-                                model: identity.productType, ios: identity.version,
+                                model: identity.productType, ios: iosVersion,
                                 effect: effect?.historyLabel,
                                 channel: mode == .backup ? nil : mode.shortTitle,
                                 provider: providers,
@@ -386,10 +387,14 @@ final class DriftSession: ObservableObject {
             errorText = nil
             switch mode {
             case .worseQuery:
+                let opened = await MainActor.run { PosterBoardLaunch.open() }
+                let hint = opened
+                    ? "已打开 PosterBoard 以刷新集合，请从应用切换器中关闭它，然后检查锁定屏幕壁纸选择器。"
+                    : "请打开锁定屏幕壁纸选择器来刷新 PosterBoard；如果壁纸未出现，请从应用切换器关闭 PosterBoard 后重试。"
                 if let effect {
-                    return (true, "\(effect.headline)。\(effect.detail)", effect)
+                    return (true, "\(effect.headline)。\(hint)", effect)
                 }
-                return (true, "刷入完成，壁纸已写入。打开应用切换器，向上轻扫关闭 PosterBoard，系统重新拉起后生效。", nil)
+                return (true, "刷入完成，壁纸已写入。\(hint)", nil)
             case .direct:
                 if let verification, verification.allConfirmed {
                     return (true, "刷入完成：已核验，\(verification.confirmed.count) 张描述符都在设备商店里。\(effect?.detail ?? "") ", effect)
@@ -412,15 +417,17 @@ final class DriftSession: ObservableObject {
         } catch {
             if let failure = error as? TransportFailure, failure.isCancellation {
                 DriftEngine.shared.log("run cancelled")
+                let iosVersion = (mode == .worseQuery) ? WorseQueryEscape.processVersion : identity.version
                 ApplyHistory.record(mode: selectedLabel, success: false, error: "已取消",
                                     device: identity.describe,
-                                    model: identity.productType, ios: identity.version)
+                                    model: identity.productType, ios: iosVersion)
                 return (false, "刷入已取消", nil)
             }
             DriftEngine.shared.log("posterboard apply failed: \(error.localizedDescription)")
+            let iosVersion = (mode == .worseQuery) ? WorseQueryEscape.processVersion : identity.version
             ApplyHistory.record(mode: selectedLabel, success: false, error: error.localizedDescription,
                                 device: identity.describe,
-                                model: identity.productType, ios: identity.version)
+                                model: identity.productType, ios: iosVersion)
             return (false, error.localizedDescription, nil)
         }
     }

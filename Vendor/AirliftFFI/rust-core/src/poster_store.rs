@@ -181,9 +181,11 @@ const RSD_PORT: u16 = 49152;
 // audit or ATC work.
 // ---------------------------------------------------------------------------
 
-const CLEANUP_SCOPE_PROVIDERS: [&str; 2] = [
+const CLEANUP_SCOPE_PROVIDERS: [&str; 4] = [
     "com.apple.WallpaperKit.CollectionsPoster",
     "com.apple.Posters.CollectionsPosterApp",
+    "com.apple.MercuryPoster",
+    "com.apple.PhotosUIPrivate.PhotosPosterProvider",
 ];
 
 fn provider_in_cleanup_scope(extension: &str) -> bool {

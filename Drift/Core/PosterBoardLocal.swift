@@ -177,6 +177,82 @@ enum PosterBoardLocal {
             return Set(found.map(\.id))
         }
     }
+
+    /// Enumerate the descriptors currently in the local store, scoped to the
+    /// managed providers. Returns the container path plus one row per folder.
+    static func enumerateLocalStore(
+        log: @escaping @Sendable (String) -> Void
+    ) async throws -> (container: String,
+                      items: [(provider: String, uuid: String, name: String,
+                               packageName: String, generation: Int, path: String)]) {
+        try await offMainActor {
+            let opened = try openContainer(log: log)
+            defer { WorseQueryEscape.release(opened.handle) }
+            let container = opened.path
+            let root = container + PosterBoard.storeRoot
+            let manager = FileManager.default
+            var items: [(String, String, String, String, Int, String)] = []
+            for generation in generationDirectories(in: root) {
+                let extRoot = root + "/\(generation)/Extensions"
+                guard let providers = try? manager.contentsOfDirectory(atPath: extRoot) else { continue }
+                for provider in providers where PosterBoard.managedProviders.contains(provider) {
+                    let descDir = extRoot + "/\(provider)/descriptors"
+                    guard let uuids = try? manager.contentsOfDirectory(atPath: descDir) else { continue }
+                    for uuid in uuids {
+                        let full = descDir + "/\(uuid)"
+                        var isDir: ObjCBool = false
+                        guard manager.fileExists(atPath: full, isDirectory: &isDir), isDir.boolValue else { continue }
+                        var packageName = ""
+                        let versionsDir = full + "/versions"
+                        if let versions = try? manager.contentsOfDirectory(atPath: versionsDir) {
+                            for version in versions {
+                                let contentsDir = versionsDir + "/\(version)/contents"
+                                if let contents = try? manager.contentsOfDirectory(atPath: contentsDir),
+                                   let pkg = contents.first(where: { $0.hasSuffix(".wallpaper") }) {
+                                    packageName = String(pkg.dropLast(".wallpaper".count))
+                                    break
+                                }
+                            }
+                        }
+                        let name = packageName.isEmpty ? String(uuid.prefix(8)) : packageName
+                        items.append((provider, uuid, name, packageName, generation, full))
+                    }
+                }
+            }
+            log("本机商店扫描：\(items.count) 个描述符。")
+            return (container, items)
+        }
+    }
+
+    /// Delete one descriptor folder the local channel can reach, with the
+    /// same path guard as the receipt-based delete.
+    static func deleteManagedDescriptor(provider: String,
+                                        uuid: String,
+                                        generation: Int,
+                                        log: @escaping @Sendable (String) -> Void) async throws {
+        try await offMainActor {
+            let opened = try openContainer(log: log)
+            defer { WorseQueryEscape.release(opened.handle) }
+            let container = opened.path
+            let root = container + PosterBoard.storeRoot
+            let path = root + "/\(generation)/Extensions/\(provider)/descriptors/\(uuid)"
+            guard path.hasPrefix(container + "/"),
+                  path.contains(PosterBoard.storeDirectoryName) else {
+                throw DriftError("路径不在 PosterBoard 的商店目录里，拒绝删除。")
+            }
+            let manager = FileManager.default
+            guard manager.fileExists(atPath: path) else {
+                log("描述符已经不在商店里。")
+                return
+            }
+            try manager.removeItem(atPath: path)
+            fsyncDirectory((path as NSString).deletingLastPathComponent)
+            if manager.fileExists(atPath: path) {
+                throw DriftError("删除后仍然能看到这个目录，没有确认删除。")
+            }
+            log("本机删除后核验：目录已不在商店。")
+        }
+    }
     // MARK: - Write
 
     /// What one local write produced, for the read-back and the receipts.
@@ -488,12 +564,12 @@ enum PosterBoardLocal {
             do {
                 let handle = try WorseQueryEscape.consume(path: cached, createDirectory: true)
                 log("consume 成功：handle \(handle)")
-                if containerIdentifier(atPath: cached) == bundleID {
+                if isPosterBoardContainer(atPath: cached) {
                     log("PosterBoard container: cached path verified")
                     return (cached, handle)
                 }
                 WorseQueryEscape.release(handle)
-                log("缓存路径不再属于 PosterBoard（标识 \(containerIdentifier(atPath: cached) ?? "读不到")）——重新扫描")
+                log("缓存路径不再属于 PosterBoard（商店目录不存在或不是目录）——重新扫描")
             } catch {
                 log("consume 缓存失败：\(cached) → \(error.localizedDescription)；清掉缓存后重新扫描")
             }
@@ -532,6 +608,7 @@ enum PosterBoardLocal {
                 log("PosterBoard container resolved from a known path: \(path)（handle \(handle)）")
                 return (path, handle)
             }
+            log("已知容器路径核对失败：商店目录不存在或不是目录（已知路径本应正确，此行诊断价值最高）")
         }
 
         // 2. The root extension is an optional accelerator, never a gate.
@@ -568,16 +645,23 @@ enum PosterBoardLocal {
     private static func tryConsumePosterBoard(among candidates: [String],
                                               log: @escaping @Sendable (String) -> Void) -> String? {
         var refused = 0
+        var consumed = 0
+        var identified = 0
         for candidate in candidates where isDirectory(candidate) {
             do {
                 let handle = try WorseQueryEscape.consume(path: candidate, createDirectory: true)
-                let identifier = containerIdentifier(atPath: candidate)
+                consumed += 1
+                let ok = isPosterBoardContainer(atPath: candidate)
                 WorseQueryEscape.release(handle)
-                if identifier == bundleID { return candidate }
+                if ok {
+                    identified += 1
+                    return candidate
+                }
             } catch {
                 refused += 1
             }
         }
+        log("pathleak：候选 \(candidates.count) 个，consume 成功 \(consumed) 个，身份核对通过 \(identified) 个，扩展被拒 \(refused) 个")
         if refused > 0 {
             log("pathleak：\(refused) 个候选容器扩展被拒绝，继续尝试其余路径")
         }
@@ -587,19 +671,21 @@ enum PosterBoardLocal {
     private static func firstPosterBoardContainer(among candidates: [String]) -> String? {
         for candidate in candidates {
             guard isDirectory(candidate) else { continue }
-            if containerIdentifier(atPath: candidate) == bundleID { return candidate }
+            if isPosterBoardContainer(atPath: candidate) { return candidate }
         }
         return nil
     }
 
-    private static func containerIdentifier(atPath path: String) -> String? {
-        var buffer = [CChar](repeating: 0, count: 512)
-        let length = buffer.withUnsafeMutableBytes { raw -> Int in
-            getxattr(path, "com.apple.containermanager.identifier",
-                     raw.baseAddress, raw.count - 1, 0, 0)
-        }
-        guard length > 0 else { return nil }
-        return String(cString: buffer)
+    /// Content-based identity check: a PosterBoard container is the one that
+    /// holds the `Library/Application Support/PRBPosterExtensionDataStore`
+    /// store directory. The old getxattr-based check (`com.apple.
+    /// containermanager.identifier`) never succeeds on a real 27.2 device,
+    /// so every candidate — including the known-good tunnel container —
+    /// was rejected. We never use getxattr again.
+    private static func isPosterBoardContainer(atPath path: String) -> Bool {
+        let storePath = path + "/Library/Application Support/" + PosterBoard.storeDirectoryName
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: storePath, isDirectory: &isDir) && isDir.boolValue
     }
 
     private static func isDirectory(_ path: String) -> Bool {

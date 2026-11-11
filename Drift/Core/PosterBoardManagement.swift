@@ -197,6 +197,158 @@ enum PosterBoardManagement {
         }
     }
 
+    // MARK: - Enumeration-based management (store is the source of truth)
+
+    struct ManagedEntry: Identifiable, Hashable {
+        let id: String
+        let provider: String
+        let uuid: String
+        let name: String
+        let packageName: String
+        let generation: Int
+        let containerPath: String
+    }
+
+    /// Load the descriptors currently in the store, choosing the source by
+    /// premise: tunnel first, then local. Returns entries plus a source label
+    /// and an optional reason when nothing could be enumerated.
+    static func loadManagedEntries(
+        tunnelReady: Bool,
+        identityVersion: String,
+        log: @escaping @Sendable (String) -> Void
+    ) async -> (entries: [ManagedEntry], source: String, reason: String?) {
+        let tunnelAvailable = tunnelReady && !identityVersion.isEmpty
+        if tunnelAvailable {
+            var container = PosterBoardAirlift.cachedContainer
+            if container.isEmpty {
+                do { container = try await PosterBoardAirlift.resolveContainer(
+                    pairingPath: AppPaths.pairingFile.path) }
+                catch { container = "" }
+            }
+            guard !container.isEmpty else {
+                return ([], "隧道", "隧道容器未读到，无法列出商店。")
+            }
+            if !container.hasSuffix("/") { container += "/" }
+            var entries: [ManagedEntry] = []
+            var seen = Set<String>()
+            for generation in [61, 62, 63, 60, 64] {
+                do {
+                    let items = try await Airlift.posterStoreList(
+                        pairingPath: AppPaths.pairingFile.path,
+                        containerPath: container,
+                        structureVersion: generation)
+                    for item in items where PosterBoard.managedProviders.contains(item.extension) {
+                        let key = "\(item.extension)/\(item.uuid)/\(generation)"
+                        if seen.contains(key) { continue }
+                        seen.insert(key)
+                        entries.append(ManagedEntry(
+                            id: key,
+                            provider: item.extension,
+                            uuid: item.uuid,
+                            name: (item.name?.isEmpty == false) ? (item.name ?? item.uuid) : (item.packageName?.isEmpty == false ? item.packageName! : String(item.uuid.prefix(8))),
+                            packageName: item.packageName ?? "",
+                            generation: generation,
+                            containerPath: container))
+                    }
+                } catch {
+                    continue
+                }
+            }
+            return (entries, "隧道", nil)
+        }
+
+        let localAvailable = WorseQueryEscape.isAvailable(
+            deviceVersion: WorseQueryEscape.processVersion,
+            buildVersion: WorseQueryEscape.processBuildVersion)
+        if localAvailable {
+            do {
+                let (container, items) = try await PosterBoardLocal.enumerateLocalStore(log: log)
+                let entries = items.map { item in
+                    ManagedEntry(
+                        id: "\(item.provider)/\(item.uuid)/\(item.generation)",
+                        provider: item.provider,
+                        uuid: item.uuid,
+                        name: item.name,
+                        packageName: item.packageName,
+                        generation: item.generation,
+                        containerPath: container)
+                }
+                return (entries, "本机", nil)
+            } catch {
+                return ([], "本机", "本机商店打不开：\(error.localizedDescription)")
+            }
+        }
+
+        return ([], "", "需要配对文件、LocalDevVPN 和已连接的设备，或本机直刷可用，才能列出商店里的壁纸。")
+    }
+
+    /// Delete one managed entry through whichever route the premises allow.
+    static func deleteManagedEntry(
+        _ entry: ManagedEntry,
+        tunnelReady: Bool,
+        identityVersion: String,
+        log: @escaping @Sendable (String) -> Void
+    ) async throws -> (confirmed: Bool, message: String, channelLabel: String) {
+        let tunnelAvailable = tunnelReady && !identityVersion.isEmpty
+        let localAvailable = WorseQueryEscape.isAvailable(
+            deviceVersion: WorseQueryEscape.processVersion,
+            buildVersion: WorseQueryEscape.processBuildVersion)
+
+        if tunnelAvailable {
+            let json = try await Airlift.posterStoreDelete(
+                pairingPath: AppPaths.pairingFile.path,
+                containerPath: entry.containerPath,
+                structureVersion: entry.generation,
+                descriptorIDs: ["\(entry.provider)/\(entry.uuid)"])
+            var commitAudit = false
+            var itemOK = false
+            if let data = json.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                commitAudit = obj["commitAudit"] as? Bool ?? false
+                if let results = obj["results"] as? [[String: Any]] {
+                    itemOK = results.contains { ($0["uuid"] as? String) == entry.uuid && ($0["ok"] as? Bool ?? false) }
+                }
+            }
+            let confirmed = itemOK && commitAudit
+            if confirmed {
+                ApplyHistory.record(mode: "删除壁纸 · \(entry.name)",
+                                    success: true,
+                                    channel: "隧道",
+                                    provider: entry.provider,
+                                    verification: "隧道删除后复核：描述符已不在册")
+            } else {
+                ApplyHistory.record(mode: "删除壁纸 · \(entry.name)",
+                                    success: false,
+                                    error: "已删除、未确认",
+                                    channel: "隧道",
+                                    provider: entry.provider,
+                                    verification: "已删除、未确认：提交复核不可用")
+            }
+            let message = confirmed
+                ? "已删除并核验不在册：\(entry.name) 的描述符已从设备商店移除。可以点「刷新 PosterBoard」让它重新读取商店，或手动注销。"
+                : "已删除、未确认：商店的提交复核没有完成，下次对账再确认。不要把它当成已确认删除。"
+            return (confirmed, message, "隧道")
+        }
+
+        if localAvailable {
+            try await PosterBoardLocal.deleteManagedDescriptor(
+                provider: entry.provider, uuid: entry.uuid,
+                generation: entry.generation, log: log)
+            let opened = await MainActor.run { PosterBoardLaunch.open() }
+            let hint = opened
+                ? "已打开 PosterBoard 以刷新集合，请从应用切换器中关闭它，然后检查锁定屏幕壁纸选择器。"
+                : "请打开锁定屏幕壁纸选择器来刷新 PosterBoard；如果壁纸未出现，请从应用切换器关闭 PosterBoard 后重试。"
+            ApplyHistory.record(mode: "删除壁纸 · \(entry.name)",
+                                success: true,
+                                channel: "本机",
+                                provider: entry.provider,
+                                verification: "本机删除后：目录已不在商店")
+            return (true, "已删除并在本机核验：\(entry.name) 的描述符已不在商店里。\(hint)", "本机")
+        }
+
+        throw DriftError("删不了：隧道和本机通道都不具备前提。")
+    }
+
     /// Every management deletion lands in the apply history, with the pack,
     /// the channel and what was actually established.
     private static func record(_ receipt: PosterBoardLocalReceipt,

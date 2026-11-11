@@ -51,6 +51,15 @@ enum PosterBoard {
     static let photosExtension = "com.apple.PhotosUIPrivate.PhotosPosterProvider"
     static let collectionsExtension = "com.apple.WallpaperKit.CollectionsPoster"
 
+    /// Providers the management page is allowed to list and delete. Expanded
+    /// one at a time; system/functional providers stay out.
+    static let managedProviders: Set<String> = [
+        "com.apple.WallpaperKit.CollectionsPoster",
+        "com.apple.Posters.CollectionsPosterApp",
+        "com.apple.MercuryPoster",
+        "com.apple.PhotosUIPrivate.PhotosPosterProvider",
+    ]
+
     /// The store directory.  Its numeric suffix is a **structure version**
     /// (61, 62, …) that Apple bumps between releases; the reference learns it
     /// from the fetched database's own path and falls back to 61.

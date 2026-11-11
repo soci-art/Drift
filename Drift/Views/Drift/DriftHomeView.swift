@@ -49,7 +49,7 @@ struct DriftHomeView: View {
     }
     private var headerSubtitle: String {
         if localReady {
-            return "本机直刷可用（iOS \(localVersion)）：现在就能刷，不用配对，也不用开隧道。"
+            return "本机直刷可用（本机 iOS \(localVersion)）：现在就能刷，不用配对，也不用开隧道。"
         }
         if !identity.version.isEmpty { return identity.describe }
         return "本机直刷不可用；要走两条隧道通道，请导入配对文件并打开 LocalDevVPN。"
@@ -127,7 +127,7 @@ struct DriftHomeView: View {
             HStack(spacing: 8) {
                 DriftPill(text: localReady ? "本机直刷可用" : "本机直刷不可用",
                           tint: localReady ? .green : .orange)
-                DriftPill(text: "iOS \(localVersion)\(localBuild.isEmpty ? "" : "（\(localBuild)）")")
+                DriftPill(text: "本机 iOS \(localVersion)\(localBuild.isEmpty ? "" : "（\(localBuild)）")")
             }
             Text(headerSubtitle)
                 .font(.subheadline)
@@ -146,7 +146,7 @@ struct DriftHomeView: View {
                           : "隧道未连接",
                           tint: tunnelMonitor.status == .ready ? .green : .orange)
                 if identity.version.isEmpty {
-                    DriftPill(text: "设备信息未读到", tint: .orange)
+                    DriftPill(text: "隧道设备信息未读到", tint: .orange)
                 } else {
                     DriftPill(text: "设备 iOS \(identity.version)\(identity.buildVersion.isEmpty ? "" : "（\(identity.buildVersion)）")")
                 }
@@ -321,7 +321,7 @@ struct DriftHomeView: View {
                 .buttonStyle(.glass)
             }
             if judgement.mode == .worseQuery {
-                NativeNote("本机直刷在本机写入，不需要配对文件，也不用开隧道。刷完打开应用切换器，上滑关闭 PosterBoard，系统重新拉起后壁纸生效。App 不会自动注销。")
+                NativeNote("本机直刷在本机写入，不需要配对文件，也不用开隧道。刷完先打开 PosterBoard 刷新集合，再从应用切换器上滑关闭它，系统重新拉起后壁纸生效。App 不会自动注销。")
             } else if !session.paired {
                 NativeNote("两条隧道通道都需要先导入配对文件；本机直刷不需要，但签名要授予可用的 App Group。")
             } else if selection.tendies.isEmpty && !imports.isEmpty {
