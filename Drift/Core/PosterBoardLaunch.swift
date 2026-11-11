@@ -10,7 +10,12 @@ enum PosterBoardLaunch {
         guard let cls = NSClassFromString("LSApplicationWorkspace") else { return false }
         let selDefault = NSSelectorFromString("defaultWorkspace")
         guard cls.responds(to: selDefault) else { return false }
-        guard let workspace = cls.perform(selDefault)?.takeUnretainedValue() else { return false }
+        // `perform` on an AnyClass does not type-check; fetch the workspace
+        // through its IMP, the same pattern as the open call below.
+        typealias DefaultWorkspaceFn = @convention(c) (AnyObject, Selector) -> AnyObject
+        let workspaceImp = (cls as AnyObject).method(for: selDefault)
+        let workspaceFn = unsafeBitCast(workspaceImp, to: DefaultWorkspaceFn.self)
+        let workspace = workspaceFn(cls as AnyObject, selDefault)
         let selOpen = NSSelectorFromString("openApplicationWithBundleID:")
         guard workspace.responds(to: selOpen) else { return false }
         typealias OpenFn = @convention(c) (AnyObject, Selector, NSString) -> Bool
