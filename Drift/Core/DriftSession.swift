@@ -22,6 +22,15 @@ final class DriftSession: ObservableObject {
     @Published var errorText: String?
     /// True while a wallpaper run is in flight.
     @Published private(set) var running = false
+    /// The full-screen "flashing" cover (collection #150, corrected
+    /// 2026-11-11): Grace's requirement is that the cover appears the
+    /// moment the user taps Apply — before the re-judgement, the identity
+    /// refresh and the container search — and stays up for every channel
+    /// until the run is done. `running` flips too late for that (it waits
+    /// for the funnel's checks), so the cover has its own flag: the home
+    /// view raises it on tap, `run` raises it on entry as a backstop for
+    /// other callers, and both clear it when the work ends.
+    @Published var flashCover = false
 
     /// How the last finished run took effect, when it used the in-process
     /// route. The home page shows a manual-respring button from this.
@@ -347,6 +356,8 @@ final class DriftSession: ObservableObject {
         guard !InFlightCall.shared.hasLiveRun else {
             return (false, "已有一轮刷入正在进行", nil)
         }
+        flashCover = true
+        defer { flashCover = false }
         lastEffect = nil
         // Feedback #30: the funnel refuses a restore run while the gate
         // is closed, even if a caller forgot to consult it — judgement,

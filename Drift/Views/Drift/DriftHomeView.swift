@@ -431,10 +431,15 @@ struct DriftHomeView: View {
     }
 
     private func runApply() {
+        // The cover goes up on the tap itself (Grace, 2026-11-11): the
+        // identity refresh, the re-judgement and the channel's own search
+        // all happen underneath it, for every channel.
+        session.flashCover = true
         // Feedback #30: a blocked judgement starts nothing — the tap
         // only explains. (The session funnel refuses restore runs too,
         // but a blocked selection must never even be shaped into one.)
         if judgement.isBlocked {
+            session.flashCover = false
             statusLine = judgement.blockedReason
             return
         }
@@ -442,6 +447,7 @@ struct DriftHomeView: View {
         runSelection.resetModes = []
         runSelection.fullReset = false
         Task {
+            defer { session.flashCover = false }
             // Re-check before touching anything: refresh the device identity
             // when a tunnel is configured, then re-run the judgement on the
             // state as it is now. The card's answer is not the run's answer if

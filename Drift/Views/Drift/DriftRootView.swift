@@ -70,7 +70,7 @@ struct DriftRootView: View {
         // tapped until the run finishes. Deliberately minimal: spinner,
         // the words, nothing else.
         .overlay {
-            if session.running {
+            if session.flashCover {
                 ZStack {
                     Color.black.opacity(0.35)
                         .ignoresSafeArea()
