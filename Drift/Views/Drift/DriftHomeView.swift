@@ -335,7 +335,7 @@ struct DriftHomeView: View {
             if judgement.mode == .worseQuery {
                 NativeNote("本机直刷在本机写入，不需要配对文件，也不用开隧道。刷完先打开 PosterBoard 刷新集合，再从应用切换器上滑关闭它，系统重新拉起后壁纸生效。App 不会自动注销。")
             } else if !session.paired {
-                NativeNote("两条隧道通道都需要先导入配对文件；本机直刷不需要，但只有付费证书签名才能用。")
+                NativeNote("两条隧道通道都需要先导入配对文件；本机直刷不需要，但只有证书签名才能用。")
             } else if selection.tendies.isEmpty && !imports.isEmpty {
                 NativeNote("在上面的列表里点圆圈勾选要刷的包。")
             }
