@@ -69,6 +69,9 @@ struct DriftRootView: View {
         // going, cover the whole app with a blocking card — nothing can be
         // tapped until the run finishes. Deliberately minimal: spinner,
         // the words, nothing else.
+        .task {
+            await AppUpdateChecker.shared.autoCheck()
+        }
         .overlay {
             if session.flashCover {
                 ZStack {

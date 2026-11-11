@@ -313,6 +313,7 @@ enum PosterBoardManagement {
             if confirmed {
                 ApplyHistory.record(mode: "删除壁纸 · \(entry.name)",
                                     success: true,
+                                    ios: identityVersion,
                                     channel: "隧道",
                                     provider: entry.provider,
                                     verification: "隧道删除后复核：描述符已不在册")
@@ -320,6 +321,7 @@ enum PosterBoardManagement {
                 ApplyHistory.record(mode: "删除壁纸 · \(entry.name)",
                                     success: false,
                                     error: "已删除、未确认",
+                                    ios: identityVersion,
                                     channel: "隧道",
                                     provider: entry.provider,
                                     verification: "已删除、未确认：提交复核不可用")
@@ -339,6 +341,7 @@ enum PosterBoardManagement {
             // when the user taps.
             ApplyHistory.record(mode: "删除壁纸 · \(entry.name)",
                                 success: true,
+                                ios: WorseQueryEscape.processVersion,
                                 channel: "本机",
                                 provider: entry.provider,
                                 verification: "本机删除后：目录已不在商店")
@@ -356,6 +359,8 @@ enum PosterBoardManagement {
         ApplyHistory.record(mode: "删除壁纸 · \(receipt.pack)",
                             success: success,
                             error: success ? "" : verification,
+                            ios: receipt.resolvedChannel == .local
+                                ? WorseQueryEscape.processVersion : "",
                             channel: receipt.channelLabel,
                             provider: receipt.extensionID,
                             verification: verification)

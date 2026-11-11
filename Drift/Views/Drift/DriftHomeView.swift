@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 /// imported packs with previews, the apply run, and the activation card.
 struct DriftHomeView: View {
     @EnvironmentObject private var session: DriftSession
+    @ObservedObject private var updateChecker = AppUpdateChecker.shared
     @EnvironmentObject private var identityMonitor: DeviceIdentityMonitor
     @ObservedObject private var tunnelMonitor = TunnelMonitor.shared
     @Binding var selection: PosterBoardSelection
@@ -62,6 +63,9 @@ struct DriftHomeView: View {
                 ScrollView {
                     VStack(spacing: 14) {
                         headerCard
+                        if updateChecker.updateAvailable, let latest = updateChecker.latest {
+                            updateHintCard(latest)
+                        }
                         judgeCard
                         packsCard
                         applyCard
@@ -428,6 +432,19 @@ struct DriftHomeView: View {
             imports[index] = answered
         }
         selection.tendies.append(answered)
+    }
+
+    /// The launch auto-check's only Home footprint: a slim line, no
+    /// popup, no action of its own — the download lives in 设置 → 检查更新.
+    private func updateHintCard(_ latest: AppUpdateChecker.ReleaseInfo) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.down.circle").foregroundStyle(.blue)
+            Text("有新版 Drift \(latest.version)，到「设置 → 检查更新」下载。")
+                .font(.subheadline)
+            Spacer()
+        }
+        .padding(12)
+        .driftCard()
     }
 
     private func runApply() {

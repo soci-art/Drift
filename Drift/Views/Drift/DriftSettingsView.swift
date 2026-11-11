@@ -22,6 +22,10 @@ struct DriftSettingsView: View {
     @State private var receipts: [PosterBoardLocalReceipt] = PosterBoardLocalReceipts.load()
     @State private var receiptToDelete: PosterBoardLocalReceipt?
     @State private var confirmClearHistory = false
+    @ObservedObject private var updateChecker = AppUpdateChecker.shared
+    @State private var cacheBreakdown: AppCache.Breakdown?
+    @State private var confirmClearCache = false
+    @State private var cacheNote: String?
 
     var body: some View {
         NavigationStack {
@@ -32,6 +36,7 @@ struct DriftSettingsView: View {
                 restoreSealedSection
                 historySection
                 recordsSection
+                appSection
                 aboutSection
             }
             .navigationTitle("设置")
@@ -471,6 +476,59 @@ struct DriftSettingsView: View {
     }
 
     // MARK: - About
+
+    private var appSection: some View {
+        Section("应用") {
+            NavigationLink {
+                AppUpdateView()
+            } label: {
+                HStack {
+                    Label("检查更新", systemImage: "arrow.down.circle")
+                    Spacer()
+                    if updateChecker.updateAvailable, let latest = updateChecker.latest {
+                        Text("有新版 \(latest.version)")
+                            .foregroundStyle(.red)
+                    } else {
+                        Text(updateChecker.currentVersion).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Button {
+                confirmClearCache = true
+            } label: {
+                HStack {
+                    Label("清除缓存", systemImage: "trash")
+                    Spacer()
+                    Text(cacheBreakdown.map { AppCache.format($0.total) } ?? "…")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .disabled(cacheBreakdown == nil || cacheBreakdown?.total == 0)
+            if let cacheNote {
+                Text(cacheNote).font(.caption).foregroundStyle(.secondary)
+            }
+            Text("缓存只清能再生的：壁纸预览图、目录缓存、抓取临时文件和日志。配对文件、回执、刷入记录、设置和导入的壁纸包都不动。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .task {
+            cacheBreakdown = await Task.detached { AppCache.measure() }.value
+        }
+        .confirmationDialog("清除这些缓存？", isPresented: $confirmClearCache,
+                            titleVisibility: .visible) {
+            Button("清除", role: .destructive) {
+                Task {
+                    let freed = await Task.detached { AppCache.clear() }.value
+                    cacheBreakdown = await Task.detached { AppCache.measure() }.value
+                    cacheNote = "已清除，省出约 \(AppCache.format(freed))。"
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            if let cacheBreakdown {
+                Text("预览图 \(AppCache.format(cacheBreakdown.previews))、目录缓存 \(AppCache.format(cacheBreakdown.catalogCache))、临时文件 \(AppCache.format(cacheBreakdown.fetchScratch))、日志 \(AppCache.format(cacheBreakdown.logs))，共 \(AppCache.format(cacheBreakdown.total))。")
+            }
+        }
+    }
 
     private var aboutSection: some View {
         Section("关于") {

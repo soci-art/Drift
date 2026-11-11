@@ -1,0 +1,128 @@
+import SwiftUI
+
+/// The update page (collection #170/#171): current vs latest version,
+/// the release notes, ONE download button (the checker picks the
+/// route that works), and after the download the system share sheet —
+/// save to Files or hand it to a signing app.
+struct AppUpdateView: View {
+    @ObservedObject private var checker = AppUpdateChecker.shared
+    @State private var shareItem: ShareItem?
+
+    private struct ShareItem: Identifiable {
+        let id = UUID()
+        let url: URL
+    }
+
+    var body: some View {
+        List {
+            Section {
+                HStack {
+                    Text("当前版本")
+                    Spacer()
+                    Text("Drift \(checker.currentVersion)").foregroundStyle(.secondary)
+                }
+                HStack {
+                    Text("最新版本")
+                    Spacer()
+                    if checker.checking {
+                        ProgressView()
+                    } else if let latest = checker.latest {
+                        Text("Drift \(latest.version)")
+                            .foregroundStyle(checker.updateAvailable ? .primary : .secondary)
+                    } else {
+                        Text("还没查到").foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            if let error = checker.checkError {
+                Section { Text(error).foregroundStyle(.secondary) }
+            }
+
+            if checker.updateAvailable, let latest = checker.latest {
+                if !latest.notes.isEmpty {
+                    Section("这一版改了什么") {
+                        Text(latest.notes)
+                            .font(.callout)
+                            .textSelection(.enabled)
+                    }
+                }
+                Section {
+                    downloadButton(latest)
+                    if !checker.routeNote.isEmpty {
+                        Text(checker.routeNote).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if case .failed(let message) = checker.downloadPhase {
+                        Text(message).font(.caption).foregroundStyle(.red)
+                    }
+                    Text("下的是未签名 IPA，保存或分享到签名工具里，签好再装。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            } else if checker.latest != nil && !checker.checking {
+                Section { Text("已经是最新版本了。").foregroundStyle(.secondary) }
+            }
+
+            Section {
+                Button {
+                    Task { await checker.refresh() }
+                } label: {
+                    Label(checker.checking ? "正在检查…" : "重新检查",
+                          systemImage: "arrow.clockwise")
+                }
+                .disabled(checker.checking)
+            }
+        }
+        .navigationTitle("检查更新")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            if checker.latest == nil && !checker.checking {
+                await checker.refresh()
+            }
+        }
+        .sheet(item: $shareItem) { item in
+            UpdateShareSheet(url: item.url)
+        }
+        .onChange(of: doneURL?.absoluteString) { _, _ in
+            if let url = doneURL { shareItem = ShareItem(url: url) }
+        }
+    }
+
+    private var doneURL: URL? {
+        if case .done(let url) = checker.downloadPhase { return url }
+        return nil
+    }
+
+    @ViewBuilder
+    private func downloadButton(_ latest: AppUpdateChecker.ReleaseInfo) -> some View {
+        switch checker.downloadPhase {
+        case .working(let fraction):
+            VStack(alignment: .leading, spacing: 6) {
+                ProgressView(value: fraction)
+                Text("正在下载…\(Int(fraction * 100))%")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        case .done:
+            Button {
+                if let url = doneURL { shareItem = ShareItem(url: url) }
+            } label: {
+                Label("保存或分享安装包", systemImage: "square.and.arrow.up")
+            }
+        default:
+            Button {
+                checker.startDownload()
+            } label: {
+                Label("下载 Drift \(latest.version)", systemImage: "arrow.down.circle")
+            }
+        }
+    }
+}
+
+/// The system share sheet for the downloaded IPA (same shape as the
+/// log package's sheet in Settings).
+private struct UpdateShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
