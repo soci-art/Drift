@@ -314,19 +314,19 @@ enum PosterBoardManagement {
                 ApplyHistory.record(mode: "删除壁纸 · \(entry.name)",
                                     success: true,
                                     ios: identityVersion,
-                                    packName: entry.name,
                                     channel: "隧道",
                                     provider: entry.provider,
-                                    verification: "隧道删除后复核：描述符已不在册")
+                                    verification: "隧道删除后复核：描述符已不在册",
+                                    packName: entry.name)
             } else {
                 ApplyHistory.record(mode: "删除壁纸 · \(entry.name)",
                                     success: false,
                                     error: "已删除、未确认",
                                     ios: identityVersion,
-                                    packName: entry.name,
                                     channel: "隧道",
                                     provider: entry.provider,
-                                    verification: "已删除、未确认：提交复核不可用")
+                                    verification: "已删除、未确认：提交复核不可用",
+                                    packName: entry.name)
             }
             let message = confirmed
                 ? "已删除并核验不在册：\(entry.name) 的描述符已从设备商店移除。"
@@ -344,10 +344,10 @@ enum PosterBoardManagement {
             ApplyHistory.record(mode: "删除壁纸 · \(entry.name)",
                                 success: true,
                                 ios: WorseQueryEscape.processVersion,
-                                packName: entry.name,
                                 channel: "本机",
                                 provider: entry.provider,
-                                verification: "本机删除后：目录已不在商店")
+                                verification: "本机删除后：目录已不在商店",
+                                packName: entry.name)
             return (true, "已删除并在本机核验：\(entry.name) 的描述符已不在商店里。", "本机")
         }
 
