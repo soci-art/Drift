@@ -132,3 +132,43 @@ struct TweakPayloadUnavailable: Error, LocalizedError {
         "\(payload) 的载荷已从磁盘上消失（\(file)）：\(reason)"
     }
 }
+
+// MARK: - TweakVersion (relocated from the deleted TweakModel.swift in 2.0.0;
+// the enum is a general version comparator, retained by AirliftAvailability.)
+
+/// The subset of `packaging.version.Version` the registry's bounds need.
+///
+/// GoldenNugget compares with `packaging.version.Version`
+/// (`src/devicemanagement/constants.py:1`).  Every bound in the registry is a
+/// plain dotted release — `17.4`, `26.0`, `26.99`, `27.0` — and PEP 440 orders
+/// those as zero-padded integer tuples, which is what this reproduces.
+///
+/// A version whose *first* component is not an integer is deliberately treated
+/// as unorderable rather than guessed at: the reference wraps each comparison in
+/// `try/except: pass`, which leaves the tweak visible when a parse fails, and a
+/// silent "not compatible" verdict on unparseable input would be a different
+/// (and worse) outcome than the reference's.
+enum TweakVersion {
+    private static func components(_ version: String) -> [Int]? {
+        let parts = version.split(separator: ".", omittingEmptySubsequences: false)
+        var out: [Int] = []
+        for part in parts {
+            // A trailing non-numeric component (e.g. `27.0b1`) is dropped, the
+            // same way the reference's own `HotLoad._compare` filters parts with
+            // `isdigit()`.
+            guard let n = Int(part) else { break }
+            out.append(n)
+        }
+        return out.isEmpty ? nil : out
+    }
+
+    /// -1 / 0 / 1, or nil when either side has no orderable leading component.
+    static func compare(_ lhs: String, _ rhs: String) -> Int? {
+        guard var a = components(lhs), var b = components(rhs) else { return nil }
+        let count = max(a.count, b.count)
+        a += Array(repeating: 0, count: count - a.count)
+        b += Array(repeating: 0, count: count - b.count)
+        for (x, y) in zip(a, b) where x != y { return x < y ? -1 : 1 }
+        return 0
+    }
+}
