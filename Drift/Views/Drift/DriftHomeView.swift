@@ -357,8 +357,11 @@ struct DriftHomeView: View {
                 confirmRespring = true
             } label: {
                 Label("注销", systemImage: "arrow.clockwise.circle")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.glass)
+            .controlSize(.large)
             .disabled(session.running)
             .confirmationDialog("确认注销？", isPresented: $confirmRespring, titleVisibility: .visible) {
                 Button("立即注销", role: .destructive) { respringNow() }
