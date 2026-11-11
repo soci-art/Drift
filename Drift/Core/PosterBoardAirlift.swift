@@ -114,9 +114,10 @@ enum PosterBoardAirlift {
         let providersSeen = Set((preItems ?? []).map(\.extension))
 
         var injected = 0
-        /// What actually landed, as (provider, descriptor id) — the
-        /// post-write enumeration is checked against exactly this set.
-        var written: [(extensionID: String, uuid: String)] = []
+        /// What actually landed, as (pack, provider, descriptor id, numeric
+        /// identifier) — the post-write enumeration is checked against exactly
+        /// this set, and the confirmed subset becomes the management receipts.
+        var written: [(pack: String, extensionID: String, uuid: String, numericID: Int)] = []
 
         // Progress is counted per descriptor, not per pack. A pack is a loop over
         // its descriptors, and each of those opens its own tunnel and syncs its
@@ -190,7 +191,10 @@ enum PosterBoardAirlift {
                             destName: target
                         )
                         injected += 1
-                        written.append((extensionID: descriptor.extensionID, uuid: target))
+                        written.append((pack: source.name,
+                                        extensionID: descriptor.extensionID,
+                                        uuid: target,
+                                        numericID: numericID))
                         done += 1
                         log("  ✅ \(position + 1)/\(descriptors.count) → \(descriptor.extensionID)")
                         progress(overall(done))
@@ -224,6 +228,18 @@ enum PosterBoardAirlift {
             providersSeen: providersSeen,
             expected: Set(written.map { "\($0.extensionID)/\($0.uuid)" }),
             log: log)
+
+        // Only the descriptors the store confirmed become receipts: the
+        // management page must not offer to delete something the store never
+        // indexed. This channel's receipts are 注销直刷.
+        PosterBoardLocalReceipts.remember(
+            written.map { PosterBoardLocalReceipts.TunnelWrite(
+                pack: $0.pack, extensionID: $0.extensionID,
+                folderName: $0.uuid, numericID: $0.numericID) },
+            confirmed: verification.confirmed,
+            container: container,
+            structureVersion: structureVersion,
+            channel: .airlift)
 
         log("Respring so PosterBoard re-reads the store…")
         // The injections are the queue, so the bar is full before the respring;

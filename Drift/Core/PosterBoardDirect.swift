@@ -182,9 +182,10 @@ enum PosterBoardDirect {
         progress(overall(done))
 
         var injected = 0
-        /// What actually landed, as (provider, descriptor id) — the
-        /// post-write enumeration is checked against exactly this set.
-        var written: [(extensionID: String, uuid: String)] = []
+        /// What actually landed, as (pack, provider, descriptor id, numeric
+        /// identifier) — the post-write enumeration is checked against exactly
+        /// this set, and the confirmed subset becomes the management receipts.
+        var written: [(pack: String, extensionID: String, uuid: String, numericID: Int)] = []
 
         for (index, source) in sources.enumerated() {
             log("[\(index + 1)/\(sources.count)] \(source.name)")
@@ -227,7 +228,10 @@ enum PosterBoardDirect {
                             preferenceTargetA: container + "Library/Preferences",
                             preferenceTargetB: mobilePreferences)
                         injected += 1
-                        written.append((extensionID: descriptor.extensionID, uuid: target))
+                        written.append((pack: source.name,
+                                        extensionID: descriptor.extensionID,
+                                        uuid: target,
+                                        numericID: numericID))
                         done += 1
                         log("  ✅ \(position + 1)/\(descriptors.count) → \(descriptor.extensionID)")
                         progress(overall(done))
@@ -257,6 +261,18 @@ enum PosterBoardDirect {
             providersSeen: providersSeen,
             expected: Set(written.map { "\($0.extensionID)/\($0.uuid)" }),
             log: log)
+
+        // Only confirmed descriptors become receipts, and this channel's
+        // receipts are 免注销直刷. The management page deletes them over the
+        // same tunnel and never borrows the local channel.
+        PosterBoardLocalReceipts.remember(
+            written.map { PosterBoardLocalReceipts.TunnelWrite(
+                pack: $0.pack, extensionID: $0.extensionID,
+                folderName: $0.uuid, numericID: $0.numericID) },
+            confirmed: verification.confirmed,
+            container: container,
+            structureVersion: structureVersion,
+            channel: .direct)
 
         progress(99)
         log("Refreshing PosterBoard without a respring…")

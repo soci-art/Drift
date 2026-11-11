@@ -156,7 +156,7 @@ enum WorseQueryEscape {
         case -5:
             return "containermanagerd 拒绝了查询（目标路径不存在或不可查询）。"
         case -6:
-            return "内核拒绝签发沙盒扩展。"
+            return "内核拒绝签发沙盒扩展（返回码 -6）。"
         case -255:
             return "目标路径不存在。"
         default:
@@ -282,6 +282,9 @@ enum WorseQueryEscape {
 
         guard let group = discoveredGroupIdentifier else { throw Failure.groupUnavailable }
         let handle = worse_query(path, group, alternate, createDirectory)
+        AppLog.write("worse_query: consume path=\(path) group=\(group) "
+            + "createDirectory=\(createDirectory) → "
+            + (handle > 0 ? "handle \(handle)" : "error \(handle)"))
         guard handle > 0 else { throw Failure.refused(code: handle) }
         return handle
     }

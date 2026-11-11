@@ -21,13 +21,13 @@ struct DriftSettingsView: View {
     @State private var showSealedNotice = false
     @State private var receipts: [PosterBoardLocalReceipt] = PosterBoardLocalReceipts.load()
     @State private var receiptToDelete: PosterBoardLocalReceipt?
+    @State private var confirmClearHistory = false
 
     var body: some View {
         NavigationStack {
             List {
                 connectionSection
                 localRouteSection
-                localReceiptsSection
                 applySection
                 restoreSealedSection
                 historySection
@@ -73,8 +73,19 @@ struct DriftSettingsView: View {
                 Button("取消", role: .cancel) { receiptToDelete = nil }
             } message: {
                 if let receipt = receiptToDelete {
-                    Text("将从 PosterBoard 商店删除：\(receipt.summary)。删完会重新枚举核验它已不在册。")
+                    Text("将从 PosterBoard 商店删除：\(receipt.pack)（\(receipt.extensionID) / \(receipt.folderName)，通道：\(receipt.channelLabel)）。如果删的正是当前正在使用的壁纸，生效后系统会换回默认壁纸。")
                 }
+            }
+            .confirmationDialog("清空全部刷入记录？", isPresented: $confirmClearHistory,
+                                titleVisibility: .visible) {
+                Button("清空记录", role: .destructive) {
+                    ApplyHistory.clear()
+                    history = []
+                    recordsNote = "刷入记录已清空；回执没有动，管理页仍能认出已刷的壁纸。"
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("记录清空后无法恢复。此操作只清记录，不会删除设备上已刷入的壁纸——要删壁纸请用「管理刷入的壁纸」。")
             }
             .alert("恢复刷已封存", isPresented: $showSealedNotice) {
                 Button("知道了", role: .cancel) {}
@@ -185,47 +196,26 @@ struct DriftSettingsView: View {
         }
     }
 
-    /// The local channel's receipt journal: every descriptor it wrote, with a
-    /// delete entry that removes exactly that folder and re-enumerates after.
-    private var localReceiptsSection: some View {
-        Section("本机直刷写入记录") {
-            if receipts.isEmpty {
-                Text("还没有用本机直刷写入过内容。")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                ForEach(receipts.reversed()) { receipt in
-                    HStack(spacing: 8) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(receipt.pack).font(.subheadline)
-                            Text(receipt.summary)
-                                .font(.caption2).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button(role: .destructive) {
-                            receiptToDelete = receipt
-                        } label: {
-                            Text("删除").font(.caption)
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                }
-            }
-            Text("每一条都是一次写入的回执。删除只删这一条写的描述符，删完重新枚举核验它已不在商店里。")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-    }
-
     private func deleteReceipt(_ receipt: PosterBoardLocalReceipt) async {
         do {
-            try await PosterBoardLocal.delete(receipt: receipt) { line in
+            let outcome = try await PosterBoardManagement.delete(
+                receipt, tunnelReady: tunnelReady) { line in
                 DriftEngine.shared.log(line)
             }
             receipts = PosterBoardLocalReceipts.load()
-            recordsNote = "已删除：\(receipt.summary)"
+            history = ApplyHistory.load()
+            recordsNote = outcome.message
         } catch {
             receipts = PosterBoardLocalReceipts.load()
+            history = ApplyHistory.load()
             session.errorText = error.localizedDescription
         }
+    }
+
+    /// The tunnel premises the management deletion needs, read live from the
+    /// session and the monitor rather than from a snapshot.
+    private var tunnelReady: Bool {
+        session.paired && tunnelMonitor.status == .ready
     }
 
     @ViewBuilder
@@ -315,48 +305,122 @@ struct DriftSettingsView: View {
 
     // Feedback #24: the history used to expand all 20 records inline and
     // stretch the whole settings page. It lives in a fixed-height box now
-    // (about three and a half rows) and scrolls inside itself.
+    // and scrolls inside itself. Feedback #83: receipts are merged into the
+    // same list; the two stores stay separate underneath.
     private var historySection: some View {
         Section("刷入记录") {
-            if history.isEmpty {
+            NavigationLink {
+                PosterBoardManagerView()
+            } label: {
+                Label("管理刷入的壁纸", systemImage: "square.stack.3d.up")
+            }
+            let rows = mergedRecords
+            if rows.isEmpty {
                 Text("暂无记录").foregroundStyle(.secondary)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(Array(history.suffix(20).reversed().enumerated()), id: \.offset) { _, record in
-                            HStack(spacing: 8) {
-                                Image(systemName: record.success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                    .foregroundStyle(record.success ? .green : .red)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("\(record.mode) · \(record.ios.isEmpty ? "未知系统" : "iOS \(record.ios)")")
-                                        .font(.subheadline)
-                                    if let channel = record.channel, !channel.isEmpty {
-                                        Text("通道：\(channel)")
-                                            .font(.caption).foregroundStyle(.secondary)
-                                    }
-                                    if let verification = record.verification, !verification.isEmpty {
-                                        Text("核验：\(verification)")
-                                            .font(.caption).foregroundStyle(.secondary)
-                                    }
-                                    if let effect = record.effect, !effect.isEmpty {
-                                        Text("生效：\(effect)")
-                                            .font(.caption).foregroundStyle(.secondary)
-                                    }
-                                    Text(record.timestamp).font(.caption).foregroundStyle(.secondary)
-                                    if !record.success && !record.error.isEmpty {
-                                        Text(record.error).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                                    }
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        ForEach(rows) { row in
+                            mergedRow(row)
                         }
                     }
                     .padding(.vertical, 2)
                 }
-                .frame(height: 174)
+                .frame(height: 220)
                 .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
             }
+            if !history.isEmpty {
+                Button(role: .destructive) {
+                    confirmClearHistory = true
+                } label: {
+                    Label("清空记录", systemImage: "trash")
+                }
+            }
+            Text("普通记录只是历史；带删除按钮的回执条目删的是设备上的那个描述符。")
+                .font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    @ViewBuilder
+    private func mergedRow(_ row: MergedRecord) -> some View {
+        switch row.kind {
+        case .run(let record):
+            HStack(spacing: 8) {
+                Image(systemName: record.success ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .foregroundStyle(record.success ? .green : .red)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(record.mode) · \(record.ios.isEmpty ? "未知系统" : "iOS \(record.ios)")")
+                        .font(.subheadline)
+                    if let channel = record.channel, !channel.isEmpty {
+                        Text("通道：\(channel)")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let verification = record.verification, !verification.isEmpty {
+                        Text("核验：\(verification)")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let effect = record.effect, !effect.isEmpty {
+                        Text("生效：\(effect)")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text(record.timestamp).font(.caption).foregroundStyle(.secondary)
+                    if !record.success && !record.error.isEmpty {
+                        Text(record.error).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+        case .receipt(let receipt):
+            HStack(spacing: 8) {
+                Image(systemName: "square.and.arrow.down.fill")
+                    .foregroundStyle(.blue)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(receipt.pack).font(.subheadline)
+                    Text(receipt.resolvedChannel == .local
+                         ? "本机直刷写入"
+                         : "隧道写入 · \(receipt.channelLabel)")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text(receipt.summary)
+                        .font(.caption2).foregroundStyle(.secondary)
+                    Text("回执 · \(receipt.date)")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(role: .destructive) {
+                    receiptToDelete = receipt
+                } label: {
+                    Text("删除").font(.caption)
+                }
+                .buttonStyle(.borderless)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var mergedRecords: [MergedRecord] {
+        var rows: [MergedRecord] = []
+        for (index, record) in history.enumerated() {
+            rows.append(MergedRecord(
+                id: "run-\(index)-\(record.timestamp)-\(record.mode)",
+                date: parsedRecordDate(record.timestamp),
+                kind: .run(record)))
+        }
+        for receipt in receipts {
+            rows.append(MergedRecord(
+                id: "receipt-\(receipt.id)",
+                date: parsedRecordDate(receipt.date),
+                kind: .receipt(receipt)))
+        }
+        return rows.sorted { $0.date > $1.date }
+    }
+
+    private func parsedRecordDate(_ raw: String) -> Date {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        if let date = formatter.date(from: raw) { return date }
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: raw) ?? .distantPast
     }
 
     // MARK: - Records
@@ -463,4 +527,18 @@ private struct ActivityShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+
+/// One row of the merged apply history: either an operation record or a
+/// write receipt. The two underlying stores are not migrated or combined.
+private struct MergedRecord: Identifiable {
+    enum Kind {
+        case run(ApplyHistory.Record)
+        case receipt(PosterBoardLocalReceipt)
+    }
+
+    let id: String
+    let date: Date
+    let kind: Kind
 }

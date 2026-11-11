@@ -163,6 +163,20 @@ enum PosterBoardLocal {
         }
     }
 
+    /// Which of these receipts still have their descriptor directory in the
+    /// store. Opens the container once; throws when the local store cannot be
+    /// read, so the caller can say "未核对" instead of guessing.
+    static func existingReceiptIDs(_ receipts: [PosterBoardLocalReceipt],
+                                   log: @escaping @Sendable (String) -> Void) async throws -> Set<String> {
+        try await offMainActor {
+            let opened = try openContainer(log: log)
+            defer { WorseQueryEscape.release(opened.handle) }
+            let manager = FileManager.default
+            let found = receipts.filter { manager.fileExists(atPath: $0.path) }
+            log("本机对账：\(found.count)/\(receipts.count) 条回执的描述符仍在商店目录里。")
+            return Set(found.map(\.id))
+        }
+    }
     // MARK: - Write
 
     /// What one local write produced, for the read-back and the receipts.
@@ -462,38 +476,112 @@ enum PosterBoardLocal {
 
     /// Consume an extension for PosterBoard's container and return both.
     private static func openContainer(log: @escaping @Sendable (String) -> Void) throws -> (path: String, handle: Int64) {
+        log("本机通道 App Group：\(WorseQueryEscape.discoveredGroupIdentifier ?? "没有可用的组")")
+        // Locating the container must not depend on an extension for the
+        // applications root itself. On a real 27.2 device the kernel refuses
+        // that extension with -6 because the root is not any one container,
+        // and the old order made that refusal kill the whole run before the
+        // pathleak route was ever reached (feedback #77–81).
         let cached = cachedContainer
         if !cached.isEmpty {
-            if let handle = try? WorseQueryEscape.consume(path: cached, createDirectory: true) {
+            log("consume 容器缓存：\(cached)（createDirectory: true）")
+            do {
+                let handle = try WorseQueryEscape.consume(path: cached, createDirectory: true)
+                log("consume 成功：handle \(handle)")
                 if containerIdentifier(atPath: cached) == bundleID {
                     log("PosterBoard container: cached path verified")
                     return (cached, handle)
                 }
                 WorseQueryEscape.release(handle)
-                log("cached PosterBoard container no longer belongs to PosterBoard — rescanning")
-                cachedContainer = ""
-            } else {
-                cachedContainer = ""
+                log("缓存路径不再属于 PosterBoard（标识 \(containerIdentifier(atPath: cached) ?? "读不到")）——重新扫描")
+            } catch {
+                log("consume 缓存失败：\(cached) → \(error.localizedDescription)；清掉缓存后重新扫描")
+            }
+            cachedContainer = ""
+        }
+
+        // 1. pathleak first. It walks inodes and names the children of the
+        // applications root without asking for an extension on the root.
+        let leaked = WorseQueryEscape.leakedChildren(of: applicationsRoot)
+        log("pathleak：在 \(applicationsRoot) 下枚举到 \(leaked.count) 个路径")
+        if let path = tryConsumePosterBoard(among: leaked, log: log) {
+            let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
+            cachedContainer = path
+            log("PosterBoard container resolved by pathleak: \(path)（handle \(handle)）")
+            return (path, handle)
+        }
+
+        // 1b. Paths already known exactly: the tunnel's cached container and
+        // the containers in old receipts. These need no enumeration at all.
+        var known: [String] = []
+        let tunnel = PosterBoardAirlift.cachedContainer
+        if !tunnel.isEmpty {
+            known.append(tunnel.hasSuffix("/") ? String(tunnel.dropLast()) : tunnel)
+        }
+        for receipt in PosterBoardLocalReceipts.load() {
+            if let container = PosterBoardManagement.containerPath(from: receipt.parent),
+               !known.contains(container.hasSuffix("/") ? String(container.dropLast()) : container) {
+                known.append(container.hasSuffix("/") ? String(container.dropLast()) : container)
+            }
+        }
+        if !known.isEmpty {
+            log("已知容器路径：\(known.count) 个（隧道缓存 / 旧回执）")
+            if let path = tryConsumePosterBoard(among: known, log: log) {
+                let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
+                cachedContainer = path
+                log("PosterBoard container resolved from a known path: \(path)（handle \(handle)）")
+                return (path, handle)
             }
         }
 
-        let found: String? = try WorseQueryEscape.withAccess(to: applicationsRoot, createDirectory: true) {
-            let names = (try? FileManager.default.contentsOfDirectory(
-                atPath: applicationsRoot).sorted()) ?? []
-            let listed = names.map { applicationsRoot + "/" + $0 }
-            if let match = firstPosterBoardContainer(among: listed) { return match }
-            log("application container listing found no PosterBoard — falling back to pathleak")
-            return firstPosterBoardContainer(
-                among: WorseQueryEscape.leakedChildren(of: applicationsRoot))
+        // 2. The root extension is an optional accelerator, never a gate.
+        // Getting -6 here is expected on the systems this fix targets; the
+        // pathleak route above is the one that has to work.
+        var rootFailure = ""
+        do {
+            let listed: [String] = try WorseQueryEscape.withAccess(
+                to: applicationsRoot, createDirectory: true) {
+                let names = (try? FileManager.default.contentsOfDirectory(
+                    atPath: applicationsRoot).sorted()) ?? []
+                return names.map { applicationsRoot + "/" + $0 }
+            }
+            log("根目录扩展可用，\(listed.count) 个应用容器路径")
+            if let path = firstPosterBoardContainer(among: listed) {
+                let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
+                cachedContainer = path
+                log("PosterBoard container resolved by root listing: \(path)（handle \(handle)）")
+                return (path, handle)
+            }
+        } catch {
+            rootFailure = error.localizedDescription
+            log("根目录扩展不可用（\(rootFailure)）——pathleak 结果仍可继续使用")
         }
-        guard let path = found else {
-            throw DriftError("找不到 PosterBoard 的容器。这个系统可能还没有壁纸商店的数据目录；"
-                + "先添加一张系统壁纸，或者改用隧道通道。")
+
+        throw DriftError("找不到 PosterBoard 的容器：pathleak 没有枚举到可用的应用容器"
+            + (rootFailure.isEmpty ? "。" : "，根目录扩展也被拒绝（\(rootFailure)）。")
+            + "这个系统可能还没有壁纸商店的数据目录；先添加一张系统壁纸，或者改用隧道通道。")
+    }
+
+    /// Try each pathleak candidate as a container: consume it, read its
+    /// container-manager identifier, and keep the one that is PosterBoard.
+    /// A candidate the kernel will not extend is skipped, not fatal.
+    private static func tryConsumePosterBoard(among candidates: [String],
+                                              log: @escaping @Sendable (String) -> Void) -> String? {
+        var refused = 0
+        for candidate in candidates where isDirectory(candidate) {
+            do {
+                let handle = try WorseQueryEscape.consume(path: candidate, createDirectory: true)
+                let identifier = containerIdentifier(atPath: candidate)
+                WorseQueryEscape.release(handle)
+                if identifier == bundleID { return candidate }
+            } catch {
+                refused += 1
+            }
         }
-        let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
-        cachedContainer = path
-        log("PosterBoard container resolved by scanning \(applicationsRoot)")
-        return (path, handle)
+        if refused > 0 {
+            log("pathleak：\(refused) 个候选容器扩展被拒绝，继续尝试其余路径")
+        }
+        return nil
     }
 
     private static func firstPosterBoardContainer(among candidates: [String]) -> String? {
