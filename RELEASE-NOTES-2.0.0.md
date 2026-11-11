@@ -1,8 +1,8 @@
 # Drift 2.0.0 发行说明（草稿，待正式发版时使用）
 
-## 2.0.0 —— 换心重构：Drift 与 CocoWall 合并
+## 2.0.0 —— 换心重构
 
-Drift 2.0.0 是一次引擎层重构：删掉继承自 GoldenNugget 的整套应用引擎（调整编译、合成备份恢复、跳过设置、状态栏、社区模板），设备写入核心换成与 CocoWall 共用的同一套——源自 **AirCard-iOS（Mak5er 著，MIT 许可证）** 的隧道写入核心，加上 **CocoWall 作者**在该核心之上写的免注销生效（只重启 PosterBoard 守护进程）与壁纸商店枚举模块。自此 Drift 与 CocoWall 合并为一个产品：名字、Bundle ID、仓库与发行线仍是 Drift，CocoWall 不再单独发版。
+Drift 2.0.0 是一次引擎层重构：删掉继承自 GoldenNugget 的整套应用引擎（调整编译、合成备份恢复、跳过设置、状态栏、社区模板），设备写入核心换成源自 **AirCard-iOS（Mak5er 著，MIT 许可证）** 的隧道写入核心，并加入免注销生效（只重启 PosterBoard 守护进程）与壁纸商店枚举模块。
 
 Drift 自己的部分保留：运行时 App Group 发现（不写死组名，付费证书 / 开发者组 / SideStore / AltStore 改签均可）、本机写入通道、判定与向导、界面与全部中文文案（AGPL-3.0）。
 
@@ -41,5 +41,5 @@ Drift 自己的部分保留：运行时 App Group 发现（不写死组名，付
 ## 致谢与许可
 
 - 设备写入核心：AirCard-iOS —— Mak5er（Johnny Franks），MIT 许可证；仓内附 NOTICE 与 VENDORED 记录。
-- 免注销生效与商店枚举模块、换心方案的底座：CocoWall 作者。
+- 免注销生效与商店枚举模块：基于 AirCard-iOS 核心的扩展实现。
 - Drift 本体：AGPL-3.0。
