@@ -349,8 +349,7 @@ struct DriftSettingsView: View {
                 Image(systemName: record.success ? "checkmark.circle.fill" : "xmark.circle.fill")
                     .foregroundStyle(record.success ? .green : .red)
                 VStack(alignment: .leading, spacing: 2) {
-                    let modeLabel = (record.channel == "本机直刷") ? "本机直刷" : record.mode
-                    Text("\(modeLabel) · \(record.ios.isEmpty ? "未知系统" : "iOS \(record.ios)")")
+                    Text("\((record.channel == "本机直刷") ? "本机直刷" : record.mode) · \(record.ios.isEmpty ? "未知系统" : "iOS \(record.ios)")")
                         .font(.subheadline)
                     if let channel = record.channel, !channel.isEmpty {
                         Text("通道：\(channel)")
