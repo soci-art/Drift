@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// The wallpaper page: connection state, the delivery-mode judgement,
-/// imported packs with previews, the apply run, and the store reset.
+/// imported packs with previews, the apply run, and the activation card.
 struct DriftHomeView: View {
     @EnvironmentObject private var session: DriftSession
     @EnvironmentObject private var identityMonitor: DeviceIdentityMonitor
@@ -20,7 +20,7 @@ struct DriftHomeView: View {
     @State private var legacyPrompt: LegacyConvertPrompt?
     @State private var detailPack: PosterBoardTendie?
     @State private var statusLine: String?
-    @State private var confirmReset = false
+    @State private var confirmRespring = false
 
     private var identity: DeviceIdentity { identityMonitor.current }
     /// The user's method pick (2.0.0: a method, never a channel).
@@ -65,7 +65,7 @@ struct DriftHomeView: View {
                         judgeCard
                         packsCard
                         applyCard
-                        resetCard
+                        activationCard
                         RunLogCard()
                     }
                     .padding(16)
@@ -332,46 +332,48 @@ struct DriftHomeView: View {
         .driftCard()
     }
 
-    private var resetCard: some View {
+    /// Refresh & Apply: the two ways to make a written wallpaper take
+    /// effect when it has not appeared yet. The light one is gated on the
+    /// local channel's premise (the same `localReady` the header card
+    /// shows); the heavy one is the manual respring, confirmed first and
+    /// unavailable while a run is going.
+    private var activationCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("重置壁纸商店").font(.subheadline.weight(.semibold))
-            Text("壁纸乱了、刷坏了想清掉时用。只能走恢复刷，刷完会重启；恢复刷已封存期间做不了。和普通刷入不能同一次进行。")
+            Text("刷新与生效").font(.subheadline.weight(.semibold))
+            Text("刷完壁纸还没生效时用这里。两个办法，轻的先试，不行再用注销。")
                 .font(.subheadline).foregroundStyle(.secondary)
-            if !DriftRestoreGate.isEnabled {
-                NativeNote(DriftRestoreGate.notice)
+            NativePrimaryButton(title: "结束 PosterBoard",
+                                systemImage: "arrow.triangle.2.circlepath",
+                                running: false,
+                                disabled: !localReady) {
+                openPosterBoard()
             }
-            ForEach(PosterBoardResetMode.allCases, id: \.self) { mode in
-                Toggle(isOn: Binding(
-                    get: { selection.resetModes.contains(mode) },
-                    set: { on in
-                        if on { selection.resetModes.insert(mode) }
-                        else { selection.resetModes.remove(mode) }
-                    })) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(resetModeTitle(mode))
-                        Text(mode.detail).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
+            if !localReady {
+                Text(WorseQueryEscape.unavailableReason(deviceVersion: localVersion,
+                                                        buildVersion: localBuild))
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            Toggle("完全重置（清空商店）", isOn: $selection.fullReset)
-            NativeDangerButton(title: "执行重置", disabled: !canReset) { confirmReset = true }
-                .confirmationDialog("确认重置壁纸商店？", isPresented: $confirmReset, titleVisibility: .visible) {
-                    Button("重置并重启", role: .destructive) { runReset() }
-                    Button("取消", role: .cancel) {}
-                } message: {
-                    Text("将通过恢复刷写入重置，设备会重启。已导入的壁纸包不会被删。")
-                }
+            Button {
+                confirmRespring = true
+            } label: {
+                Label("注销", systemImage: "arrow.clockwise.circle")
+            }
+            .buttonStyle(.glass)
+            .disabled(session.running)
+            .confirmationDialog("确认注销？", isPresented: $confirmRespring, titleVisibility: .visible) {
+                Button("立即注销", role: .destructive) { respringNow() }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("将立即注销，界面会重启一遍，壁纸在重启后生效。")
+            }
+            if session.running {
+                Text("正在刷入，刷完再注销。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            NativeNote("隧道通道（免注销 / 注销直刷）刷完会自动处理生效，不用在这里操作。")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
-    }
-
-    private var canReset: Bool {
-        // Feedback #30: a reset IS a restore run — while the gate is
-        // closed the button stays disabled and the card above says why.
-        DriftRestoreGate.isEnabled
-            && session.paired && !session.running
-            && (selection.fullReset || !selection.resetModes.isEmpty)
     }
 
     // MARK: - Actions
@@ -442,22 +444,26 @@ struct DriftHomeView: View {
         }
     }
 
-    private func runReset() {
-        guard DriftRestoreGate.isEnabled else {
-            statusLine = DriftRestoreGate.notice
-            return
-        }
-        var resetSelection = PosterBoardSelection()
-        resetSelection.resetModes = selection.resetModes
-        resetSelection.fullReset = selection.fullReset
+    /// The activation card's light option: bring PosterBoard forward so
+    /// the user can end it from the app switcher. The app launches it;
+    /// ending it is the user's swipe — the copy says exactly that.
+    private func openPosterBoard() {
         Task {
-            let outcome = await session.run(selection: resetSelection, mode: .backup,
-                                            pick: manualPick, identity: identity)
-            statusLine = outcome.message
-            if outcome.ok {
-                selection.resetModes = []
-                selection.fullReset = false
-            }
+            let opened = await MainActor.run { PosterBoardLaunch.open() }
+            statusLine = opened
+                ? "已打开 PosterBoard 以刷新集合，请从应用切换器中关闭它，然后检查锁定屏幕壁纸选择器。"
+                : "请打开锁定屏幕壁纸选择器来刷新 PosterBoard；如果壁纸未出现，请从应用切换器关闭 PosterBoard 后重试。"
+        }
+    }
+
+    /// The activation card's heavy option: the same manual respring the
+    /// post-run button offers, behind the card's confirmation.
+    private func respringNow() {
+        Task {
+            let triggered = await MainActor.run { NeoSpring.trigger() }
+            statusLine = triggered
+                ? "已触发注销；PosterBoard 重新启动后会读到新壁纸。"
+                : "现在没有可用的窗口触发注销，请手动从系统里注销一次。"
         }
     }
 
@@ -798,12 +804,3 @@ struct DriftPackDetail: View {
     }
 }
 
-/// Chinese labels for the three store-reset modes (the enum's raw values are
-/// the reference's English dialog names).
-private func resetModeTitle(_ mode: PosterBoardResetMode) -> String {
-    switch mode {
-    case .collections: return "清理合集"
-    case .suggestedPhotos: return "清理照片推荐"
-    case .galleryCache: return "清理图库缓存"
-    }
-}
