@@ -346,7 +346,7 @@ enum PosterBoardManagement {
             return (true, "已删除并在本机核验：\(entry.name) 的描述符已不在商店里。\(hint)", "本机")
         }
 
-        throw DriftError("删不了：隧道和本机通道都不具备前提。")
+        throw DriftError("删不了：隧道和本机两条路现在都走不通。")
     }
 
     /// Every management deletion lands in the apply history, with the pack,

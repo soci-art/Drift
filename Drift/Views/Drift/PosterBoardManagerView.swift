@@ -43,7 +43,7 @@ struct PosterBoardManagerView: View {
             Section {
                 Text("这里列出商店里在册、且属于合集 / Mercury / 照片 provider 的描述符——不管是谁刷的、有没有回执。系统/功能型 provider 不在管理范围内。")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("删除走哪条路由前提决定：隧道在走隧道删，隧道不在但本机可用走本机删。页面显示本次将走的路。")
+                Text("删除走哪条路，看当时的条件：隧道通着走隧道删，隧道不通但本机能用走本机删。页面显示本次将走的路。")
                     .font(.caption).foregroundStyle(.secondary)
                 Text("本次删除将走：\(routeLabel)")
                     .font(.caption.weight(.semibold)).foregroundStyle(.secondary)

@@ -80,19 +80,21 @@ enum InstallEnvironment {
         else { return functional }
         switch current {
         case .nested:
-            return "这个 App 是套在另一个 App 里装的（比如 LiveContainer），不是正经装在手机上，本机直刷用不了；正常签名装到手机上就能用。隧道那两种不受这个影响。"
+            return "这个 App 是套在另一个 App 里装的（比如 LiveContainer），不是正经装在手机上，本机直刷用不了；要用付费证书正常签名装到手机上才行。隧道那两种不受这个影响。"
         case .withoutGroups:
-            return "你这个签名里没有分到专门的存储区，本机直刷用不了——免费 ID 签的就是这样。换付费证书签，或者用 SideStore / AltStore 改签，就有了。"
-        case .withGroups, .unknown:
-            return functional
+            return "你这个签名没带能用的存储区，本机直刷用不了。本机直刷只有付费证书签的才行——免费 ID 签、SideStore / AltStore 改签都给不了能用的存储区。"
+        case .withGroups:
+            return "你这份签名里的存储区都打不开，本机直刷用不了。重新用付费证书签一次再试；还不行就把日志包发出来排查。"
+        case .unknown:
+            return "本机直刷要用到签名里的存储区，你这份签名没有能打开的，所以用不了。本机直刷只有付费证书签的才行——免费 ID 签、SideStore / AltStore 改签都用不了。"
         }
     }
 
     /// One short line for Settings, or nil when nothing sure can be said.
     var settingsLabel: String? {
         switch self {
-        case .withGroups: return "签名带存储区（付费证书或商店改签）"
-        case .withoutGroups: return "签名没带存储区（多半是免费 ID 签）"
+        case .withGroups: return "付费证书签名（带存储区）"
+        case .withoutGroups: return "签名没带存储区（免费 ID 签或商店改签）"
         case .nested: return "套在另一个 App 里装的"
         case .unknown: return nil
         }

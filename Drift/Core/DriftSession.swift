@@ -470,7 +470,7 @@ enum DriftMethodPick: String, CaseIterable, Identifiable {
     /// mechanism names (`worse_query`, `AirLift`).
     var subtitle: String {
         switch self {
-        case .auto: return "按前提自动挑选通道"
+        case .auto: return "按条件自动挑选通道"
         case .noRespring: return "隧道写入 · 刷完即生效，无需注销"
         case .respring: return "隧道写入 · 注销后生效"
         case .local: return "本机写入，免配对、免隧道"
@@ -578,7 +578,7 @@ enum DriftJudge {
 
         var tunnelMissing: String?
         if !PairingRecord.isInstalled {
-            tunnelMissing = "还没有配对文件（配对只是两条隧道通道的前提，本机直刷不需要）"
+            tunnelMissing = "还没有配对文件（配对只是走两条隧道通道才需要，本机直刷不需要）"
         } else if !tunnelReady {
             tunnelMissing = "隧道未连通（打开 LocalDevVPN 并连上 Wi-Fi）"
         } else if identity.version.isEmpty {

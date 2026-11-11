@@ -138,7 +138,7 @@ struct DriftHomeView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             HStack(spacing: 8) {
-                DriftPill(text: "隧道通道前提", tint: .secondary)
+                DriftPill(text: "走隧道通道需要", tint: .secondary)
                 DriftPill(text: session.paired ? "已配对" : "未配对",
                           tint: session.paired ? .green : .orange)
                 DriftPill(text: tunnelMonitor.status == .ready ? "隧道已连通"
@@ -323,7 +323,7 @@ struct DriftHomeView: View {
             if judgement.mode == .worseQuery {
                 NativeNote("本机直刷在本机写入，不需要配对文件，也不用开隧道。刷完先打开 PosterBoard 刷新集合，再从应用切换器上滑关闭它，系统重新拉起后壁纸生效。App 不会自动注销。")
             } else if !session.paired {
-                NativeNote("两条隧道通道都需要先导入配对文件；本机直刷不需要，但签名要授予可用的 App Group。")
+                NativeNote("两条隧道通道都需要先导入配对文件；本机直刷不需要，但只有付费证书签名才能用。")
             } else if selection.tendies.isEmpty && !imports.isEmpty {
                 NativeNote("在上面的列表里点圆圈勾选要刷的包。")
             }

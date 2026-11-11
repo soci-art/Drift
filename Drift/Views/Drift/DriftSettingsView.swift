@@ -101,8 +101,8 @@ struct DriftSettingsView: View {
     // MARK: - Connection
 
     private var connectionSection: some View {
-        Section("隧道通道前提（免注销直刷 / 注销直刷）") {
-            Text("配对文件与隧道是两条隧道通道的前提；走本机直刷不需要它们。想走隧道通道时，再在这里配好。")
+        Section("隧道通道（免注销直刷 / 注销直刷）") {
+            Text("配对文件与隧道是走两条隧道通道要先备齐的；走本机直刷不需要它们。想走隧道通道时，再在这里配好。")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Label("配对文件", systemImage: "link")
@@ -199,7 +199,7 @@ struct DriftSettingsView: View {
                     }
                 }
             }
-            Text("组名在运行时从安装包内嵌的签名描述文件读取，不再写死——付费证书、开发者注册的组、SideStore / AltStore 改签都可以。")
+            Text("组名在运行时从安装包内嵌的签名描述文件读取，不再写死。能用的组只有付费证书的签名才带：免费 ID 签和 SideStore / AltStore 改签都用不了本机直刷。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
