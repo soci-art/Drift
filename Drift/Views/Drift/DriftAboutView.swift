@@ -60,7 +60,7 @@ struct DriftAboutView: View {
     private var rangeTable: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("版本对照").font(.subheadline.weight(.semibold))
-            rangeRow("26.0 – 26.1", "免注销直刷 / 本机直刷*", "免注销 / 上滑关闭 PosterBoard")
+            rangeRow("26.0 – 26.1", "本机直刷*", "上滑关闭 PosterBoard")
             rangeRow("26.2 – 27.1", "免注销直刷 / 注销直刷 / 本机直刷*", "免注销 / 注销 / 上滑关闭")
             rangeRow("27.2 测试版 1 / 2", "免注销直刷 / 注销直刷 / 本机直刷*", "免注销 / 注销 / 上滑关闭")
             rangeRow("27.2 测试版 3 起", "本机直刷*", "上滑关闭 PosterBoard")

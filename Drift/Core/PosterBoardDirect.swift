@@ -11,8 +11,8 @@ import ZIPFoundation
 /// (`Airlift.flashTransaction`), with one difference — the reload preferences
 /// are merged into that same transaction instead of opening a second one. It
 /// needs a pairing record, LocalDevVPN and an unlocked device, exactly like
-/// AirLift — but it works from iOS 26.0, while AirLift's escape starts at
-/// 26.2 and is closed again from 27.2 beta 3. What it does afterwards is the
+/// AirLift — with the same 26.2 floor, and closed again from 27.2 beta 3.
+/// What it does afterwards is the
 /// other difference: only the PosterBoard daemon is restarted (`PosterRefresh`),
 /// so the wallpaper appears without a respring. It is not related to the
 /// protective-backup route.
@@ -45,9 +45,9 @@ enum PosterBoardDirect {
     /// The bundle whose container holds the store.
     static let bundleID = "com.apple.PosterBoard"
 
-    /// The oldest system this route is known to work on. The transaction is
-    /// the pre-AirLift pipeline, so the floor is the app's own floor.
-    static let minimumVersion = "26.0"
+    /// The oldest system this route is supported on: 26.2, the same floor as
+    /// the other tunnel channel. 26.0–26.1 belong to 本机直刷 only.
+    static let minimumVersion = "26.2"
 
     /// Where the two reload-preference copies go.
     private static let mobilePreferences = "/var/mobile/Library/Preferences"
