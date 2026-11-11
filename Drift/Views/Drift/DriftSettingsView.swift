@@ -168,14 +168,6 @@ struct DriftSettingsView: View {
                      : "iOS \(WorseQueryEscape.processVersion)（不在范围内）")
                     .foregroundStyle(.secondary)
             }
-            if let installLabel = InstallEnvironment.current.settingsLabel {
-                HStack {
-                    Label("怎么装的", systemImage: "app.badge")
-                    Spacer()
-                    Text(installLabel)
-                        .foregroundStyle(.secondary)
-                }
-            }
             HStack {
                 Label("生效方式", systemImage: "hand.tap")
                 Spacer()
@@ -199,7 +191,7 @@ struct DriftSettingsView: View {
                     }
                 }
             }
-            Text("组名在运行时从安装包内嵌的签名描述文件读取，不再写死。能用的组只有付费证书的签名才带：免费 ID 签和 SideStore / AltStore 改签都用不了本机直刷。")
+            Text("组名在运行时从安装包内嵌的签名描述文件读取。能用的组只有付费证书的签名才带：免费 ID 签和 SideStore / AltStore 改签都用不了本机直刷。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
