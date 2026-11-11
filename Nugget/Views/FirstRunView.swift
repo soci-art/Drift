@@ -48,7 +48,7 @@ struct FirstRunView: View {
     private enum TunnelStep: Equatable {
         /// Not probed yet, or the last probe was interrupted.
         case unchecked
-        /// No interface carries the tunnel IP: the VPN app is not connected.
+                    NativeNote("没有接口带 \(Tunnel.ifaceIP) 这个地址——隧道 App 可能连错了网络，或者隧道 IP 还留着默认值。")
         case interfaceMissing
         /// Interface up, peer port not answering yet.
         case peerUnreachable
@@ -90,7 +90,7 @@ struct FirstRunView: View {
             footer
         }
         .background(FirstRunBackground())
-        .navigationTitle("Set Up")
+        .navigationTitle("设置向导")
         .navigationBarTitleDisplayMode(.inline)
         // No menu button: there is no sidebar behind this page in either state.
         // As the gate this is the root; as a Settings page it is pushed onto a
@@ -98,7 +98,7 @@ struct FirstRunView: View {
         .toolbar {
             if let onClose {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Close") { onClose() }
+                    Button("关闭") { onClose() }
                 }
             }
         }
@@ -151,8 +151,8 @@ struct FirstRunView: View {
         .onChange(of: wirelessPair.generatedRecordPath) { _, path in
             adoptGeneratedRecord(at: path)
         }
-        .alert("Setup", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
-            Button("OK") {}
+        .alert("设置向导", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
+            Button("好") {}
         } message: {
             Text(errorText ?? "?")
         }
@@ -169,7 +169,7 @@ struct FirstRunView: View {
                 if page == 0 {
                     // The first slide's leading edge carries the exit instead of
                     // a back button there is nothing to go back to.
-                    Button("Skip setup for now") { skip() }
+                    Button("先跳过设置") { skip() }
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 } else {
@@ -183,7 +183,7 @@ struct FirstRunView: View {
                             .background(.quaternary, in: Circle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Previous slide")
+                    .accessibilityLabel("上一页")
                 }
                 Spacer()
                 HStack(spacing: 6) {
@@ -195,7 +195,7 @@ struct FirstRunView: View {
                         withAnimation(.snappy) { page += 1 }
                     } label: {
                         HStack(spacing: 6) {
-                            Text(page == 0 ? LocalizedStringKey("Get started") : LocalizedStringKey("Continue"))
+                            Text(page == 0 ? "开始" : "继续")
                             Image(systemName: "chevron.right")
                                 .flipsForRightToLeftLayoutDirection(true)
                         }
@@ -214,14 +214,14 @@ struct FirstRunView: View {
                 }
             }
             if page == lastPage {
-                NativePrimaryButton(title: "Finish setup", systemImage: "checkmark", disabled: !canFinish) {
+                NativePrimaryButton(title: "完成设置", systemImage: "checkmark", disabled: !canFinish) {
                     finish()
                 }
-                Button("Skip setup for now") { skip() }
+                Button("先跳过设置") { skip() }
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
-                NativeNote("Skipping is not a dead end: this guide is in Settings afterwards.")
+                NativeNote("跳过不是死胡同：这个向导之后在设置里还能打开。")
             }
         }
         .padding(.horizontal, 24)
@@ -235,7 +235,7 @@ struct FirstRunView: View {
             .fill(index == page ? Color.accentColor : Color(.tertiaryLabel))
             .frame(width: index == page ? 20 : 7, height: 7)
             .animation(.spring(duration: 0.25), value: page)
-            .accessibilityLabel("Slide \(index + 1) of \(lastPage + 1)")
+            .accessibilityLabel("第 \(index + 1) 页，共 \(lastPage + 1) 页")
             .accessibilityHidden(index != page)
     }
 
@@ -248,22 +248,22 @@ struct FirstRunView: View {
             art: { FirstRunWelcomeArt(active: page == 0) },
             title: "Drift",
             subtitle: LocalizedStringKey(localReady
-                ? "给这台 iPhone 刷入交互壁纸。本机直刷已可用，可以直接完成设置。"
-                : "给这台 iPhone 刷入交互壁纸。本机直刷不可用，先走完隧道与配对两个步骤。"))
+                ? "给这台 iPhone 刷入交互壁纸。本机通道已可用，可以直接完成设置。"
+                : "给这台 iPhone 刷入交互壁纸。本机通道不可用，先走完隧道与配对两个步骤。"))
         {
             VStack(alignment: .leading, spacing: 12) {
                 if localReady {
-                    NativeNote("本机直刷可用（iOS \(WorseQueryEscape.processVersion)，签名授予了可用的 App Group）：直接点「完成设置」就能刷，下面的隧道与配对只是要用隧道方式时才需要。")
+                    NativeNote("本机通道可用（iOS \(WorseQueryEscape.processVersion)，签名授予了可用的 App Group）：直接点「完成设置」就能刷，下面的隧道与配对只是要走隧道通道时才需要。")
                 }
-                stepCard(number: 1, title: "Tunnel", done: tunnel.isReady,
+                stepCard(number: 1, title: "隧道", done: tunnel.isReady,
                          working: tunnel == .peerUnreachable, status: tunnel.shortText,
                          destination: 1)
-                stepCard(number: 2, title: "Pairing", done: pairingReady,
+                stepCard(number: 2, title: "配对", done: pairingReady,
                          working: wirelessPair.isRunning,
                          status: pairingReady ? "配对记录已就位" : "尚无配对记录",
                          destination: 2)
                 NativeNote(localReady
-                    ? "第 1、2 步可选：只有想用直刷免注销或 AirLift 时才需要；本机直刷不用配对，也不用隧道。"
+                    ? "第 1、2 步可选：只有想走隧道通道时才需要；本机通道不用配对，也不用隧道。"
                     : "第 2 步可以在电脑上用 iLoader 配对——生成配对文件后传到这台 iPhone 上导入。")
                 NativeNote("隧道状态实时检测：打开 App 之后再连上隧道，这一页会自动变绿，不用重开 App。")
             }
@@ -275,8 +275,8 @@ struct FirstRunView: View {
     private var tunnelSlide: some View {
         SlideLayout(
             art: { FirstRunTunnelArt(ready: tunnel.isReady, active: page == 1) },
-            title: "1 · Tunnel",
-            subtitle: "Install LocalDevVPN (or any tunnel app), enter the values below, and leave it on — the tunnel routes (直刷免注销 / AirLift) need it; the in-process route does not.")
+            title: "1 · 隧道",
+            subtitle: "装好 LocalDevVPN（或同类隧道 App），填入下面的值并保持开启——免注销直刷的隧道通道需要它；本机通道不需要。")
         {
             VStack(alignment: .leading, spacing: 12) {
                 statusPill(done: tunnel.isReady, working: tunnel == .peerUnreachable,
@@ -292,21 +292,21 @@ struct FirstRunView: View {
                     Button {
                         UIPasteboard.general.string = Tunnel.requirements
                     } label: {
-                        Text("Copy these values")
+                        Text("把这些值抄进隧道 App")
                     }
                     .buttonStyle(.bordered)
                     Button {
                         Task { await probe() }
                     } label: {
-                        Label("Check again", systemImage: "arrow.clockwise")
+                        Label("再检测一次", systemImage: "arrow.clockwise")
                     }
                     .buttonStyle(.bordered)
                 }
                 if tunnel == .interfaceMissing {
-                    NativeNote(String(localized: "No interface carries \(Tunnel.ifaceIP) — the VPN app may be on the wrong network, or its tunnel IP left at default."))
+                    NativeNote("没有接口带 \(Tunnel.ifaceIP) 这个地址——隧道 App 可能连错了网络，或者隧道 IP 还留着默认值。")
                 }
                 if Tunnel.isCustomised {
-                    NativeSafetyNote("Custom tunnel values are in use — they must match LocalDevVPN.")
+                    NativeSafetyNote("当前用的是自定义隧道地址——必须和 LocalDevVPN 里填的一致。")
                 }
             }
         }
@@ -317,7 +317,7 @@ struct FirstRunView: View {
     private var pairingSlide: some View {
         SlideLayout(
             art: { FirstRunPairArt(linked: pairingReady, active: page == 2) },
-            title: "2 · Pairing",
+            title: "2 · 配对",
             subtitle: "在电脑上用 iLoader 配对是最省事的一条路；下面的两张卡是备选办法。")
         {
             VStack(alignment: .leading, spacing: 12) {
@@ -327,12 +327,12 @@ struct FirstRunView: View {
                     wirelessCard
                 } else {
                     helperCard
-                    actionCard(icon: "doc.badge.plus", title: "Import pairing file",
-                               subtitle: "Made on a computer — AirDrop, Files, iCloud Drive") {
+                    actionCard(icon: "doc.badge.plus", title: "导入配对文件",
+                               subtitle: "在电脑上做好——隔空投送、「文件」、iCloud 云盘都可以") {
                         showPairingImporter = true
                     }
-                    actionCard(icon: "wifi", title: "Pair without a computer",
-                               subtitle: "iOS 27+ — on iOS 26, use a file from a computer") {
+                    actionCard(icon: "wifi", title: "不用电脑配对",
+                               subtitle: "iOS 27 以上可用——iOS 26 请用电脑做好的文件") {
                         wirelessPair.start()
                     }
                     NativeNote("没有电脑工具？也可以在电脑上配对（idevicepair、Sideloadly——手机弹窗时点「信任」），把 .plist 配对文件发到这台 iPhone，在上面导入。")
@@ -359,7 +359,7 @@ struct FirstRunView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                NativeNote("Once imported, this page ticks itself — no need to reopen the app.")
+                NativeNote("导入后这一页会自己打勾，不用重开 App。")
             }
             Spacer(minLength: 0)
         }
@@ -373,23 +373,23 @@ struct FirstRunView: View {
     private var finishSlide: some View {
         SlideLayout(
             art: { FirstRunFinishArt(ready: canFinish, active: page == lastPage) },
-            title: "All set",
-            subtitle: "Finishing connects to the device and opens the home page.")
+            title: "都齐了",
+            subtitle: "点完成会连上设备并打开主页。")
         {
             VStack(alignment: .leading, spacing: 12) {
                 if localReady {
-                    NativeNote("本机直刷可用：现在就能完成设置并刷壁纸，不需要配对或隧道。下面的两步可以以后在设置里补。")
+                    NativeNote("本机通道可用：现在就能完成设置并刷壁纸，不需要配对或隧道。下面的两步可以以后在设置里补。")
                 }
-                stepCard(number: 1, title: "Tunnel（可选）", done: tunnel.isReady,
+                stepCard(number: 1, title: "隧道（可选）", done: tunnel.isReady,
                          working: tunnel == .peerUnreachable, status: tunnel.shortText,
                          destination: 1)
-                stepCard(number: 2, title: "Pairing（可选）", done: pairingReady,
+                stepCard(number: 2, title: "配对（可选）", done: pairingReady,
                          working: wirelessPair.isRunning,
                          status: pairingReady ? "配对记录已就位" : "尚无配对记录",
                          destination: 2)
                 NativeNote("点「完成设置」后打开壁纸页。")
                 if !canFinish {
-                    NativeNote("本机直刷不可用，所以完成按钮要等隧道和配对都就绪。")
+                    NativeNote("本机通道不可用，所以完成按钮要等隧道和配对都就绪。")
                 }
             }
         }
@@ -429,7 +429,7 @@ struct FirstRunView: View {
                         in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityHint("Opens this step's slide")
+        .accessibilityHint("打开这一步的页面")
     }
 
     /// A pairing-slide action as a full-width card (two halves truncate at
@@ -484,22 +484,22 @@ struct FirstRunView: View {
             HStack(spacing: 8) {
                 ProgressView()
                 if let serviceName = wirelessPair.serviceName {
-                    Text("Advertising “\(serviceName)” — waiting for this iPhone to connect…")
+                    Text("正在广播“\(serviceName)”——等这台 iPhone 连进来…")
                         .font(.subheadline)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    Text("Starting the pairing service…")
+                    Text("正在启动配对服务…")
                         .font(.subheadline)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if let pin = wirelessPair.pin {
-                Text("PIN: \(pin)")
+                Text("配对码：\(pin)")
                     .font(.title3.monospaced().weight(.semibold))
                     .textSelection(.enabled)
-                NativeNote(String(localized: "Confirm it in Settings → Privacy & Security → Developer Mode → “Pair with \(WirelessPairing.displayName)”."))
+                NativeNote("在 设置 → 隐私与安全性 → 开发者模式 →「与 \(WirelessPairing.displayName) 配对」里确认。")
             } else {
-                NativeNote(String(localized: "Leave this open, then above on this iPhone: Settings → Privacy & Security → Developer Mode → “Pair with \(WirelessPairing.displayName)”."))
+                NativeNote("这一页留着别关，然后在这台 iPhone 上：设置 → 隐私与安全性 → 开发者模式 →「与 \(WirelessPairing.displayName) 配对」。")
             }
             Button(role: .destructive) {
                 wirelessPair.cancel()
@@ -529,8 +529,8 @@ struct FirstRunView: View {
     /// finishing setup here deliberately does NOT start a photo/video copy.
     private func finish() {
         firstRun.complete(reason: localReady
-            ? "in-process route ready; tunnel and pairing optional"
-            : "tunnel and pairing record both ready")
+            ? "本机通道已就绪；隧道和配对可选"
+            : "隧道和配对记录都已就绪")
         onClose?()
     }
 
@@ -553,7 +553,7 @@ struct FirstRunView: View {
         }.value
         let next: TunnelStep = interfaceUp ? (peerReachable ? .ready : .peerUnreachable) : .interfaceMissing
         if next != tunnel {
-            GoldenNuggetEngine.shared.log("setup guide: tunnel — \(next.text)")
+            DriftEngine.shared.log("setup guide: tunnel — \(next.text)")
         }
         tunnel = next
     }
@@ -569,11 +569,11 @@ struct FirstRunView: View {
             let record = try PairingRecord.accept(contentsOf: url)
             PairingRecord.persist(record)
             pairingReady = true
-            GoldenNuggetEngine.shared.log("setup guide: pairing file imported "
+            DriftEngine.shared.log("setup guide: pairing file imported "
                 + "(\(PairingRecord.sourceLabel(record)), \(record.count) bytes)")
         } catch {
             errorText = error.localizedDescription
-            GoldenNuggetEngine.shared.log("setup guide: pairing file import failed "
+            DriftEngine.shared.log("setup guide: pairing file import failed "
                 + "(\(url.lastPathComponent)): \(error.localizedDescription)")
         }
     }
@@ -594,11 +594,11 @@ struct FirstRunView: View {
                 : try PairingRecord.accept(contentsOf: URL(fileURLWithPath: path))
             if path != AppPaths.pairingFile.path { PairingRecord.persist(record) }
             pairingReady = true
-            GoldenNuggetEngine.shared.log("setup guide: wireless pairing record adopted "
+            DriftEngine.shared.log("setup guide: wireless pairing record adopted "
                 + "(\(PairingRecord.sourceLabel(record)))")
         } catch {
             errorText = error.localizedDescription
-            GoldenNuggetEngine.shared.log("setup guide: wireless pairing record rejected — "
+            DriftEngine.shared.log("setup guide: wireless pairing record rejected — "
                 + "\(error.localizedDescription)")
         }
     }

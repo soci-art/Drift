@@ -98,14 +98,14 @@ final class WirelessPairing: NSObject, ObservableObject, NetServiceDelegate {
         endBackgroundTask()
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Drift.WirelessPairing") { [weak self] in
             Task { @MainActor in
-                GoldenNuggetEngine.shared.log("wireless pair: background time expired before the device connected")
+                DriftEngine.shared.log("wireless pair: background time expired before the device connected")
                 self?.endBackgroundTask()
             }
         }
         if backgroundTask == .invalid {
-            GoldenNuggetEngine.shared.log("wireless pair: could not start a background task — the device can only pair while the app is on screen")
+            DriftEngine.shared.log("wireless pair: could not start a background task — the device can only pair while the app is on screen")
         } else {
-            GoldenNuggetEngine.shared.log("wireless pair: holding background task \(backgroundTask.rawValue) so the device can pair while Settings is open")
+            DriftEngine.shared.log("wireless pair: holding background task \(backgroundTask.rawValue) so the device can pair while Settings is open")
         }
     }
 
@@ -154,7 +154,7 @@ final class WirelessPairing: NSObject, ObservableObject, NetServiceDelegate {
         }
         let outPath = stagedRecord.path(percentEncoded: false)
 
-        GoldenNuggetEngine.shared.log("wireless pair: advertising as \(Self.hostName)/\(MinimuxerConstants.defaultHostModel), "
+        DriftEngine.shared.log("wireless pair: advertising as \(Self.hostName)/\(MinimuxerConstants.defaultHostModel), "
             + "record → \(AppPaths.pairingFile.lastPathComponent)")
         beginBackgroundTask()
 
@@ -212,7 +212,7 @@ final class WirelessPairing: NSObject, ObservableObject, NetServiceDelegate {
         service.publish()
         netService = service
 
-        GoldenNuggetEngine.shared.log("wireless pair: published \(ready.serviceID) on port \(ready.port) "
+        DriftEngine.shared.log("wireless pair: published \(ready.serviceID) on port \(ready.port) "
             + "with TXT keys [\(ready.txt.keys.sorted().joined(separator: ", "))] — waiting for the device to connect")
     }
 
@@ -220,7 +220,7 @@ final class WirelessPairing: NSObject, ObservableObject, NetServiceDelegate {
     private func show(pin receivedPin: String, generation runGeneration: Int) {
         guard runGeneration == generation else { return }
         pin = receivedPin
-        GoldenNuggetEngine.shared.log("wireless pair: PIN \(receivedPin) — confirm it in Settings → Developer Mode")
+        DriftEngine.shared.log("wireless pair: PIN \(receivedPin) — confirm it in Settings → Developer Mode")
     }
 
     /// Handle the run's terminal result.  Main thread.
@@ -236,7 +236,7 @@ final class WirelessPairing: NSObject, ObservableObject, NetServiceDelegate {
                 try record.write(to: AppPaths.pairingFile, options: .atomic)
             } catch {
                 phase = .failed(error.localizedDescription)
-                GoldenNuggetEngine.shared.log("wireless pair: could not save record — \(error.localizedDescription)")
+                DriftEngine.shared.log("wireless pair: could not save record — \(error.localizedDescription)")
                 return
             }
             if !paired.hostAltIRKHex.isEmpty {
@@ -244,11 +244,11 @@ final class WirelessPairing: NSObject, ObservableObject, NetServiceDelegate {
             }
             phase = .paired
             generatedRecordPath = AppPaths.pairingFile.path(percentEncoded: false)
-            GoldenNuggetEngine.shared.log("wireless pair: completed — \(paired.deviceName) "
+            DriftEngine.shared.log("wireless pair: completed — \(paired.deviceName) "
                 + "(\(paired.deviceModel)) → \(paired.pairingFilePath)")
         case .failure(let error):
             phase = .failed(error.localizedDescription)
-            GoldenNuggetEngine.shared.log("wireless pair failed: \(error.localizedDescription)")
+            DriftEngine.shared.log("wireless pair failed: \(error.localizedDescription)")
         }
     }
 
@@ -269,7 +269,7 @@ final class WirelessPairing: NSObject, ObservableObject, NetServiceDelegate {
         port = nil
         pin = nil
         generatedRecordPath = nil
-        GoldenNuggetEngine.shared.log("wireless pair: cancelled")
+        DriftEngine.shared.log("wireless pair: cancelled")
     }
 
     /// Forget a terminal state so the button is live again.  Called by the page
@@ -286,7 +286,7 @@ final class WirelessPairing: NSObject, ObservableObject, NetServiceDelegate {
 
     private func stopAdvertising() {
         if let service = netService {
-            GoldenNuggetEngine.shared.log("wireless pair: stopped advertising \(service.name)")
+            DriftEngine.shared.log("wireless pair: stopped advertising \(service.name)")
             service.stop()
             netService = nil
         }
@@ -295,10 +295,10 @@ final class WirelessPairing: NSObject, ObservableObject, NetServiceDelegate {
     // MARK: - NetServiceDelegate
 
     func netServiceDidPublish(_ sender: NetService) {
-        GoldenNuggetEngine.shared.log("wireless pair: Bonjour accepted \(sender.name) on port \(sender.port)")
+        DriftEngine.shared.log("wireless pair: Bonjour accepted \(sender.name) on port \(sender.port)")
     }
 
     func netService(_ sender: NetService, didNotPublish errorDict: [String: NSNumber]) {
-        GoldenNuggetEngine.shared.log("wireless pair: Bonjour refused \(sender.name) — \(errorDict)")
+        DriftEngine.shared.log("wireless pair: Bonjour refused \(sender.name) — \(errorDict)")
     }
 }

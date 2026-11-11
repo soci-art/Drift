@@ -62,7 +62,7 @@ final class TunnelMonitor: ObservableObject {
         }.value
         guard next != status else { return }
         status = next
-        GoldenNuggetEngine.shared.log("tunnel monitor: \(next.logText)")
+        DriftEngine.shared.log("tunnel monitor: \(next.logText)")
     }
 }
 

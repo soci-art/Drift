@@ -62,11 +62,11 @@ struct DriftVideoView: View {
     private var introCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                DriftPill(text: "只能恢复式", tint: .orange)
+                DriftPill(text: "只能走恢复刷", tint: .orange)
                 DriftPill(text: "刷完重启")
             }
-            Text("视频壁纸只能用恢复式刷入，刷完设备会重启。循环模式会把视频逐帧存下，最多 400 帧；非循环是实况照片式（视频 + 一张定格帧）。"
-                 + (DriftRestoreGate.isEnabled ? "" : "恢复式暂时停用，所以视频壁纸现在刷不了。"))
+            Text("视频壁纸只能用恢复刷刷入，刷完设备会重启。循环模式会把视频逐帧存下，最多 400 帧；非循环是实况照片式（视频 + 一张定格帧）。"
+                 + (DriftRestoreGate.isEnabled ? "" : "恢复刷已封存，所以视频壁纸现在刷不了。"))
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

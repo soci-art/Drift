@@ -1,21 +1,15 @@
 import SwiftUI
+import Minimuxer
 
 @main
 struct DriftApp: App {
     init() {
-        // Development mode's logging switch, applied at launch rather than when the
-        // settings page is opened: it governs the protocol half of every run, and a
-        // stored preference that only took effect once the user visited a page would
-        // mean a session's minimuxer.log was recorded under the wrong setting.
-        DevSettings.applyLoggingPreference()
+        // The vendor's protocol logging, at its default (on). The
+        // development-mode switch that used to gate this was removed with
+        // the tweak system in 2.0.0; with no dev mode the behaviour is the
+        // old "dev mode off" behaviour — restore the vendor default.
+        MinimuxerLogging.setLogging(true)
 
-        // Drift never writes the skip-setup files. Upstream defaults that
-        // preference ON, and every backup-mode apply would otherwise add two
-        // setup files the user never asked for — so where no value has ever
-        // been stored, store OFF. A value set by hand is left alone.
-        if UserDefaults.standard.object(forKey: "SkipSetupEnabled") == nil {
-            UserDefaults.standard.set(false, forKey: "SkipSetupEnabled")
-        }
         // The tunnel address is not user-editable in Drift: detection always
         // uses the LocalDevVPN defaults, so clear any override an earlier
         // build's editor may have stored.
@@ -26,7 +20,7 @@ struct DriftApp: App {
         // removed the step, and anything still parked there is a leftover
         // copy with nothing pointing at it. Reclaim it at launch — only the
         // container's copies; the device's own library is never involved.
-        let reclaimedMedia = AfcMediaBackup.reclaimResidualStore()
+        let reclaimedMedia = DriftEngine.reclaimResidualMediaStore()
         if reclaimedMedia > 0 {
             AppLog.write("AFC media: 已清理旧版拉进容器的媒体副本，回收 "
                 + ByteCountFormatter.string(fromByteCount: reclaimedMedia, countStyle: .file)

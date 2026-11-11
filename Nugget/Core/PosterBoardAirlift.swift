@@ -63,7 +63,7 @@ enum PosterBoardAirlift {
         pairingPath: String,
         log: @escaping @Sendable (String) -> Void,
         progress: @escaping (Double) -> Void
-    ) async throws {
+    ) async throws -> PosterStoreVerification {
         let packs = selection.tendies
         struct Source {
             let name: String
@@ -101,7 +101,22 @@ enum PosterBoardAirlift {
         // what makes a descriptor that does not show up diagnosable afterwards.
         log("Store version directory: \(structureVersion) (checked against the verified map for this OS)")
 
+        // Pre-write read (2.0.0): enumerate the device's store before
+        // writing, so the structure version and the target providers are
+        // checked against the device's own state rather than assumed.
+        let preItems = await PosterStoreCheck.enumerateStore(
+            pairingPath: pairingPath, containerPath: container,
+            structureVersion: structureVersion,
+            targetProviders: Set(sources.map(\.defaultExtension)), log: log)
+        let versionSource = PosterStoreCheck.versionSource(
+            structureVersion: structureVersion, preItems: preItems)
+        log(versionSource)
+        let providersSeen = Set((preItems ?? []).map(\.extension))
+
         var injected = 0
+        /// What actually landed, as (provider, descriptor id) — the
+        /// post-write enumeration is checked against exactly this set.
+        var written: [(extensionID: String, uuid: String)] = []
 
         // Progress is counted per descriptor, not per pack. A pack is a loop over
         // its descriptors, and each of those opens its own tunnel and syncs its
@@ -143,7 +158,7 @@ enum PosterBoardAirlift {
                                                 log: log)
                 guard !descriptors.isEmpty else {
                     throw GoldenNuggetError("在 \(source.name) 中没有找到壁纸描述文件。"
-                        + "对于交付容器文件的模板，需要走「恢复式」。"
+                        + "对于交付容器文件的模板，需要走「恢复刷」。"
                         + DriftRestoreGate.unavailableSuffix)
                 }
                 log("  \(descriptors.count) descriptor(s)")
@@ -157,11 +172,12 @@ enum PosterBoardAirlift {
                     // values have to be rewritten together or PosterBoard indexes a
                     // wallpaper it cannot find.
 
-                    let currentExtension = descriptor.extensionID == PosterBoardPosterType.collections.extensionBundleID
-                        ? "com.apple.Posters.CollectionsPosterApp" : descriptor.extensionID
-                    let parent = container + "Library/Application Support/"
-                        + PosterBoard.storeDirectoryName + "/\(structureVersion)/Extensions/"
-                        + currentExtension + "/descriptors"
+                    // Destination from the descriptor's own extension ID,
+                    // via the one shared constructor (铁律 1) — 1.3.0 renamed
+                    // Collections to a store folder the device does not have.
+                    let parent = PosterBoard.descriptorsParentPath(
+                        container: container, structureVersion: structureVersion,
+                        extensionID: descriptor.extensionID)
                     do {
                         try randomizeIdentifiers(in: descriptor.url, numericID: numericID,
                                                  extensionID: descriptor.extensionID)
@@ -174,8 +190,9 @@ enum PosterBoardAirlift {
                             destName: target
                         )
                         injected += 1
+                        written.append((extensionID: descriptor.extensionID, uuid: target))
                         done += 1
-                        log("  ✅ \(position + 1)/\(descriptors.count) → \(currentExtension)")
+                        log("  ✅ \(position + 1)/\(descriptors.count) → \(descriptor.extensionID)")
                         progress(overall(done))
                     } catch {
                         // A stale cached container is the likeliest cause and the one
@@ -198,6 +215,16 @@ enum PosterBoardAirlift {
                 + "为下一次尝试清除。")
         }
 
+        // Post-write read (2.0.0): enumerate the store itself before
+        // claiming anything about display.
+        let verification = await PosterStoreCheck.verify(
+            pairingPath: pairingPath, containerPath: container,
+            structureVersion: structureVersion,
+            structureVersionSource: versionSource,
+            providersSeen: providersSeen,
+            expected: Set(written.map { "\($0.extensionID)/\($0.uuid)" }),
+            log: log)
+
         log("Respring so PosterBoard re-reads the store…")
         // The injections are the queue, so the bar is full before the respring;
         // the line below is what the operator is actually waiting on, and a bar
@@ -207,6 +234,7 @@ enum PosterBoardAirlift {
         try await Airlift.respring()
         progress(100)
         log("Injected \(injected) descriptor(s).")
+        return verification
     }
 
     // MARK: - Descriptor discovery

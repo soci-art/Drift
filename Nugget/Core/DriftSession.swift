@@ -49,7 +49,7 @@ final class DriftSession: ObservableObject {
     /// Wire the engine's log into the run log, restore the pairing record and
     /// start the core. Idempotent: safe to call from every appearance.
     func bootstrap() {
-        GoldenNuggetEngine.shared.onLog = { line in RunLog.shared.append(line) }
+        DriftEngine.shared.onLog = { line in RunLog.shared.append(line) }
         guard !didBootstrap else { return }
         didBootstrap = true
         let autoImportDisabled = UserDefaults.standard.bool(forKey: PairingRecord.Key.autoImportDisabled)
@@ -82,7 +82,7 @@ final class DriftSession: ObservableObject {
         for (source, rawOpt) in candidates {
             guard let raw = rawOpt?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { continue }
             guard PairingRecord.usable(raw) else {
-                GoldenNuggetEngine.shared.log("pairing record rejected (\(source)): \(PairingRecord.sourceLabel(raw))")
+                DriftEngine.shared.log("pairing record rejected (\(source)): \(PairingRecord.sourceLabel(raw))")
                 continue
             }
             let onDisk = (try? String(contentsOf: dest, encoding: .utf8))?
@@ -90,9 +90,9 @@ final class DriftSession: ObservableObject {
             if onDisk != raw {
                 do {
                     try raw.write(to: dest, atomically: true, encoding: .utf8)
-                    GoldenNuggetEngine.shared.log("pairing record re-imported from \(source) into \(dest.lastPathComponent) (\(PairingRecord.sourceLabel(raw)))")
+                    DriftEngine.shared.log("pairing record re-imported from \(source) into \(dest.lastPathComponent) (\(PairingRecord.sourceLabel(raw)))")
                 } catch {
-                    GoldenNuggetEngine.shared.log("pairing record found (\(source)) but could not be written to Documents: \(error.localizedDescription)")
+                    DriftEngine.shared.log("pairing record found (\(source)) but could not be written to Documents: \(error.localizedDescription)")
                 }
             }
             pairingRaw = raw
@@ -112,7 +112,7 @@ final class DriftSession: ObservableObject {
         UserDefaults.standard.set(false, forKey: PairingRecord.Key.autoImportDisabled)
         pairingRaw = record
         errorText = nil
-        GoldenNuggetEngine.shared.log("pairing file imported: \(PairingRecord.sourceLabel(record)) "
+        DriftEngine.shared.log("pairing file imported: \(PairingRecord.sourceLabel(record)) "
             + "→ \(AppPaths.pairingFile.lastPathComponent), \(record.count) bytes, read back OK")
         startMinimuxer()
         Task { await refreshIdentity() }
@@ -127,7 +127,7 @@ final class DriftSession: ObservableObject {
         UserDefaults.standard.removeObject(forKey: PairingRecord.Key.stored)
         UserDefaults.standard.set(true, forKey: PairingRecord.Key.autoImportDisabled)
         RunLog.shared.clear()
-        GoldenNuggetEngine.shared.log("pairing reset: record cleared from memory and storage; "
+        DriftEngine.shared.log("pairing reset: record cleared from memory and storage; "
             + "\(AppPaths.pairingFile.lastPathComponent) kept on disk, automatic import "
             + "disabled until the next import")
     }
@@ -154,7 +154,7 @@ final class DriftSession: ObservableObject {
     /// "opened LocalDevVPN after Drift" recovers on its own.
     func ensureCoreStarted() {
         guard paired, !coreReady else { return }
-        GoldenNuggetEngine.shared.log("tunnel is ready and the core is not — starting minimuxer now")
+        DriftEngine.shared.log("tunnel is ready and the core is not — starting minimuxer now")
         startMinimuxer()
     }
 
@@ -190,7 +190,7 @@ final class DriftSession: ObservableObject {
         guard !running else { return }
         guard !UserDefaults.standard.bool(forKey: PairingRecord.Key.autoImportDisabled) else { return }
         guard let disk = PairingRecord.onDisk(), disk != pairingRaw else { return }
-        GoldenNuggetEngine.shared.log("pairing record noticed on disk — adopting it "
+        DriftEngine.shared.log("pairing record noticed on disk — adopting it "
             + "(\(PairingRecord.sourceLabel(disk)))")
         adoptPairingFromDisk()
     }
@@ -202,7 +202,7 @@ final class DriftSession: ObservableObject {
         Self.startLock.lock()
         if Self.startInFlight {
             Self.startLock.unlock()
-            GoldenNuggetEngine.shared.log("minimuxer start already in progress — ignoring this request")
+            DriftEngine.shared.log("minimuxer start already in progress — ignoring this request")
             return
         }
         Self.startInFlight = true
@@ -218,7 +218,7 @@ final class DriftSession: ObservableObject {
             // Probe the tunnel first so the RSD handshake can reach the
             // device before the core starts.
             let tunnelStage = StageTimer("tunnel probe")
-            guard Tunnel.waitForTunnel(log: { line in GoldenNuggetEngine.shared.log(line) }) else {
+            guard Tunnel.waitForTunnel(log: { line in DriftEngine.shared.log(line) }) else {
                 tunnelStage.done("FAILED")
                 DispatchQueue.main.async {
                     DriftSession.shared.errorText = "隧道未就绪：\(Tunnel.peerIP):\(Tunnel.servicePort) 不可达。\n\n\(Tunnel.requirements)"
@@ -231,7 +231,7 @@ final class DriftSession: ObservableObject {
                     let minimuxer = Minimuxer.shared()
                     // File logging has to be enabled before `setLogging`:
                     // that call snapshots the flag when it builds the sink.
-                    GoldenNuggetEngine.shared.enableRustFileLogging()
+                    DriftEngine.shared.enableRustFileLogging()
                     let core = minimuxer.core
                     try await core.setLogging(true)
                     try await core.setDeviceProbeTimeout(3000)
@@ -257,9 +257,9 @@ final class DriftSession: ObservableObject {
                     // key rule would misread the valid .rppairing record an
                     // iOS 17+ device uses); start() gives the real verdict.
                     if let keys = PairingRecord.topLevelKeys(pairingRaw) {
-                        GoldenNuggetEngine.shared.log("pairing file top-level keys: \(keys.isEmpty ? "(empty)" : keys.sorted().joined(separator: ", "))")
+                        DriftEngine.shared.log("pairing file top-level keys: \(keys.isEmpty ? "(empty)" : keys.sorted().joined(separator: ", "))")
                     } else {
-                        GoldenNuggetEngine.shared.log("pairing file: NOT a parseable plist")
+                        DriftEngine.shared.log("pairing file: NOT a parseable plist")
                     }
                     try await core.start(pairingFile: pairingRaw, mountPath: docs)
 
@@ -281,12 +281,12 @@ final class DriftSession: ObservableObject {
                         delay = min(delay * 2, 2_000_000_000)
                     }
                     readyStage.done("ready=\(isReady) after \(poll) poll(s)")
-                    GoldenNuggetEngine.shared.log("minimuxer started. ready=\(isReady)")
+                    DriftEngine.shared.log("minimuxer started. ready=\(isReady)")
                     if !isReady {
                         let reason = readinessFailure ?? "未知原因"
                         let tail = RustLog.tail()
-                        GoldenNuggetEngine.shared.log("minimuxer readiness failed: \(reason)")
-                        GoldenNuggetEngine.shared.log("minimuxer.log tail:\n\(tail)")
+                        DriftEngine.shared.log("minimuxer readiness failed: \(reason)")
+                        DriftEngine.shared.log("minimuxer.log tail:\n\(tail)")
                         await MainActor.run {
                             DriftSession.shared.errorText = "minimuxer 已启动但始终未能就绪。\n\n\(reason)\n\nminimuxer.log 的最后几行：\n\(tail)"
                         }
@@ -295,7 +295,7 @@ final class DriftSession: ObservableObject {
                     }
                 } catch {
                     let tail = RustLog.tail()
-                    GoldenNuggetEngine.shared.log("minimuxer.log tail:\n\(tail)")
+                    DriftEngine.shared.log("minimuxer.log tail:\n\(tail)")
                     await MainActor.run {
                         DriftSession.shared.errorText = "\(error.localizedDescription)\n\nminimuxer.log 的最后几行：\n\(tail)"
                     }
@@ -324,7 +324,7 @@ final class DriftSession: ObservableObject {
                 read = await DeviceIdentity.read()
             }
             if read != .unknown {
-                GoldenNuggetEngine.shared.log("device identity: lockdownd answered on attempt "
+                DriftEngine.shared.log("device identity: lockdownd answered on attempt "
                     + "\(attempt + 1), after the first read raced minimuxer's start")
             }
         }
@@ -333,7 +333,7 @@ final class DriftSession: ObservableObject {
 
     // MARK: - Wallpaper runs
 
-    func cancelRun() { GoldenNuggetEngine.shared.requestCancel() }
+    func cancelRun() { DriftEngine.shared.requestCancel() }
 
     /// Run one wallpaper apply in an already-decided mode and record it.
     /// Returns a one-line outcome for the page's status area, plus the actual
@@ -351,28 +351,42 @@ final class DriftSession: ObservableObject {
         // reset and video all arrive here, so this is the one place a
         // restore run cannot slip past.
         if mode == .backup && !DriftRestoreGate.isEnabled {
-            GoldenNuggetEngine.shared.log("run refused: restore route is suspended (feedback #30)")
+            DriftEngine.shared.log("run refused: restore route is suspended (feedback #30)")
             return (false, DriftRestoreGate.notice, nil)
         }
         PosterBoardApplyModeSettings.current = mode
+        let isResetSelection = selection.fullReset || !selection.resetModes.isEmpty
+        let methodLabel = isResetSelection ? "恢复刷 · 重置" : "免注销直刷"
         running = true
         RunLog.shared.clear()
         defer { running = false }
         do {
-            try await GoldenNuggetEngine.shared.applyTweaks(
-                selection: TweakSelection(),
-                posterBoard: selection,
-                statusBar: StatusBarSelection(),
-                templates: TemplateSelection(),
-                deviceVersion: identity.version,
-                isIPhone: identity.isIPhone,
-                deviceModel: identity.productType)
-            let effect = GoldenNuggetEngine.shared.lastPosterBoardEffect
+            // 2.0.0: the facade takes the wallpaper selection alone. The
+            // old call passed empty tweak / status-bar / template
+            // selections because the GoldenNugget engine built every
+            // feature into one pass; this app has no such surface, and
+            // the facade's transports are the wallpaper routes only.
+            try await DriftEngine.shared.applyWallpapers(
+                selection: selection,
+                deviceVersion: identity.version)
+            let effect = DriftEngine.shared.lastPosterBoardEffect
             lastEffect = effect
-            ApplyHistory.record(mode: mode.title, success: true,
+            // 2.0.0 history shape: the record names the user-facing
+            // method; the internal channel, the providers written and
+            // the store-verification grade ride along as their own fields.
+            let verification = DriftEngine.shared.lastVerification
+            let providers = verification.map {
+                Set($0.expected.map { String($0.split(separator: "/").first ?? "") })
+                    .sorted().joined(separator: "、")
+            }
+            ApplyHistory.record(mode: methodLabel,
+                                success: true,
                                 device: identity.describe,
                                 model: identity.productType, ios: identity.version,
-                                effect: effect?.historyLabel)
+                                effect: effect?.historyLabel,
+                                channel: mode == .backup ? nil : mode.shortTitle,
+                                provider: providers,
+                                verification: verification?.summary)
             // The reset flags are one-shot; the calling page clears its own
             // selection on success (this session only ever holds a copy).
             errorText = nil
@@ -383,22 +397,34 @@ final class DriftSession: ObservableObject {
                 }
                 return (true, "刷入完成，壁纸已写入", nil)
             case .direct:
+                if let verification, verification.allConfirmed {
+                    return (true, "刷入完成：已核验，\(verification.confirmed.count) 张描述符都在设备商店里，免注销生效", nil)
+                }
+                if let verification {
+                    return (true, "已写入、未确认显示：\(verification.summary)。文件已送达，但设备商店没有确认收录——先去壁纸库看一眼；没有的话把日志包发出来排查", nil)
+                }
                 return (true, "刷入完成，壁纸已刷新，免注销生效", nil)
             case .airlift:
+                if let verification, verification.allConfirmed {
+                    return (true, "刷入完成：已核验，\(verification.confirmed.count) 张描述符都在设备商店里，设备将注销生效", nil)
+                }
+                if let verification {
+                    return (true, "已写入、未确认显示：\(verification.summary)。文件已送达，但设备商店没有确认收录——先去壁纸库看一眼；没有的话把日志包发出来排查", nil)
+                }
                 return (true, "刷入完成，设备将注销生效", nil)
             case .backup:
                 return (true, "刷入完成，设备将重启生效", nil)
             }
         } catch {
             if let failure = error as? TransportFailure, failure.isCancellation {
-                GoldenNuggetEngine.shared.log("run cancelled")
-                ApplyHistory.record(mode: mode.title, success: false, error: "已取消",
+                DriftEngine.shared.log("run cancelled")
+                ApplyHistory.record(mode: methodLabel, success: false, error: "已取消",
                                     device: identity.describe,
                                     model: identity.productType, ios: identity.version)
                 return (false, "刷入已取消", nil)
             }
-            GoldenNuggetEngine.shared.log("posterboard apply failed: \(error.localizedDescription)")
-            ApplyHistory.record(mode: mode.title, success: false, error: error.localizedDescription,
+            DriftEngine.shared.log("posterboard apply failed: \(error.localizedDescription)")
+            ApplyHistory.record(mode: methodLabel, success: false, error: error.localizedDescription,
                                 device: identity.describe,
                                 model: identity.productType, ios: identity.version)
             return (false, error.localizedDescription, nil)
@@ -419,20 +445,48 @@ struct DriftModeAvailability: Identifiable, Equatable {
     var id: String { mode.rawValue }
 }
 
-/// Why a run will use the mode it uses, in one user-facing sentence.
+/// The user's method pick — the only choice the UI offers since 2.0.0.
+///
+/// There are exactly two user-facing methods: 免注销直刷 (which internally
+/// picks a write channel by system version and premises) and 恢复刷 (sealed:
+/// visible, never selectable, its runs do not exist). Everything finer —
+/// the in-process channel, the two tunnel channels — is an internal detail
+/// of 免注销直刷 and never appears as a pick.
+enum DriftMethodPick: String {
+    case auto
+    case directFlash
+    case restore
+
+    var label: String {
+        switch self {
+        case .auto: return "自动选择"
+        case .directFlash: return "免注销直刷"
+        case .restore: return "恢复刷"
+        }
+    }
+
+    /// Read a stored pick, mapping the pre-2.0.0 per-channel values onto
+    /// the method they belonged to.
+    static func fromStored(_ raw: String?) -> DriftMethodPick {
+        switch raw {
+        case "directFlash", "direct", "airlift", "worseQuery": return .directFlash
+        case "restore", "backup": return .restore
+        default: return .auto
+        }
+    }
+}
+
+/// Why a run will use the channel it uses, in one user-facing sentence.
 struct DriftModeJudgement {
+    /// The internal channel the run will use. Meaningless when blocked.
     var mode: PosterBoardApplyMode
     var reason: String
-    /// Set when the user's manual pick was overridden by a hard limit or by an
-    /// unavailable route falling back.
-    var overriddenPick: PosterBoardApplyMode?
-    /// Set when no run may start at all right now (the restore route is
-    /// suspended, and this selection can only travel it). `mode` is then a
+    /// Set when no run may start at all right now. `mode` is then a
     /// placeholder — callers must check `isBlocked` before running anything.
     var blockedReason: String?
-    /// One row per mode, with its own reason and expected effect.
+    /// One row per internal channel, with its own reason and expected effect.
     var options: [DriftModeAvailability] = []
-    /// How the chosen mode is expected to take effect.
+    /// How the chosen channel is expected to take effect.
     var expectedEffect: String = ""
     var isBlocked: Bool { blockedReason != nil }
 }
@@ -440,13 +494,10 @@ struct DriftModeJudgement {
 enum DriftJudge {
     static let manualKey = "DriftManualMode"
 
-    /// The user's manual pick, or nil for automatic.
-    static var manualPick: PosterBoardApplyMode? {
-        get {
-            guard let raw = UserDefaults.standard.string(forKey: manualKey) else { return nil }
-            return PosterBoardApplyMode(rawValue: raw)
-        }
-        set { UserDefaults.standard.set(newValue?.rawValue, forKey: manualKey) }
+    /// The user's method pick (`.auto` when nothing is stored).
+    static var manualPick: DriftMethodPick {
+        get { DriftMethodPick.fromStored(UserDefaults.standard.string(forKey: manualKey)) }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: manualKey) }
     }
 
     /// The two premise classes, kept apart on purpose.
@@ -497,7 +548,7 @@ enum DriftJudge {
 
         var tunnelMissing: String?
         if !PairingRecord.isInstalled {
-            tunnelMissing = "还没有配对文件（配对只是隧道方式的前提，本机直刷不需要）"
+            tunnelMissing = "还没有配对文件（配对只是隧道通道的前提，本机通道不需要）"
         } else if !tunnelReady {
             tunnelMissing = "隧道未连通（打开 LocalDevVPN 并连上 Wi-Fi）"
         } else if identity.version.isEmpty {
@@ -528,7 +579,7 @@ enum DriftJudge {
             airliftReady: airliftReady,
             airliftWhy: airliftWhy,
             restoreReady: DriftRestoreGate.isEnabled,
-            restoreWhy: DriftRestoreGate.isEnabled ? "可用：刷完重启" : "暂时停用")
+            restoreWhy: DriftRestoreGate.isEnabled ? "可用：刷完重启" : "已封存：暂时不可用")
     }
 
     /// How a mode makes the wallpaper visible, in the user's terms.
@@ -582,108 +633,95 @@ enum DriftJudge {
         ]
     }
 
-    /// The automatic order: the in-process route first (it asks the least of
-    /// the user), then the two tunnel routes, then restore where it is open.
+    /// The automatic channel order inside 免注销直刷： the in-process
+    /// channel first (it asks the least of the user), then the two tunnel
+    /// channels. In the overlap zone any ready channel is acceptable — the
+    /// first ready one wins. Restore is not in this order: it is a
+    /// separate method, and while it is sealed it is never substituted.
     private static func firstAvailable(_ p: Premises) -> PosterBoardApplyMode? {
-        for mode in [PosterBoardApplyMode.worseQuery, .direct, .airlift, .backup]
+        for mode in [PosterBoardApplyMode.worseQuery, .direct, .airlift]
         where p.isAvailable(mode) {
             return mode
         }
         return nil
     }
 
-    private static func automaticReason(_ mode: PosterBoardApplyMode) -> String {
+    private static func channelReason(_ mode: PosterBoardApplyMode, manual: Bool) -> String {
+        let head = manual ? "已手动选择免注销直刷，走" : "免注销直刷走"
         switch mode {
         case .worseQuery:
-            return "当前系统支持本机直刷：写入不用配对、不用隧道；生效方式写完再判定"
+            return head + "本机通道：写入不用配对、不用隧道；生效方式写完再判定"
         case .direct:
-            return "当前系统支持直刷免注销：走配对隧道写入，只重启 PosterBoard，不注销"
+            return head + "隧道通道：走配对隧道写入，只重启 PosterBoard，不注销"
         case .airlift:
-            return "当前系统支持 AirLift 直刷：刷完只注销不重启"
+            return head + "隧道通道（注销生效）：刷完只注销不重启"
         case .backup:
-            return "当前系统没有可用的直刷方式，用恢复式，刷完会重启"
+            return "恢复刷，刷完会重启"
         }
     }
 
-    private static func manualReason(_ mode: PosterBoardApplyMode) -> String {
-        switch mode {
-        case .worseQuery:
-            return "已手动选择本机直刷：写入不用配对或隧道，生效方式写完再判定"
-        case .direct:
-            return "已手动选择直刷免注销：走配对隧道写入，只重启 PosterBoard，不注销"
-        case .airlift:
-            return "已手动选择 AirLift 直刷：刷完只注销不重启"
-        case .backup:
-            return "已手动选择恢复式，刷完会重启"
-        }
-    }
-
-    /// Decide the delivery mode for a selection.
+    /// Decide the delivery channel for a selection.
     ///
-    /// Hard limits come first (video, store reset, store-database packs), then
-    /// the manual pick, then the automatic order. An unavailable manual pick
-    /// falls back through the **same full order** as an automatic run — the old
-    /// asymmetric fallbacks (a direct pick trying only AirLift, an AirLift pick
-    /// trying only the in-process route) are gone — and the note says why the
-    /// pick was dropped and what replaced it.
+    /// The user's pick is a *method* （免注销直刷 / 恢复刷）, never a channel.
+    /// Hard limits come first (video, store reset, store-database packs —
+    /// all restore-only, hence blocked while 恢复刷 is sealed), then the
+    /// sealed-restore pick, then the channel order inside 免注销直刷.
     ///
     /// - Parameter tunnelReady: whether the loopback tunnel currently carries
     ///   traffic. The tunnel premise needs it, so the card must pass it on every
     ///   redraw; it defaults to false for callers that only need a static answer.
     static func judge(identity: DeviceIdentity, selection: PosterBoardSelection,
-                      pick: PosterBoardApplyMode?,
+                      pick: DriftMethodPick,
                       tunnelReady: Bool = false) -> DriftModeJudgement {
         let p = premises(identity: identity, tunnelReady: tunnelReady)
         let rows = optionRows(p, identity: identity)
 
-        func judged(_ mode: PosterBoardApplyMode, _ reason: String,
-                    overriding: PosterBoardApplyMode? = nil) -> DriftModeJudgement {
-            DriftModeJudgement(mode: mode, reason: reason, overriddenPick: overriding,
+        func judged(_ mode: PosterBoardApplyMode, _ reason: String) -> DriftModeJudgement {
+            DriftModeJudgement(mode: mode, reason: reason,
                                options: rows, expectedEffect: expectedEffect(for: mode))
         }
-        func blocked(_ reason: String) -> DriftModeJudgement {
-            DriftModeJudgement(mode: .backup, reason: reason, overriddenPick: nil,
-                               blockedReason: DriftRestoreGate.notice,
+        func blocked(_ reason: String, notice: String) -> DriftModeJudgement {
+            DriftModeJudgement(mode: .backup, reason: reason,
+                               blockedReason: notice,
                                options: rows,
                                expectedEffect: expectedEffect(for: .backup))
         }
+        /// Blocked because the selection can only travel the sealed method.
+        func sealedBlocked(_ reason: String) -> DriftModeJudgement {
+            blocked(reason, notice: DriftRestoreGate.notice)
+        }
 
-        // Hard limits: these leave only one route, and while it is suspended the
-        // answer is "cannot flash now" rather than a route the user may not use.
+        // The sealed method, picked explicitly: visible, never runs.
+        if pick == .restore {
+            return sealedBlocked("你选了恢复刷——恢复刷已封存，暂时刷不了。免注销直刷不受影响。")
+        }
+
+        // Hard limits: these leave only the restore method, and while it is
+        // sealed the answer is "cannot flash now" rather than a route the
+        // user may not use.
         if selection.video != nil {
             return p.restoreReady
-                ? judged(.backup, "视频壁纸只能用恢复式，刷完会重启",
-                         overriding: pick == nil || pick == .backup ? nil : pick)
-                : blocked("视频壁纸只能用恢复式，但恢复式暂时停用，现在刷不了")
+                ? judged(.backup, "视频壁纸只能用恢复刷，刷完会重启")
+                : sealedBlocked("视频壁纸只能用恢复刷，但恢复刷已封存，现在刷不了")
         }
         if selection.fullReset || !selection.resetModes.isEmpty {
             return p.restoreReady
-                ? judged(.backup, "重置壁纸商店只能用恢复式，刷完会重启",
-                         overriding: pick == nil || pick == .backup ? nil : pick)
-                : blocked("重置壁纸商店只能用恢复式，但恢复式暂时停用，现在做不了")
+                ? judged(.backup, "重置壁纸商店只能用恢复刷，刷完会重启")
+                : sealedBlocked("重置壁纸商店只能用恢复刷，但恢复刷已封存，现在做不了")
         }
         if selection.tendies.contains(where: \.isUnsafeContainer) {
             return p.restoreReady
-                ? judged(.backup, "包含商店数据库的壁纸包只能用恢复式，刷完会重启",
-                         overriding: pick == nil || pick == .backup ? nil : pick)
-                : blocked("包含商店数据库的壁纸包只能用恢复式，但恢复式暂时停用，现在刷不了")
+                ? judged(.backup, "包含商店数据库的壁纸包只能用恢复刷，刷完会重启")
+                : sealedBlocked("包含商店数据库的壁纸包只能用恢复刷，但恢复刷已封存，现在刷不了")
         }
 
-        if let pick {
-            if p.isAvailable(pick) {
-                return judged(pick, manualReason(pick))
-            }
-            if let fallback = firstAvailable(p) {
-                return judged(fallback,
-                              "\(pick.shortTitle) 在这里用不了（\(p.why(pick))），已改用\(fallback.shortTitle)",
-                              overriding: pick)
-            }
-            return blocked("\(pick.shortTitle) 在这里用不了（\(p.why(pick))），恢复式又在停用中，现在刷不了")
+        if let channel = firstAvailable(p) {
+            return judged(channel, channelReason(channel, manual: pick == .directFlash))
         }
-
-        if let fallback = firstAvailable(p) {
-            return judged(fallback, automaticReason(fallback))
-        }
-        return blocked("当前系统没有可用的刷入方式，恢复式又在停用中，现在刷不了")
+        let whys = [PosterBoardApplyMode.worseQuery, .direct, .airlift]
+            .map { "\($0.shortTitle)：\(p.why($0))" }
+            .joined(separator: "；")
+        return blocked("免注销直刷现在没有可用通道（\(whys)），恢复刷又已封存，现在刷不了",
+                       notice: "免注销直刷现在没有可用通道：\(whys)。")
     }
 }

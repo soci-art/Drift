@@ -58,6 +58,23 @@ enum PosterBoard {
     static let storeRoot = "/Library/Application Support/\(storeDirectoryName)"
     static let fallbackStructureVersion = 61
 
+    /// The one place a descriptor's destination directory is built
+    /// (2.0.0, 铁律 1): the parent directory a tunnel write delivers a
+    /// descriptor folder into, derived **only** from the descriptor's own
+    /// self-reported extension ID — never a renamed or translated
+    /// substitute. 1.3.0's three write routes each carried their own copy
+    /// of a rename that sent Collections descriptors to
+    /// `com.apple.Posters.CollectionsPosterApp`, a folder the device's
+    /// store does not contain, so nothing written there was ever picked
+    /// up. Every route now calls this constructor; if a destination ever
+    /// has to change, it changes here and only here.
+    static func descriptorsParentPath(container: String,
+                                      structureVersion: Int,
+                                      extensionID: String) -> String {
+        container + "Library/Application Support/" + storeDirectoryName
+            + "/\(structureVersion)/Extensions/\(extensionID)/descriptors"
+    }
+
     /// The structure version a **tunnel write** may use, or a refusal.
     ///
     /// The direct and AirLift routes both used to pass
@@ -1114,5 +1131,120 @@ enum PosterBoardPlist {
         plist["family"] = "Marble"
         plist["name"] = "Lavender"
         return try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+    }
+}
+
+// MARK: - Store verification (2.0.0)
+
+/// The graded outcome of checking a tunnel write against the device's own
+/// store enumeration (2.0.0, 铁律 2/3): state is read back, not guessed
+/// from the write's own staging confirmations — which is exactly the gap
+/// that let 1.3.0 call four undisplayed writes successes.
+///
+/// Success wording is graded from this value: only `allConfirmed` may be
+/// reported as 完成； anything else is reported as 已写入、未确认显示.
+struct PosterStoreVerification {
+    /// The structure version the write used.
+    let structureVersion: Int
+    /// Where that version came from, in words — recorded because the
+    /// tunnel FFI cannot read the version off the device.
+    let structureVersionSource: String
+    /// Provider folders seen in the pre-write enumeration.
+    let providersSeen: Set<String>
+    /// Descriptors this run wrote, as "extension/uuid".
+    let expected: Set<String>
+    /// The subset of `expected` the post-write enumeration found in store.
+    let confirmed: Set<String>
+    /// Whether the post-write enumeration ran at all.
+    let enumeratedAfter: Bool
+
+    var allConfirmed: Bool {
+        enumeratedAfter && !expected.isEmpty && confirmed == expected
+    }
+
+    /// One line for the run outcome and the history record.
+    var summary: String {
+        if allConfirmed {
+            return "已核验：在册 \(confirmed.count)/\(expected.count)"
+        }
+        if enumeratedAfter {
+            return "已写入、未确认显示：在册 \(confirmed.count)/\(expected.count)"
+        }
+        return "已写入、未确认显示：写后枚举不可用"
+    }
+}
+
+/// Store enumeration checks for the tunnel transports, built on
+/// `Airlift.posterStoreList`. Both checks are best-effort reads: an
+/// enumeration failure never fails a write that already landed — it only
+/// lowers the grade of what may be claimed about it.
+enum PosterStoreCheck {
+    /// Enumerate the store once, logging what the read establishes: which
+    /// provider folders hold descriptors, and whether the structure
+    /// version in use is confirmed by device content. Returns the items,
+    /// or nil when the enumeration itself failed.
+    static func enumerateStore(pairingPath: String,
+                               containerPath: String,
+                               structureVersion: Int,
+                               targetProviders: Set<String>,
+                               log: @escaping @Sendable (String) -> Void) async -> [Airlift.PosterStoreItem]? {
+        do {
+            let items = try await Airlift.posterStoreList(
+                pairingPath: pairingPath, containerPath: containerPath,
+                structureVersion: structureVersion)
+            let seen = Set(items.map(\.extension))
+            log("写前核对：设备商店枚举到 \(items.count) 个描述符，provider 文件夹 \(seen.count) 个。")
+            for provider in targetProviders.sorted() where !seen.contains(provider) {
+                log("写前核对：枚举里没看到 \(provider) 的现有描述符——该 provider 可能尚无内容；"
+                    + "写入仍按描述符自报的地址进行，写后会再枚举核对。")
+            }
+            return items
+        } catch {
+            log("写前核对：商店枚举不可用（\(error.localizedDescription)），"
+                + "结构版本 \(structureVersion) 沿用已验证值，写后核对也会再试一次。")
+            return nil
+        }
+    }
+
+    /// Where the structure version came from, given the pre-write read.
+    static func versionSource(structureVersion: Int,
+                              preItems: [Airlift.PosterStoreItem]?) -> String {
+        preItems != nil
+            ? "结构版本 \(structureVersion)：写前枚举在该版本目录下读到了商店内容，按设备实况确认"
+            : "结构版本 \(structureVersion)：枚举不可用，沿用已验证值（隧道读不到设备目录）"
+    }
+
+    /// The post-write read: which of the descriptors this run wrote are
+    /// actually in the store now.
+    static func verify(pairingPath: String,
+                       containerPath: String,
+                       structureVersion: Int,
+                       structureVersionSource: String,
+                       providersSeen: Set<String>,
+                       expected: Set<String>,
+                       log: @escaping @Sendable (String) -> Void) async -> PosterStoreVerification {
+        do {
+            let items = try await Airlift.posterStoreList(
+                pairingPath: pairingPath, containerPath: containerPath,
+                structureVersion: structureVersion)
+            let inStore = Set(items.map { "\($0.extension)/\($0.uuid)" })
+            let confirmed = expected.intersection(inStore)
+            for missing in expected.subtracting(inStore).sorted() {
+                log("写后核验：\(missing) 不在设备商店枚举里——文件写了，但商店没有收录它。")
+            }
+            log("写后核验：在册 \(confirmed.count)/\(expected.count)。")
+            return PosterStoreVerification(
+                structureVersion: structureVersion,
+                structureVersionSource: structureVersionSource,
+                providersSeen: providersSeen,
+                expected: expected, confirmed: confirmed, enumeratedAfter: true)
+        } catch {
+            log("写后核验：枚举不可用（\(error.localizedDescription)），不能确认显示。")
+            return PosterStoreVerification(
+                structureVersion: structureVersion,
+                structureVersionSource: structureVersionSource,
+                providersSeen: providersSeen,
+                expected: expected, confirmed: [], enumeratedAfter: false)
+        }
     }
 }

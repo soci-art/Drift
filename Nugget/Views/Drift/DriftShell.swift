@@ -13,17 +13,6 @@ struct DriftShell: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Feedback #31: a research build announces itself on every
-            // tab, permanently — the banner is the visible half of the
-            // research channel's isolation (see DriftResearchBuild).
-            if DriftResearchBuild.isActive {
-                Text(DriftResearchBuild.bannerText)
-                    .font(.footnote.weight(.bold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .background(Color.red)
-            }
             TabView(selection: $tab) {
                 DriftHomeView(selection: $selection)
                     .tabItem { Label("壁纸", systemImage: "photo.on.rectangle.angled") }

@@ -23,8 +23,9 @@ struct DriftHomeView: View {
     @State private var confirmReset = false
 
     private var identity: DeviceIdentity { identityMonitor.current }
-    private var manualPick: PosterBoardApplyMode? {
-        manualPickRaw.flatMap(PosterBoardApplyMode.init(rawValue:))
+    /// The user's method pick (2.0.0: a method, never a channel).
+    private var manualPick: DriftMethodPick {
+        DriftMethodPick.fromStored(manualPickRaw)
     }
     /// The in-process route's premise: the app's own system only. It never
     /// looks at the device read, pairing or the tunnel.
@@ -33,19 +34,7 @@ struct DriftHomeView: View {
         WorseQueryEscape.isAvailable(deviceVersion: localVersion)
     }
     private var tunnelReady: Bool { tunnelMonitor.status == .ready }
-    private var directReady: Bool {
-        tunnelReady && PairingRecord.isInstalled
-            && PosterBoardDirect.isAvailable(deviceVersion: identity.version,
-                                             buildVersion: identity.buildVersion)
-    }
-    private var airliftReady: Bool {
-        tunnelReady && PairingRecord.isInstalled
-            && Airlift.isSupported(deviceVersion: identity.version,
-                                   buildVersion: identity.buildVersion)
-    }
-    private var manualLabel: String {
-        manualPick?.shortTitle ?? "自动选择"
-    }
+    private var manualLabel: String { manualPick.label }
     private var judgement: DriftModeJudgement {
         DriftJudge.judge(identity: identity, selection: selection, pick: manualPick,
                          tunnelReady: tunnelReady)
@@ -60,10 +49,10 @@ struct DriftHomeView: View {
     }
     private var headerSubtitle: String {
         if localReady {
-            return "本机直刷可用（iOS \(localVersion)）：现在就能刷，不用配对，也不用开隧道。"
+            return "本机通道可用（iOS \(localVersion)）：现在就能刷，不用配对，也不用开隧道。"
         }
         if !identity.version.isEmpty { return identity.describe }
-        return "本机直刷不可用；要用隧道方式，请导入配对文件并打开 LocalDevVPN。"
+        return "本机通道不可用；要走隧道通道，请导入配对文件并打开 LocalDevVPN。"
     }
 
     var body: some View {
@@ -136,7 +125,7 @@ struct DriftHomeView: View {
             // in-process route only needs the app's own version and a granted
             // App Group, so pairing and the tunnel must not sit in front of it.
             HStack(spacing: 8) {
-                DriftPill(text: localReady ? "本机直刷可用" : "本机直刷不可用",
+                DriftPill(text: localReady ? "本机通道可用" : "本机通道不可用",
                           tint: localReady ? .green : .orange)
                 DriftPill(text: "iOS \(localVersion)")
             }
@@ -148,7 +137,7 @@ struct DriftHomeView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             HStack(spacing: 8) {
-                DriftPill(text: "隧道方式前提", tint: .secondary)
+                DriftPill(text: "隧道通道前提", tint: .secondary)
                 DriftPill(text: session.paired ? "已配对" : "未配对",
                           tint: session.paired ? .green : .orange)
                 DriftPill(text: tunnelMonitor.status == .ready ? "隧道已连通"
@@ -163,7 +152,7 @@ struct DriftHomeView: View {
             }
             if !session.paired {
                 Button { importingPairing = true } label: {
-                    Label("导入配对文件（只用隧道方式时才需要）", systemImage: "link.badge.plus")
+                    Label("导入配对文件（只走隧道通道时才需要）", systemImage: "link.badge.plus")
                 }
                 .buttonStyle(.glass)
             }
@@ -179,38 +168,25 @@ struct DriftHomeView: View {
                 Text("本次刷入方式").font(.subheadline.weight(.semibold))
                 Spacer()
                 Menu {
-                    // A Picker inside the menu, not three bare Buttons: the
-                    // picker is what draws the native checkmark on the current
-                    // pick. With buttons the menu showed three identical rows
-                    // and no sign of which one was in force (Grace, 2026-11-09).
+                    // A Picker inside the menu, not bare Buttons: the
+                    // picker is what draws the native checkmark on the
+                    // current pick. Since 2.0.0 the pick is a *method* —
+                    // the only two methods are 免注销直刷 and 恢复刷， and
+                    // the sealed one is not in this menu at all: it has
+                    // its own greyed row under the card, whose tap shows
+                    // the sealing notice. Which channel 免注销直刷 uses
+                    // is decided by version and premises, not picked.
                     Picker("刷入方式", selection: $manualPickRaw) {
                         Text("自动选择").tag(nil as String?)
-                        // Every row is greyed on the same rule — the mode's own
-                        // premise — and the judgement card below carries the
-                        // reason. AirLift used to have no disabled state at all.
-                        Text("直刷免注销")
-                            .tag(PosterBoardApplyMode.direct.rawValue as String?)
-                            .disabled(!directReady)
-                        Text("本机直刷")
-                            .tag(PosterBoardApplyMode.worseQuery.rawValue as String?)
-                            .disabled(!localReady)
-                        Text("AirLift 直刷")
-                            .tag(PosterBoardApplyMode.airlift.rawValue as String?)
-                            .disabled(!airliftReady)
-                        // Feedback #30: while the restore gate is closed
-                        // the restore pick is visible but not selectable —
-                        // greyed, with the reason on the card below.
-                        Text("恢复式（暂时关闭）").tag(PosterBoardApplyMode.backup.rawValue as String?)
-                            .disabled(!DriftRestoreGate.isEnabled)
+                        Text("免注销直刷").tag(DriftMethodPick.directFlash.rawValue as String?)
                     }
                 } label: {
-                    // The control names the **pick**, not the outcome: it used
-                    // to render `judged.mode`, so with a hard limit in force
-                    // (no pairing → no identity → restore forced) the button
-                    // read 恢复式 no matter what was tapped, and the menu
-                    // looked dead (Grace, 2026-11-09). The effective mode
-                    // stays where it belongs — the reason line and the
-                    // override note below.
+                    // The control names the **pick**, not the outcome: it
+                    // used to render `judged.mode`, so with a hard limit
+                    // in force the button read 恢复式 no matter what was
+                    // tapped, and the menu looked dead (Grace, 2026-11-09).
+                    // The effective channel stays where it belongs — the
+                    // reason line below.
                     Label(manualLabel, systemImage: "chevron.up.chevron.down")
                         .font(.subheadline.weight(.medium))
                 }
@@ -240,13 +216,22 @@ struct DriftHomeView: View {
                 }
             }
             .padding(.top, 2)
+            // The sealed method's entry (2.0.0): visible, greyed, never
+            // selectable — tapping it explains the seal instead of
+            // selecting anything. The full notice lives in Settings.
             if !DriftRestoreGate.isEnabled {
-                Text("恢复式暂时停用：菜单里选不了、自动选择也不会选它。直刷不受影响。")
-                    .font(.caption).foregroundStyle(.orange)
-            }
-            if let overridden = judged.overriddenPick {
-                Text("你手动选的「\(overridden.shortTitle)」在这里用不了，已按上面的方式处理。")
-                    .font(.caption).foregroundStyle(.orange)
+                Button {
+                    statusLine = "恢复刷已封存：2026-11-10 一次这类刷入在重启后把设备恢复了出厂设置、数据全丢。查清并在备用机上验证「从设备拉到真备份」之前，恢复刷不开放；免注销直刷不受影响。"
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "lock.fill").font(.caption)
+                        Text("恢复刷（已封存）").font(.caption.weight(.medium))
+                        Spacer()
+                        Text("点此看说明").font(.caption2)
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -316,9 +301,9 @@ struct DriftHomeView: View {
                 .buttonStyle(.glass)
             }
             if !session.paired && judgement.mode == .worseQuery {
-                NativeNote("本机直刷在本机写入，不需要配对文件，也不用开隧道。写完按当时的配对/隧道/Wi-Fi 情况决定免注销还是只提示。")
+                NativeNote("免注销直刷走本机通道时在本机写入，不需要配对文件，也不用开隧道。写完按当时的配对/隧道/Wi-Fi 情况决定免注销还是只提示。")
             } else if !session.paired {
-                NativeNote("隧道方式（直刷免注销 / AirLift）需要先导入配对文件；本机直刷不需要，但签名要授予可用的 App Group。")
+                NativeNote("免注销直刷走隧道通道时需要先导入配对文件；走本机通道不需要，但签名要授予可用的 App Group。")
             } else if selection.tendies.isEmpty && !imports.isEmpty {
                 NativeNote("在上面的列表里点圆圈勾选要刷的包。")
             }
@@ -330,7 +315,7 @@ struct DriftHomeView: View {
     private var resetCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("重置壁纸商店").font(.subheadline.weight(.semibold))
-            Text("壁纸乱了、刷坏了想清掉时用。只能走恢复式，刷完会重启；和普通刷入不能同一次进行。")
+            Text("壁纸乱了、刷坏了想清掉时用。只能走恢复刷，刷完会重启；恢复刷已封存期间做不了。和普通刷入不能同一次进行。")
                 .font(.subheadline).foregroundStyle(.secondary)
             if !DriftRestoreGate.isEnabled {
                 NativeNote(DriftRestoreGate.notice)
@@ -354,7 +339,7 @@ struct DriftHomeView: View {
                     Button("重置并重启", role: .destructive) { runReset() }
                     Button("取消", role: .cancel) {}
                 } message: {
-                    Text("将通过恢复式写入重置，设备会重启。已导入的壁纸包不会被删。")
+                    Text("将通过恢复刷写入重置，设备会重启。已导入的壁纸包不会被删。")
                 }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -726,7 +711,7 @@ struct DriftPackDetail: View {
                         .driftCard()
                     }
                     if current.isUnsafeContainer {
-                        NativeSafetyNote("这个包带着壁纸商店的数据库，属于「容器包」：刷入可能弄乱现有壁纸索引，只能用恢复式刷入。" + DriftRestoreGate.notice + "这类包只能走恢复式，目前刷不了。")
+                        NativeSafetyNote("这个包带着壁纸商店的数据库，属于「容器包」：刷入可能弄乱现有壁纸索引，只能用恢复刷刷入。" + DriftRestoreGate.notice + "这类包只能走恢复刷；恢复刷已封存，目前刷不了。")
                     }
                     Button(role: .destructive) {
                         PosterBoardPreview.invalidate(for: current)

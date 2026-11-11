@@ -80,14 +80,14 @@ enum Airlift {
 
     /// The reason to refuse, for the UI.
     static func unsupportedReason(deviceVersion: String, buildVersion: String = "") -> String {
-        if deviceVersion.isEmpty { return "Connect the device to check AirLift support." }
+        if deviceVersion.isEmpty { return "还没有读到设备系统版本，暂时判断不了这个通道能不能用。" }
         if AirliftAvailability.isHidden(deviceVersion: deviceVersion, buildVersion: buildVersion) {
-            return "AirLift is unavailable on iOS 27.2 Beta 3 and newer. "
-                + "For iOS 27.2, a verified Beta 1 or Beta 2 build is required."
+            return "隧道写入（注销生效）在 iOS 27.2 测试版 3 起不可用；"
+                + "iOS 27.2 只支持已验证的测试版 1 / 2 构建。"
         }
         return isSupported(deviceVersion: deviceVersion, buildVersion: buildVersion) ? ""
-            : "AirLift needs iOS \(minimumVersion) or newer — this device reports "
-            + (deviceVersion.isEmpty ? "no version" : "iOS \(deviceVersion)") + "."
+            : "隧道写入（注销生效）需要 iOS \(minimumVersion) 或更高版本——这台设备读到的是 "
+            + (deviceVersion.isEmpty ? "没有版本号" : "iOS \(deviceVersion)") + "。"
     }
 
     /// Refuse unless the device is new enough, re-reading it first.
@@ -98,7 +98,9 @@ enum Airlift {
     /// that is up to thirty seconds stale. Falls back to the polled value when
     /// lockdown does not answer, so a slow-but-alive tunnel still gets through.
     private static func requireSupported() async throws {
-        try await HotLoadService.requireAllowed()
+        // 2.0.0: the hot-load tweak-policy gate that used to run here is
+        // gone with the tweak system — this check is now purely the
+        // version window below.
         var identity = await DeviceIdentity.read()
         if identity.version.isEmpty {
             identity = await MainActor.run { DeviceIdentityMonitor.shared.current }
@@ -372,6 +374,79 @@ enum Airlift {
             guard rc == 0 else { throw GoldenNuggetError("无法解包 \(archivePath)（代码 \(rc)）。") }
         }
         return destDir
+    }
+
+    // MARK: - Poster store enumeration (poster_store.rs, transplanted in stage 1)
+
+    /// One descriptor in the device store, as `al_poster_store_list` reports
+    /// it: the provider folder it lives under and its descriptor (folder) id.
+    struct PosterStoreItem: Decodable {
+        let `extension`: String
+        let uuid: String
+        let identifier: String?
+        let packageName: String?
+        let name: String?
+    }
+
+    private struct PosterStoreListReply: Decodable {
+        let items: [PosterStoreItem]
+    }
+
+    /// Enumerate the descriptors actually present in the device's PosterBoard
+    /// store — the read side of the chassis rule that store state is read,
+    /// not guessed. Scoped by the Rust side to the CollectionsPoster
+    /// providers; it goes over DVT directory listings on the pairing tunnel.
+    static func posterStoreList(pairingPath: String,
+                                containerPath: String,
+                                structureVersion: Int) async throws -> [PosterStoreItem] {
+        try await offMainActor {
+            var outJSON: UnsafeMutablePointer<CChar>?
+            var outStatus: UnsafeMutablePointer<CChar>?
+            var outError: UnsafeMutablePointer<CChar>?
+            let rc = al_poster_store_list(pairingPath, containerPath, Int64(structureVersion),
+                                          logTrampoline, nil, &outJSON, &outStatus, &outError)
+            let json = take(outJSON)
+            _ = take(outStatus)
+            let message = take(outError)
+            guard rc == 0 else {
+                throw GoldenNuggetError(message ?? "商店枚举返回了 \(rc)。")
+            }
+            guard let json,
+                  let reply = try? JSONDecoder().decode(PosterStoreListReply.self,
+                                                        from: Data(json.utf8)) else {
+                throw GoldenNuggetError("商店枚举的返回无法解析。")
+            }
+            return reply.items
+        }
+    }
+
+    /// Remove descriptors from the device store by id
+    /// (`al_poster_store_delete`). The Rust side moves them out through an
+    /// AirTraffic/Books sync into a quarantined copy under the container's
+    /// Media directory and re-audits their absence on a fresh connection.
+    /// Returns the per-target status JSON. No 2.0.0 surface calls this yet —
+    /// it is the store-management primitive an enumeration-based reset will
+    /// be built on.
+    @discardableResult
+    static func posterStoreDelete(pairingPath: String,
+                                  containerPath: String,
+                                  structureVersion: Int,
+                                  descriptorIDs: [String]) async throws -> String {
+        try await offMainActor {
+            var outJSON: UnsafeMutablePointer<CChar>?
+            var outStatus: UnsafeMutablePointer<CChar>?
+            var outError: UnsafeMutablePointer<CChar>?
+            let rc = al_poster_store_delete(pairingPath, containerPath, Int64(structureVersion),
+                                            descriptorIDs.joined(separator: ","),
+                                            logTrampoline, nil, &outJSON, &outStatus, &outError)
+            let json = take(outJSON)
+            _ = take(outStatus)
+            let message = take(outError)
+            guard rc == 0 else {
+                throw GoldenNuggetError(message ?? "商店删除返回了 \(rc)。")
+            }
+            return json ?? ""
+        }
     }
 
     // MARK: - Plumbing

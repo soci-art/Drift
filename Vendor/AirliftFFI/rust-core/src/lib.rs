@@ -15,6 +15,7 @@ pub mod grappa;
 pub mod logging;
 pub mod pairing;
 pub mod poster_refresh;
+pub mod poster_store;
 
 // Re-export idevice-ffi's symbols into our staticlib (tunnel_create_rppairing,
 // afc_*, rsd_*, adapter_*, etc.) so Swift can call them directly.
@@ -457,6 +458,103 @@ pub unsafe extern "C" fn al_poster_refresh(
             }
             if !out_error.is_null() {
                 *out_error = ffi_util::cstr(format!("Rust panic in al_poster_refresh: {e:?}"));
+            }
+            1
+        }
+    }
+}
+
+/// PosterBoard data-store enumeration (local addition, see
+/// src/poster_store.rs): lists the descriptors actually present in the
+/// device's PRBPosterExtensionDataStore via AFC over the RSD tunnel.
+/// Returns 0 on success (out_status == "ok") with the item list as JSON
+/// in out_json ({"items":[{extension,uuid,identifier,packageName,name}]}),
+/// 1 otherwise with a machine-readable out_status ("connectFailed" /
+/// "serviceUnavailable" / "stageFailed" / "listFailed" / "afcFailed") and
+/// a human-readable out_error. Blocks; run off the main thread.
+#[no_mangle]
+pub unsafe extern "C" fn al_poster_store_list(
+    pairing_path: *const c_char,
+    container_path: *const c_char,
+    struct_version: i64,
+    log_cb: exploit::ALLogCallback,
+    ctx: *mut c_void,
+    out_json: *mut *mut c_char,
+    out_status: *mut *mut c_char,
+    out_error: *mut *mut c_char,
+) -> i32 {
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        poster_store::poster_store_list(
+            pairing_path,
+            container_path,
+            struct_version,
+            log_cb,
+            ctx,
+            out_json,
+            out_status,
+            out_error,
+        )
+    }));
+    match res {
+        Ok(rc) => rc,
+        Err(e) => {
+            if !out_status.is_null() {
+                *out_status = ffi_util::cstr("connectFailed");
+            }
+            if !out_error.is_null() {
+                *out_error = ffi_util::cstr(format!("Rust panic in al_poster_store_list: {e:?}"));
+            }
+            1
+        }
+    }
+}
+
+/// PosterBoard data-store cleanup (local addition, see
+/// src/poster_store.rs): deletes the given descriptors ("<extension-id>/
+/// <descriptor-uuid>", comma-separated in targets_csv) from the device's
+/// PRBPosterExtensionDataStore. Each descriptor is moved out of the
+/// store by an AirTraffic/Books sync into a Media quarantine copy
+/// (Walllive-verified mechanism) and re-audited absent on a fresh
+/// connection. Run #115: listing and deletion are scoped to the two
+/// CollectionsPoster providers; out-of-scope delete targets are
+/// refused in the driver before any device mutation. Returns 0 when
+/// the operation ran (out_status "ok", or "partial" when some targets
+/// failed) with per-item results as JSON in out_json
+/// ({"deleted":N,"failed":M,"results":[{extension,uuid,ok}]}), 1 when the
+/// operation itself could not run. Blocks; run off the main thread.
+#[no_mangle]
+pub unsafe extern "C" fn al_poster_store_delete(
+    pairing_path: *const c_char,
+    container_path: *const c_char,
+    struct_version: i64,
+    targets_csv: *const c_char,
+    log_cb: exploit::ALLogCallback,
+    ctx: *mut c_void,
+    out_json: *mut *mut c_char,
+    out_status: *mut *mut c_char,
+    out_error: *mut *mut c_char,
+) -> i32 {
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        poster_store::poster_store_delete(
+            pairing_path,
+            container_path,
+            struct_version,
+            targets_csv,
+            log_cb,
+            ctx,
+            out_json,
+            out_status,
+            out_error,
+        )
+    }));
+    match res {
+        Ok(rc) => rc,
+        Err(e) => {
+            if !out_status.is_null() {
+                *out_status = ffi_util::cstr("connectFailed");
+            }
+            if !out_error.is_null() {
+                *out_error = ffi_util::cstr(format!("Rust panic in al_poster_store_delete: {e:?}"));
             }
             1
         }

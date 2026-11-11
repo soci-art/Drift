@@ -87,6 +87,8 @@ enum PosterBoardDirect {
     // MARK: - Apply
 
     /// Install the selected packs and templates, then refresh PosterBoard.
+    /// Returns the store verification for the write (2.0.0): the caller
+    /// grades its success wording from it.
     static func apply(
         selection: PosterBoardSelection,
         templates: [TemplateFile] = [],
@@ -96,7 +98,7 @@ enum PosterBoardDirect {
         pairingPath: String,
         log: @escaping @Sendable (String) -> Void,
         progress: @escaping (Double) -> Void
-    ) async throws {
+    ) async throws -> PosterStoreVerification {
         // The engine checks this too; repeating it here means a caller cannot
         // start a transaction the route knows is closed for this build.
         guard isAvailable(deviceVersion: deviceVersion, buildVersion: buildVersion) else {
@@ -140,6 +142,18 @@ enum PosterBoardDirect {
         log("PosterBoard container: \(container)")
         log("Store version directory: \(structureVersion)")
 
+        // Pre-write read (2.0.0): enumerate the device's store before
+        // writing, so the structure version and the target providers are
+        // checked against the device's own state rather than assumed.
+        let preItems = await PosterStoreCheck.enumerateStore(
+            pairingPath: pairingPath, containerPath: container,
+            structureVersion: structureVersion,
+            targetProviders: Set(sources.map(\.defaultExtension)), log: log)
+        let versionSource = PosterStoreCheck.versionSource(
+            structureVersion: structureVersion, preItems: preItems)
+        log(versionSource)
+        let providersSeen = Set((preItems ?? []).map(\.extension))
+
         // One staged preferences file, reused by every transaction. Its name
         // is the file name the system expects at both targets.
         let prefStage = FileManager.default.temporaryDirectory
@@ -157,9 +171,10 @@ enum PosterBoardDirect {
         }
         progress(overall(done))
 
-        let origin = container + "Library/Application Support/"
-            + PosterBoard.storeDirectoryName + "/\(structureVersion)/Extensions/"
         var injected = 0
+        /// What actually landed, as (provider, descriptor id) — the
+        /// post-write enumeration is checked against exactly this set.
+        var written: [(extensionID: String, uuid: String)] = []
 
         for (index, source) in sources.enumerated() {
             log("[\(index + 1)/\(sources.count)] \(source.name)")
@@ -175,7 +190,7 @@ enum PosterBoardDirect {
                     in: stage, defaultExtension: source.defaultExtension, log: log)
                 guard !descriptors.isEmpty else {
                     throw GoldenNuggetError("在 \(source.name) 中没有找到壁纸描述文件。"
-                        + "对于交付容器文件的模板，需要走「恢复式」。"
+                        + "对于交付容器文件的模板，需要走「恢复刷」。"
                         + DriftRestoreGate.unavailableSuffix)
                 }
                 log("  \(descriptors.count) descriptor(s)")
@@ -183,9 +198,12 @@ enum PosterBoardDirect {
                 for (position, descriptor) in descriptors.enumerated() {
                     let target = UUID().uuidString.uppercased()
                     let numericID = Int.random(in: PosterBoard.identifierRange)
-                    let currentExtension = descriptor.extensionID == PosterBoardPosterType.collections.extensionBundleID
-                        ? "com.apple.Posters.CollectionsPosterApp" : descriptor.extensionID
-                    let parent = origin + currentExtension + "/descriptors"
+                    // Destination from the descriptor's own extension ID,
+                    // via the one shared constructor (铁律 1) — 1.3.0 renamed
+                    // Collections to a store folder the device does not have.
+                    let parent = PosterBoard.descriptorsParentPath(
+                        container: container, structureVersion: structureVersion,
+                        extensionID: descriptor.extensionID)
                     do {
                         try PosterBoardAirlift.randomizeIdentifiers(
                             in: descriptor.url, numericID: numericID,
@@ -199,8 +217,9 @@ enum PosterBoardDirect {
                             preferenceTargetA: container + "Library/Preferences",
                             preferenceTargetB: mobilePreferences)
                         injected += 1
+                        written.append((extensionID: descriptor.extensionID, uuid: target))
                         done += 1
-                        log("  ✅ \(position + 1)/\(descriptors.count) → \(currentExtension)")
+                        log("  ✅ \(position + 1)/\(descriptors.count) → \(descriptor.extensionID)")
                         progress(overall(done))
                     } catch {
                         PosterBoardAirlift.cachedContainer = ""
@@ -218,6 +237,17 @@ enum PosterBoardDirect {
                 + "并已为下一次尝试清除。")
         }
 
+        // Post-write read (2.0.0): the write's own confirmations cover the
+        // staging area, not the store — enumerate the store itself before
+        // claiming anything about display.
+        let verification = await PosterStoreCheck.verify(
+            pairingPath: pairingPath, containerPath: container,
+            structureVersion: structureVersion,
+            structureVersionSource: versionSource,
+            providersSeen: providersSeen,
+            expected: Set(written.map { "\($0.extensionID)/\($0.uuid)" }),
+            log: log)
+
         progress(99)
         log("Refreshing PosterBoard without a respring…")
         let refresh = await PosterRefresh.attempt(pairingPath: pairingPath)
@@ -234,6 +264,7 @@ enum PosterBoardDirect {
             progress(100)
         }
         log("Installed \(injected) descriptor(s) over the pairing tunnel.")
+        return verification
     }
 
     /// The reload-preferences payload written into both target directories.

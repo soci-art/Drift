@@ -43,7 +43,7 @@ final class FirstRunSettings: ObservableObject {
         objectWillChange.send()
         let wasComplete = completed
         completed = true
-        GoldenNuggetEngine.shared.log(wasComplete
+        DriftEngine.shared.log(wasComplete
             ? "setup guide re-opened and closed again (\(reason))"
             : "setup guide finished (\(reason))")
     }

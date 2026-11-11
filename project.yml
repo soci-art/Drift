@@ -130,12 +130,12 @@ settings:
     CODE_SIGN_STYLE: Automatic
     CODE_SIGN_IDENTITY: Apple Development
     DEVELOPMENT_TEAM: ""
-    CURRENT_PROJECT_VERSION: 4
+    CURRENT_PROJECT_VERSION: 5
     # 1.3.0 is the runtime App Group discovery, the build-number-aware direct
     # range, the in-process effect decision and the premise-split judgement.
     # The CI release step reads MARKETING_VERSION, so the tag, the release notes
     # and the built IPA stay in step.
-    MARKETING_VERSION: 1.3.0
+    MARKETING_VERSION: 2.0.0
     # The app icon is an Icon Composer document (`Assets.xcassets/AppIcon.icon`),
     # not loose PNGs: it layers one glass image over an `automatic-gradient`
     # fill, and actool expands that into the light/dark/tintable renditions the

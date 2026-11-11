@@ -18,12 +18,7 @@ struct DriftSettingsView: View {
     @State private var packaging = false
     @State private var sharePackage: SharePackageItem?
     @State private var recordsNote: String?
-    @State private var hasLocalBackup = GoldenNuggetEngine.localBackupCandidate() != nil
-    @State private var confirmDeleteBackup = false
-    @State private var backupBusy = false
-    @State private var backupNote: String?
-    @State private var researchPullBusy = false
-    @State private var researchPullNote: String?
+    @State private var showSealedNotice = false
 
     var body: some View {
         NavigationStack {
@@ -31,7 +26,7 @@ struct DriftSettingsView: View {
                 connectionSection
                 localRouteSection
                 applySection
-                backupSection
+                restoreSealedSection
                 historySection
                 recordsSection
                 aboutSection
@@ -61,7 +56,11 @@ struct DriftSettingsView: View {
             }
             .onAppear {
                 history = ApplyHistory.load()
-                hasLocalBackup = GoldenNuggetEngine.localBackupCandidate() != nil
+            }
+            .alert("恢复刷已封存", isPresented: $showSealedNotice) {
+                Button("知道了", role: .cancel) {}
+            } message: {
+                Text("2026-11-10，一次恢复刷入在设备重启后把手机恢复了出厂设置，数据全部丢失。查清原因、并在备用机上验证「从设备拉到真备份」这条路之前，恢复刷不开放：入口保留，但没有任何可执行的恢复代码。免注销直刷不受影响。")
             }
             .sheet(item: $sharePackage) { item in
                 ActivityShareSheet(url: item.url)
@@ -72,8 +71,8 @@ struct DriftSettingsView: View {
     // MARK: - Connection
 
     private var connectionSection: some View {
-        Section("隧道方式前提（直刷免注销 / AirLift）") {
-            Text("配对文件与隧道只是两种隧道方式的前提；本机直刷不需要它们。想用隧道方式时，再在这里配好。")
+        Section("免注销直刷 · 隧道通道前提") {
+            Text("配对文件与隧道只是免注销直刷走隧道通道时的前提；走本机通道不需要它们。想走隧道通道时，再在这里配好。")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Label("配对文件", systemImage: "link")
@@ -129,7 +128,7 @@ struct DriftSettingsView: View {
     /// whether this system is in range, and which App Group the installed
     /// signing profile actually granted.
     private var localRouteSection: some View {
-        Section("本机直刷") {
+        Section("本机通道状态") {
             HStack {
                 Label("系统版本", systemImage: "iphone")
                 Spacer()
@@ -200,7 +199,7 @@ struct DriftSettingsView: View {
                 : try PairingRecord.accept(contentsOf: URL(fileURLWithPath: path))
             if path != AppPaths.pairingFile.path { PairingRecord.persist(record) }
             session.adoptPairingFromDisk()
-            GoldenNuggetEngine.shared.log("settings: wireless pairing record adopted (\(PairingRecord.sourceLabel(record)))")
+            DriftEngine.shared.log("settings: wireless pairing record adopted (\(PairingRecord.sourceLabel(record)))")
         } catch {
             session.errorText = error.localizedDescription
         }
@@ -219,69 +218,29 @@ struct DriftSettingsView: View {
         }
     }
 
-    // MARK: - Local backup (feedback #21: write back / delete, never pull)
+    // MARK: - Restore method (sealed)
 
-    private var backupSection: some View {
-        Section("备份") {
-            Text(DriftRestoreGate.isEnabled
-                 ? "刷入和清理不再从设备拉取备份。已经存在本地的备份可以在这里写回设备，或者删掉。"
-                 : "刷入和清理不再从设备拉取备份。「恢复备份」属于恢复式，暂时停用；已经存在本地的备份可以先删掉。")
-                .font(.caption).foregroundStyle(.secondary)
-            if !DriftRestoreGate.isEnabled {
-                Text(DriftRestoreGate.notice)
-                    .font(.caption).foregroundStyle(.orange)
-            }
+    /// The sealed restore entry (2.0.0): visible and greyed, never
+    /// selectable. There is no restore code behind it — safety by
+    /// non-existence. Tapping the row shows the sealing notice; the
+    /// pre-2.0.0 local-backup write-back/delete actions went away with
+    /// the backup machinery they belonged to.
+    private var restoreSealedSection: some View {
+        Section("恢复刷") {
             Button {
-                // Feedback #30: writing a backup back IS a restore —
-                // while the gate is closed this never starts (the button
-                // is disabled too; this is the second lock).
-                guard DriftRestoreGate.isEnabled else {
-                    backupNote = DriftRestoreGate.notice
-                    return
-                }
-                backupBusy = true
-                backupNote = nil
-                Task {
-                    defer { backupBusy = false }
-                    do {
-                        try await GoldenNuggetEngine.shared.restoreLocalBackup()
-                        backupNote = "已把本地备份写回设备，重启设备后生效。"
-                    } catch {
-                        session.errorText = error.localizedDescription
-                    }
-                    hasLocalBackup = GoldenNuggetEngine.localBackupCandidate() != nil
-                }
+                showSealedNotice = true
             } label: {
-                Label("恢复备份（写回设备）", systemImage: "arrow.down.doc")
-            }
-            .disabled(!hasLocalBackup || backupBusy || !DriftRestoreGate.isEnabled)
-            Button(role: .destructive) {
-                confirmDeleteBackup = true
-            } label: {
-                Label("删除本地备份", systemImage: "trash")
-            }
-            .disabled(!hasLocalBackup || backupBusy)
-            .confirmationDialog("删除本地备份？", isPresented: $confirmDeleteBackup, titleVisibility: .visible) {
-                Button("删除", role: .destructive) {
-                    do {
-                        try GoldenNuggetEngine.shared.deleteLocalBackup()
-                        backupNote = "本地备份已删除。"
-                    } catch {
-                        session.errorText = error.localizedDescription
-                    }
-                    hasLocalBackup = GoldenNuggetEngine.localBackupCandidate() != nil
+                HStack {
+                    Label("恢复刷", systemImage: "lock.fill")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("已封存")
+                        .foregroundStyle(.secondary)
                 }
-                Button("取消", role: .cancel) {}
-            } message: {
-                Text("删掉的是 App 里保存的这份备份文件夹，设备上的内容不受影响。删了就不能再用它恢复了。")
             }
-            if backupBusy {
-                Text("正在处理…").font(.caption).foregroundStyle(.secondary)
-            } else if let backupNote {
-                Text(backupNote).font(.caption).foregroundStyle(.secondary)
-            } else if !hasLocalBackup {
-                Text("本地目前没有已保存的备份。").font(.caption).foregroundStyle(.secondary)
-            }
+            .buttonStyle(.plain)
+            Text("2026-11-10 一次恢复刷入在重启后把设备恢复了出厂设置。查清原因并在备用机上验证之前不开放；点上面这一行看完整说明。")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -302,6 +261,14 @@ struct DriftSettingsView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("\(record.mode) · \(record.ios.isEmpty ? "未知系统" : "iOS \(record.ios)")")
                                         .font(.subheadline)
+                                    if let channel = record.channel, !channel.isEmpty {
+                                        Text("通道：\(channel)")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    if let verification = record.verification, !verification.isEmpty {
+                                        Text("核验：\(verification)")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
                                     if let effect = record.effect, !effect.isEmpty {
                                         Text("生效：\(effect)")
                                             .font(.caption).foregroundStyle(.secondary)
@@ -352,36 +319,6 @@ struct DriftSettingsView: View {
             }
             Text("出问题时点这里打包，把整包发出去就行，不用再一个个找文件。")
                 .font(.caption).foregroundStyle(.secondary)
-            // Feedback #31: research builds only. The diagnostic pull is
-            // the one research action this stage ships: it runs the
-            // protective pull with the [MB2-PULL] trace live and does
-            // nothing else — no prune, no injection, no restore.
-            if DriftResearchBuild.isActive {
-                Text(DriftResearchBuild.notice)
-                    .font(.caption).foregroundStyle(.red)
-                Button {
-                    Task { await runResearchPull() }
-                } label: {
-                    Label(researchPullBusy ? "正在诊断拉取…" : "诊断拉取（研究）",
-                          systemImage: "stethoscope")
-                }
-                .disabled(researchPullBusy)
-                if let researchPullNote {
-                    Text(researchPullNote)
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    private func runResearchPull() async {
-        researchPullBusy = true
-        researchPullNote = nil
-        defer { researchPullBusy = false }
-        do {
-            researchPullNote = try await GoldenNuggetEngine.shared.researchDiagnosticPull()
-        } catch {
-            researchPullNote = "诊断拉取失败：\(error.localizedDescription)（详情看运行日志）"
         }
     }
 
@@ -410,7 +347,7 @@ struct DriftSettingsView: View {
                 Text("Drift \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0")")
                     .foregroundStyle(.secondary)
             }
-            Text("独立应用：借用 GoldenNugget 的原理与壁纸／连接层代码（AGPL-3.0），界面、UI 与主题均为重新设计，只保留刷壁纸功能。")
+            Text("独立应用，只保留刷壁纸功能。2.0.0 起设备写入核心与 CocoWall 共用同一套：源自 AirCard-iOS（Mak5er，MIT 许可）的隧道写入核心，加上 CocoWall 作者的免注销生效与商店枚举模块；本机写入通道与界面为 Drift 自有（AGPL-3.0）。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

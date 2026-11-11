@@ -157,9 +157,9 @@ final class DeviceIdentityMonitor: ObservableObject {
         guard read != current else { return false }
         current = read
         if read == .unknown {
-            GoldenNuggetEngine.shared.log("device identity unavailable — the device has not answered lockdown yet")
+            DriftEngine.shared.log("device identity unavailable — the device has not answered lockdown yet")
         } else {
-            GoldenNuggetEngine.shared.log("device identity: \(read.describe)")
+            DriftEngine.shared.log("device identity: \(read.describe)")
         }
         return true
     }

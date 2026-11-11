@@ -1,0 +1,67 @@
+NOTICE
+
+AirliftFFI core — wholesale transplant from AirCard-iOS
+--------------------------------------------------------
+The entire device write path of this app (loopback tunnel connection,
+RemotePairing session, AFC staging, AirTraffic sync, PosterBoard
+injection, refresh writes, respring) is the AirliftFFI Rust core of
+the AirCard-iOS project, vendored verbatim into `rust-core/`:
+
+  Project:  AirCard-iOS
+  Author:   Johnny Franks (Mak5er)
+  Source:   https://github.com/Mak5er/AirCard-iOS
+  Version:  v1.3.2, upstream commit
+            40640c4d827aeab8d798285b57d24fcf6be070d0
+  Path:     rust-core/ (crate `airlift_ffi`: src/, include/, vendor/)
+  License:  MIT License, Copyright (c) 2026 Johnny Franks
+
+See rust-core/VENDORED.md for the vendoring record. The vendored
+sources are unmodified; only the build wiring differs (the app links
+the produced static library directly instead of packaging an
+xcframework).
+
+The app-side Grappa helper `Sources/App/GrappaHelper.h` /
+`GrappaHelper.m` is likewise the upstream file, copied verbatim from
+the same commit: the core resolves its `ALGetGrappaToken` symbol at
+runtime (dlsym) and the helper tries a framework host session first,
+then verifies each candidate from its built-in authentic token table
+(kAuthenticGrappaTokens, also from AirCard-iOS) against a device
+session before adopting one.
+
+App layer — wholesale transplant from AirCard-iOS
+---------------------------------------------------
+The entire app layer in `Sources/App/` is the upstream AirCard-iOS
+app (the `ios-app/` directory of the same project, same version
+v1.3.2, same upstream commit 40640c4d827aeab8d798285b57d24fcf6be070d0),
+copied verbatim: all Swift sources, `Info.plist`, and the Grappa
+helper. Views, copy, pairing host name, pairing-file locations,
+logs and flows are unchanged from upstream. The only differences
+from the upstream app are identity and build wiring:
+
+  * Bundle identifier is com.coco.cocowall (upstream:
+    com.mak5er.aircard), and `CFBundleDisplayName` is "CocoWall";
+    these are the only two edits inside the copied files.
+  * The app icon is CocoWall's own (upstream's icon set is not
+    carried over; `Sources/App/icon-1024.b64` decodes to the single
+    1024px icon at build time).
+  * The project is generated from this repository's `project.yml`:
+    sources live under `Sources/App/` instead of upstream's
+    `ios-app/`, the vendored core is linked as a static library
+    instead of an xcframework, and the deployment target is
+    iOS 17.0 (upstream: 18.0).
+  * Upstream's unit tests (`tests/` in the upstream repository)
+    are not carried over; nothing in the app depends on them.
+
+Like upstream, the app ships no packet-tunnel extension: the
+loopback tunnel is provided by an external VPN app (LocalDevVPN).
+CocoWall's former in-house app layer and its bundled tunnel
+extension target were removed in this transplant.
+
+MIT License summary: permission is granted, free of charge, to any
+person obtaining a copy of the software and associated documentation
+files, to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies, subject to including the copyright notice and
+permission notice in all copies or substantial portions of the
+software. The software is provided "as is", without warranty of any
+kind. The full license text ships with the upstream project at
+https://github.com/Mak5er/AirCard-iOS/blob/main/LICENSE

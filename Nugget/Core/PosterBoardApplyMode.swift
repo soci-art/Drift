@@ -46,28 +46,25 @@ enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
         case .backup:
             // The long title is what the history stores, so it states the
             // suspension for as long as the gate is closed.
-            return DriftRestoreGate.isEnabled ? "恢复式" : "恢复式（暂时关闭）"
-        case .direct: return "直刷免注销"
-        case .airlift: return "AirLift 直刷"
-        // Chinese-first, like the rest of Drift's own UI: `shortTitle` is what
-        // the mode menu shows, and a String Catalog key added here would ship
-        // untranslated until the catalog is regenerated on macOS. The short
-        // name is deliberately the *only* user-facing name — no `worse_query`
-        // in menus or history.
-        case .worseQuery: return "本机直刷"
+            return DriftRestoreGate.isEnabled ? "恢复刷" : "恢复刷（封存）"
+        case .direct: return "隧道写入（免注销生效）"
+        case .airlift: return "隧道写入（注销生效）"
+        // Chinese-first, like the rest of Drift's own UI. Since 2.0.0 the
+        // user-facing methods are only 免注销直刷 and 恢复刷； these titles
+        // describe internal channels, not selectable modes — and the short
+        // name is deliberately free of mechanism names like `worse_query`.
+        case .worseQuery: return "本机写入"
         }
     }
 
-    /// The two- or three-word name the mode menu and the override note use.
-    ///
-    /// `title` is the long form (`AirLift (AirTraffic)`) and belongs in a
-    /// sentence; a menu row and “you picked X but…” need the short one.
+    /// The two- or three-word channel label the judgement card's option
+    /// list carries.
     var shortTitle: String {
         switch self {
-        case .backup: return "恢复式"
-        case .direct: return "直刷免注销"
-        case .airlift: return "AirLift 直刷"
-        case .worseQuery: return "本机直刷"
+        case .backup: return "恢复刷"
+        case .direct: return "隧道 · 免注销"
+        case .airlift: return "隧道 · 注销生效"
+        case .worseQuery: return "本机通道"
         }
     }
 
@@ -84,7 +81,7 @@ enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
     var summary: String {
         switch self {
         case .backup:
-            return "先从设备获取商店数据库，再通过恢复式写入壁纸。适用于所有受支持的设备，最后会重启设备。"
+            return "通过恢复刷写入壁纸。适用于所有受支持的设备，最后会重启设备。恢复刷已封存，暂时不可用。"
         case .direct:
             return "通过配对隧道直写 PosterBoard 的容器，再只重启 PosterBoard 守护进程——不注销、不重启。支持 iOS 26.0–27.1 及 27.2 测试版 1/2；需要配对、隧道、LocalDevVPN，且设备保持解锁。"
         case .airlift:

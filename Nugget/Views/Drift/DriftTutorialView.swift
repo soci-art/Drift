@@ -22,15 +22,15 @@ struct DriftTutorialView: View {
             ScrollView {
                 VStack(spacing: 14) {
                     intro
-                    step(number: 1, title: "准备：配对与隧道（本机直刷可跳过）",
-                         text: "要用本机直刷的话，这一步可以跳过——它不需要配对文件，也不需要隧道，只要签名授予可用的 App Group（App 会在运行时读取签名实际给的组）。要用直刷免注销或 AirLift 时，先打开 LocalDevVPN 并连上 Wi-Fi，隧道就通了（主页「隧道方式前提」里会显示「隧道已连通」）。再导入配对文件——Drift 只收 .plist：可以在向导、主页或设置页点「导入配对文件」选它，也可以在「文件」App 里对配对文件点打开方式选 Drift，或者把 pairingfile.plist 放进 Drift 的文稿目录，App 会自己认出来；iOS 27 还能在设置页用「无线自配对」当场生成一份。第一次打开 App 有设置向导：本机直刷可用时完成按钮不会被配对/隧道挡住，不可用才需要走完这两步。")
+                    step(number: 1, title: "准备：配对与隧道（走本机通道可跳过）",
+                         text: "免注销直刷走本机通道的话，这一步可以跳过——它不需要配对文件，也不需要隧道，只要签名授予可用的 App Group（App 会在运行时读取签名实际给的组）。要走隧道通道时，先打开 LocalDevVPN 并连上 Wi-Fi，隧道就通了（主页会显示「隧道已连通」）。再导入配对文件——Drift 只收 .plist：可以在向导、主页或设置页点「导入配对文件」选它，也可以在「文件」App 里对配对文件点打开方式选 Drift，或者把 pairingfile.plist 放进 Drift 的文稿目录，App 会自己认出来；iOS 27 还能在设置页用「无线自配对」当场生成一份。第一次打开 App 有设置向导：本机通道可用时完成按钮不会被配对/隧道挡住，不可用才需要走完这两步。")
                     step(number: 2, title: "导入壁纸包",
                          text: "在壁纸页点「导入」选 .tendies 文件，或者在「文件」App 里对壁纸包点打开方式选 Drift。导入后列表里每个包都带预览图（从包里提取的）；纯动画、没有静态图的包显示占位图，不影响刷入。点包行左侧的圆圈勾选要刷的包；点行的其他地方进详情，详情里能改「刷完出现在哪里」。一次最多刷 10 张。")
                     step(number: 3, title: "选方式，点刷入",
-                         text: "主页「本次刷入方式」卡会按前提自动选一种，逐条写明每种方式可用/不可用的理由，也可以点卡上的菜单手动选。四种方式的区别：直刷免注销通过配对隧道写进商店容器，然后只重启 PosterBoard 守护进程，免注销生效，要配对、隧道和设备解锁；本机直刷在 App 内写进壁纸商店容器，写入不用配对、不用隧道，写完再按当时条件决定生效方式——配对、LocalDevVPN、Wi-Fi 齐全就免注销，否则只提示并给「手动注销」按钮，App 不自动注销；AirLift 直刷通过隧道写同一个容器，刷完注销、不重启；恢复式把壁纸编进备份再写回设备，刷完会重启。手动选也不能突破硬限制——视频包、容器包、带数据库的包都只能走恢复式。恢复式目前暂时停用（见第四步），所以只能走恢复式的情况现在都刷不了，能直刷的照常刷。点「刷入」后，用隧道的方式要保持手机解锁、隧道开着。")
+                         text: "主页「本次刷入方式」卡会按系统版本和前提自动决定，逐条写明每个通道可用/不可用的理由；方式只有两个——免注销直刷和恢复刷（已封存）。免注销直刷内部按版本选通道：本机通道在 App 内写进壁纸商店容器，写入不用配对、不用隧道；隧道通道通过配对隧道写进同一个容器，要配对、隧道和设备解锁。生效统一由写完当时决定：配对、LocalDevVPN、Wi-Fi 齐全就只重启 PosterBoard、免注销生效，否则只提示并给「手动注销」按钮，App 不自动注销；个别版本上隧道通道的回落是注销生效一次。视频包、容器包、带数据库的包都只能走恢复刷；恢复刷已封存（见第四步），所以这类内容现在都刷不了。点「刷入」后，走隧道通道要保持手机解锁、隧道开着。")
                     restoreSuspendedStep
                     step(number: 5, title: "视频壁纸",
-                         text: "想刷视频就去视频页：选好视频、确认，剩下的和普通刷入一样。视频在任何系统上都只能走恢复式、刷完会重启；恢复式停用期间，视频壁纸暂时刷不了。")
+                         text: "想刷视频就去视频页：选好视频、确认，剩下的和普通刷入一样。视频在任何系统上都只能走恢复刷、刷完会重启；恢复刷封存期间，视频壁纸暂时刷不了。")
                     step(number: 6, title: "旧格式转换（一句带过）",
                          text: "iOS 27 上，旧格式的包要先转换成新格式才显示；勾选时 App 会问你一次、答案会记住，答错了在包的详情页「旧格式处理」里随时改。（iOS 26 不需要转换。）")
                     step(number: 7, title: "出问题怎么办",
@@ -47,7 +47,7 @@ struct DriftTutorialView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("照着这个顺序来，就能把壁纸刷进去。")
                 .font(.headline)
-            Text("第一次用从第一步开始；平时刷入主要看第三、四步。系统范围、四种方式的完整对照在「说明」页，这里不重复。")
+            Text("第一次用从第一步开始；平时刷入主要看第三、四步。系统范围、两种方式的完整对照在「说明」页，这里不重复。")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -70,10 +70,10 @@ struct DriftTutorialView: View {
                     .background(Color.orange, in: Circle())
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
-                Text("恢复式暂时停用")
+                Text("恢复刷已封存")
                     .font(.subheadline.weight(.semibold))
             }
-            Text(DriftRestoreGate.notice + "只能走恢复式的内容——视频壁纸、重置壁纸商店、带数据库的容器包，以及直刷免注销、AirLift、本机直刷都不可用的系统上的普通包——这段时间都先放一放，等恢复式重新开放再刷。")
+            Text(DriftRestoreGate.notice + "只能走恢复刷的内容——视频壁纸、重置壁纸商店、带数据库的容器包，以及免注销直刷两个通道都不可用的系统上的普通包——这段时间都先放一放，等恢复刷重新开放再刷。")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

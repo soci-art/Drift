@@ -2,7 +2,7 @@ import Foundation
 
 /// A destination for one already-formatted log line.
 ///
-/// The engine used to log through `GoldenNuggetEngine.shared.log`, which made every
+/// The engine used to log through `DriftEngine.shared.log`, which made every
 /// helper that merely wanted to say something — the stage timer, the heartbeat,
 /// the stall guard, the wire tailer — depend on the whole engine type.  A narrow
 /// sink is what lets those helpers move out of it.
