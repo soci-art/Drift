@@ -65,6 +65,32 @@ struct DriftRootView: View {
         } message: {
             Text(session.errorText ?? "")
         }
+        // Collection #150/#151 (Grace, 2026-11-11): while a flash run is
+        // going, cover the whole app with a blocking card — nothing can be
+        // tapped until the run finishes. Deliberately minimal: spinner,
+        // the words, nothing else.
+        .overlay {
+            if session.running {
+                ZStack {
+                    Color.black.opacity(0.35)
+                        .ignoresSafeArea()
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .controlSize(.large)
+                        Text("正在刷入")
+                            .font(.headline)
+                        Text("请勿熄屏或退出 App")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 36)
+                    .padding(.vertical, 28)
+                    .background(.regularMaterial,
+                                in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                }
+                .transition(.opacity)
+            }
+        }
     }
 
     /// Live detection (Grace, 2026-11-09: tunnel and pairing record alike

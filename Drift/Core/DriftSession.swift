@@ -220,9 +220,12 @@ final class DriftSession: ObservableObject {
             let tunnelStage = StageTimer("tunnel probe")
             guard Tunnel.waitForTunnel(log: { line in DriftEngine.shared.log(line) }) else {
                 tunnelStage.done("FAILED")
-                DispatchQueue.main.async {
-                    DriftSession.shared.errorText = "隧道未就绪：\(Tunnel.peerIP):\(Tunnel.servicePort) 不可达。\n\n\(Tunnel.requirements)"
-                }
+                // Collection #134 (Grace, 2026-11-11): a background probe
+                // failing must not interrupt the user with a modal. The
+                // method rows already say the tunnel channels are
+                // unavailable and why; errors only pop for actions the
+                // user started. This stays in the log for diagnostics.
+                DriftEngine.shared.log("tunnel probe: \(Tunnel.peerIP):\(Tunnel.servicePort) unreachable — background start skipped (not shown to the user)")
                 return
             }
             tunnelStage.done("reachable")
@@ -287,18 +290,15 @@ final class DriftSession: ObservableObject {
                         let tail = RustLog.tail()
                         DriftEngine.shared.log("minimuxer readiness failed: \(reason)")
                         DriftEngine.shared.log("minimuxer.log tail:\n\(tail)")
-                        await MainActor.run {
-                            DriftSession.shared.errorText = "minimuxer 已启动但始终未能就绪。\n\n\(reason)\n\nminimuxer.log 的最后几行：\n\(tail)"
-                        }
+                        // Same rule as the tunnel probe above: background
+                        // startup trouble is logged, not popped.
                     } else {
                         await DriftSession.shared.noteCoreReady()
                     }
                 } catch {
                     let tail = RustLog.tail()
                     DriftEngine.shared.log("minimuxer.log tail:\n\(tail)")
-                    await MainActor.run {
-                        DriftSession.shared.errorText = "\(error.localizedDescription)\n\nminimuxer.log 的最后几行：\n\(tail)"
-                    }
+                    DriftEngine.shared.log("minimuxer start failed: \(error.localizedDescription)")
                 }
             }
         })
@@ -358,6 +358,25 @@ final class DriftSession: ObservableObject {
         }
         let isResetSelection = selection.fullReset || !selection.resetModes.isEmpty
         let selectedLabel = isResetSelection ? "恢复刷 · 重置" : pick.label
+        // Collection #143: flashing the same pack twice stacked copies in
+        // the store that nobody could tell apart. If a receipt for one of
+        // the selected packs still verifies as in-store, refuse and say
+        // where to remove the old copy. Only a confirmed in-store receipt
+        // blocks — absent or unverifiable ones let the run proceed.
+        if mode != .backup, !isResetSelection {
+            let names = Set(selection.tendies.map(\.name))
+            let receipts = PosterBoardLocalReceipts.load().filter { names.contains($0.pack) }
+            if !receipts.isEmpty {
+                let states = await PosterBoardManagement.reconcile(
+                    receipts,
+                    tunnelReady: TunnelMonitor.shared.status == .ready,
+                    log: { DriftEngine.shared.log($0) })
+                let dup = Set(receipts.filter { states[$0.id] == .inStore }.map(\.pack))
+                if let first = selection.tendies.first(where: { dup.contains($0.name) }) {
+                    return (false, "「\(first.name)」已经刷过一份了，还在壁纸商店里。先在管理页删掉旧的，再刷这个包。", nil)
+                }
+            }
+        }
         running = true
         RunLog.shared.clear()
         defer { running = false }
@@ -443,6 +462,11 @@ struct DriftModeAvailability: Identifiable, Equatable {
     let reason: String
     /// How finishing in this channel makes the wallpaper visible.
     let effect: String
+    /// Sealed shut rather than merely unavailable: the system is in range
+    /// but the signing grants no usable App Group, so the local channel
+    /// cannot ever work for this install and its row is not selectable
+    /// (collection #142, Grace 2026-11-11).
+    var sealed: Bool = false
     var id: String { mode.rawValue }
 }
 
@@ -541,6 +565,7 @@ enum DriftJudge {
         let appVersion: String
         let localReady: Bool
         let localWhy: String
+        let localSealed: Bool
         let directReady: Bool
         let directWhy: String
         let respringReady: Bool
@@ -575,6 +600,12 @@ enum DriftJudge {
         let localReady = WorseQueryEscape.isAvailable(deviceVersion: appVersion,
                                                       buildVersion: appBuild)
         let localWhy = InstallEnvironment.localReason(version: appVersion, build: appBuild)
+        // Sealed is narrower than unavailable: the version is in range, so
+        // only the signing stands in the way — and no setting or retry can
+        // change that for this install.
+        let localSealed = !localReady
+            && WorseQueryEscape.isSupported(deviceVersion: appVersion,
+                                            buildVersion: appBuild)
 
         var tunnelMissing: String?
         if !PairingRecord.isInstalled {
@@ -604,6 +635,7 @@ enum DriftJudge {
             appVersion: appVersion,
             localReady: localReady,
             localWhy: localWhy,
+            localSealed: localSealed,
             directReady: directReady,
             directWhy: directWhy,
             respringReady: respringReady,
@@ -638,19 +670,20 @@ enum DriftJudge {
                 reason: p.localReady
                     ? "可用：iOS \(p.appVersion)，签名授予的 App Group 可打开"
                     : p.localWhy,
-                effect: expectedEffect(for: .worseQuery)),
+                effect: expectedEffect(for: .worseQuery),
+                sealed: p.localSealed),
             DriftModeAvailability(
                 mode: .direct,
                 available: p.directReady,
                 reason: p.directReady
-                    ? "可用：\(device) 在 26.0–27.1 及 27.2 测试版 1/2 内"
+                    ? "可用：\(device) 在 26.2–27.1 及 27.2 测试版 1/2 内"
                     : p.directWhy,
                 effect: expectedEffect(for: .direct)),
             DriftModeAvailability(
                 mode: .airlift,
                 available: p.respringReady,
                 reason: p.respringReady
-                    ? "可用：\(device) 在 26.0–27.1 及 27.2 测试版 1/2 内"
+                    ? "可用：\(device) 在 26.2–27.1 及 27.2 测试版 1/2 内"
                     : p.respringWhy,
                 effect: expectedEffect(for: .airlift)),
         ]

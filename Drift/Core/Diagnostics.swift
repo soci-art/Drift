@@ -12,9 +12,42 @@ import ZIPFoundation
 enum Diagnostics {
     /// One-block snapshot of every layer a channel drop can come from, so the app
     /// log alone tells us where the failure lives.
+    /// The machine string (e.g. iPhone15,3), for the report header.
+    private static var machineName: String {
+        var info = utsname()
+        uname(&info)
+        return withUnsafePointer(to: &info.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: 1) {
+                String(validatingUTF8: $0) ?? ""
+            }
+        }
+    }
+
     static func report() async -> String {
         let minimuxer = Minimuxer.shared()
         var lines: [String] = ["── diagnostics ──"]
+
+        // Collection #144 (Grace, 2026-11-11): the facts a reader needs
+        // first, in one place — previously a log package recorded neither
+        // the device system nor the App version at all.
+        let appShort = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        lines.append("  App: Drift \(appShort) (\(appBuild))")
+        lines.append("  设备: \(machineName) · iOS \(WorseQueryEscape.processVersion) (\(WorseQueryEscape.processBuildVersion))")
+        let identity = DeviceIdentityMonitor.shared.current
+        lines.append(identity.version.isEmpty
+            ? "  隧道读到的设备: 未读到"
+            : "  隧道读到的设备: iOS \(identity.version) (\(identity.buildVersion))")
+        lines.append("  本机直刷发现的组: \(WorseQueryEscape.discoveredGroupIdentifier ?? "未发现可用组")")
+        let judged = DriftJudge.judge(identity: identity,
+                                      selection: PosterBoardSelection(),
+                                      pick: .auto,
+                                      tunnelReady: TunnelMonitor.shared.status == .ready)
+        lines.append("  方式判断（打开 App 这一刻）: \(judged.reason)")
+        for option in judged.options {
+            let state = option.available ? "可用" : (option.sealed ? "不可选（签名无可用组）" : "不可用")
+            lines.append("    \(option.mode.shortTitle): \(state) — \(option.reason)")
+        }
 
         // Snapshot the Rust evidence FIRST.
         let logStatus = RustLog.status()

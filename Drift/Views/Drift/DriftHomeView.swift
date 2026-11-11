@@ -209,20 +209,32 @@ struct DriftHomeView: View {
             judged.options.first { $0.mode == channel }
         }
         let available = pick == .auto ? !judged.isBlocked : (option?.available ?? false)
+        // Sealed (collection #142): the version is in range but this
+        // install's signing grants no usable App Group — the row stays
+        // visible like the sealed restore entry, but it cannot be picked;
+        // tapping it only explains why.
+        let sealed = pick != .auto && (option?.sealed ?? false)
         let status: String
         if pick == .auto {
             status = judged.isBlocked ? "不可用" : "→ \(judged.mode.shortTitle)"
+        } else if sealed {
+            status = "不可选"
         } else {
             status = available ? "可用" : "不可用"
         }
         return Button {
+            if sealed {
+                statusLine = option?.reason
+                return
+            }
             manualPickRaw = pick == .auto ? nil : pick.rawValue
             statusLine = nil
         } label: {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                Image(systemName: sealed ? "lock.fill"
+                        : (selected ? "largecircle.fill.circle" : "circle"))
                     .font(.title3)
-                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(selected && !sealed ? Color.accentColor : Color.secondary)
                     .padding(.top, 1)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
