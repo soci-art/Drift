@@ -474,8 +474,8 @@ final class DriftEngine {
         if posterBoard.tendies.contains(where: \.isUnsafeContainer) {
             throw DriftError("包含商店数据库的壁纸包只能用恢复刷；恢复刷已封存，暂时刷不了。")
         }
-        let reason = WorseQueryEscape.unavailableReason(deviceVersion: deviceVersion,
-                                                        buildVersion: buildVersion)
+        let reason = InstallEnvironment.localReason(version: deviceVersion,
+                                                    build: buildVersion)
         guard reason.isEmpty else { throw DriftError(reason) }
     }
 

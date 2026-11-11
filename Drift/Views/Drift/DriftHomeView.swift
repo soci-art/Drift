@@ -133,8 +133,8 @@ struct DriftHomeView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             if !localReady {
-                Text(WorseQueryEscape.unavailableReason(deviceVersion: localVersion,
-                                                        buildVersion: localBuild))
+                Text(InstallEnvironment.localReason(version: localVersion,
+                                                    build: localBuild))
                     .font(.caption).foregroundStyle(.secondary)
             }
             HStack(spacing: 8) {
@@ -349,8 +349,8 @@ struct DriftHomeView: View {
                 openPosterBoard()
             }
             if !localReady {
-                Text(WorseQueryEscape.unavailableReason(deviceVersion: localVersion,
-                                                        buildVersion: localBuild))
+                Text(InstallEnvironment.localReason(version: localVersion,
+                                                    build: localBuild))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Button {

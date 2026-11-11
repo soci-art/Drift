@@ -574,8 +574,7 @@ enum DriftJudge {
         let appBuild = WorseQueryEscape.processBuildVersion
         let localReady = WorseQueryEscape.isAvailable(deviceVersion: appVersion,
                                                       buildVersion: appBuild)
-        let localWhy = WorseQueryEscape.unavailableReason(deviceVersion: appVersion,
-                                                          buildVersion: appBuild)
+        let localWhy = InstallEnvironment.localReason(version: appVersion, build: appBuild)
 
         var tunnelMissing: String?
         if !PairingRecord.isInstalled {

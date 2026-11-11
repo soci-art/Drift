@@ -168,6 +168,14 @@ struct DriftSettingsView: View {
                      : "iOS \(WorseQueryEscape.processVersion)（不在范围内）")
                     .foregroundStyle(.secondary)
             }
+            if let installLabel = InstallEnvironment.current.settingsLabel {
+                HStack {
+                    Label("怎么装的", systemImage: "app.badge")
+                    Spacer()
+                    Text(installLabel)
+                        .foregroundStyle(.secondary)
+                }
+            }
             HStack {
                 Label("生效方式", systemImage: "hand.tap")
                 Spacer()
