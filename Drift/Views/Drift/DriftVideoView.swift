@@ -184,7 +184,8 @@ struct DriftVideoView: View {
         videoSelection.foreground = selection.foreground
         videoSelection.calculationMode = selection.calculationMode
         Task {
-            let outcome = await session.run(selection: videoSelection, mode: .backup, identity: identity)
+            let outcome = await session.run(selection: videoSelection, mode: .backup,
+                                            pick: .auto, identity: identity)
             statusLine = outcome.message
         }
     }
