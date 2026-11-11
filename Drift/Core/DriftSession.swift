@@ -403,7 +403,8 @@ final class DriftSession: ObservableObject {
                 Set($0.expected.map { String($0.split(separator: "/").first ?? "") })
                     .sorted().joined(separator: "、")
             }
-            let iosVersion = (mode == .worseQuery) ? WorseQueryEscape.processVersion : identity.version
+            let iosVersion = (mode == .worseQuery) ? WorseQueryEscape.processVersion
+                : (identity.version.isEmpty ? WorseQueryEscape.processVersion : identity.version)
             ApplyHistory.record(mode: selectedLabel,
                                 success: true,
                                 device: identity.describe,
@@ -411,7 +412,8 @@ final class DriftSession: ObservableObject {
                                 effect: effect?.historyLabel,
                                 channel: mode == .backup ? nil : mode.shortTitle,
                                 provider: providers,
-                                verification: verification?.summary)
+                                verification: verification?.summary,
+                                packName: selection.tendies.map(\.name).joined(separator: "、"))
             // The reset flags are one-shot; the calling page clears its own
             // selection on success (this session only ever holds a copy).
             errorText = nil
@@ -447,17 +449,21 @@ final class DriftSession: ObservableObject {
         } catch {
             if let failure = error as? TransportFailure, failure.isCancellation {
                 DriftEngine.shared.log("run cancelled")
-                let iosVersion = (mode == .worseQuery) ? WorseQueryEscape.processVersion : identity.version
+                let iosVersion = (mode == .worseQuery) ? WorseQueryEscape.processVersion
+                : (identity.version.isEmpty ? WorseQueryEscape.processVersion : identity.version)
                 ApplyHistory.record(mode: selectedLabel, success: false, error: "已取消",
                                     device: identity.describe,
-                                    model: identity.productType, ios: iosVersion)
+                                    model: identity.productType, ios: iosVersion,
+                                    packName: selection.tendies.map(\.name).joined(separator: "、"))
                 return (false, "刷入已取消", nil)
             }
             DriftEngine.shared.log("posterboard apply failed: \(error.localizedDescription)")
-            let iosVersion = (mode == .worseQuery) ? WorseQueryEscape.processVersion : identity.version
+            let iosVersion = (mode == .worseQuery) ? WorseQueryEscape.processVersion
+                : (identity.version.isEmpty ? WorseQueryEscape.processVersion : identity.version)
             ApplyHistory.record(mode: selectedLabel, success: false, error: error.localizedDescription,
                                 device: identity.describe,
-                                model: identity.productType, ios: iosVersion)
+                                model: identity.productType, ios: iosVersion,
+                                packName: selection.tendies.map(\.name).joined(separator: "、"))
             return (false, error.localizedDescription, nil)
         }
     }

@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+import UserNotifications
 
 /// Drift's settings: connection (pairing, tunnel), apply preferences and
 /// history, logs/diagnostics, and About. Only what the wallpaper feature
@@ -29,6 +30,7 @@ struct DriftSettingsView: View {
     @State private var cacheBreakdown: AppCache.Breakdown?
     @State private var confirmClearCache = false
     @State private var cacheNote: String?
+    @State private var notificationsAllowed = true
 
     var body: some View {
         NavigationStack {
@@ -68,8 +70,12 @@ struct DriftSettingsView: View {
             .onAppear {
                 history = ApplyHistory.load()
                 receipts = PosterBoardLocalReceipts.load()
+                refreshNotificationStatus()
             }
-            .confirmationDialog("删除这个描述符？", isPresented: Binding(
+            .onChange(of: wirelessPair.pin) { _, _ in
+                refreshNotificationStatus()
+            }
+            .confirmationDialog("删除这张壁纸？", isPresented: Binding(
                 get: { receiptToDelete != nil },
                 set: { if !$0 { receiptToDelete = nil } }), titleVisibility: .visible
             ) {
@@ -81,7 +87,7 @@ struct DriftSettingsView: View {
                 Button("取消", role: .cancel) { receiptToDelete = nil }
             } message: {
                 if let receipt = receiptToDelete {
-                    Text("将从 PosterBoard 商店删除：\(receipt.pack)（\(receipt.extensionID) / \(receipt.folderName)，通道：\(receipt.channelLabel)）。如果删的正是当前正在使用的壁纸，生效后系统会换回默认壁纸。")
+                    Text("「\(receipt.pack)」将被删除。如果删的正是当前正在用的壁纸，生效后系统会换回默认壁纸。")
                 }
             }
             .confirmationDialog("清空全部刷入记录？", isPresented: $confirmClearHistory,
@@ -276,15 +282,25 @@ struct DriftSettingsView: View {
                     Label("无线自配对（iOS 27）", systemImage: "wifi")
                 }
             case .advertising:
-                VStack(alignment: .leading, spacing: 4) {
-                    Label("正在等待设备连接…", systemImage: "wifi")
-                    if let name = wirelessPair.serviceName {
-                        Text("服务：\(name)").font(.caption).foregroundStyle(.secondary)
+                // #183 (Grace, 2026-11-11): no service-UUID line — the
+                // code lives in the log when anyone needs it. Cancel
+                // rides the status row's trailing edge.
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Label("正在等待设备连接…", systemImage: "wifi")
+                        Spacer()
+                        Button("取消", role: .destructive) { wirelessPair.cancel() }
+                            .buttonStyle(.borderless)
                     }
                     if let pin = wirelessPair.pin {
-                        Text("配对码：\(pin)").font(.caption.weight(.semibold))
+                        Text("配对码：\(pin)").font(.body.weight(.semibold))
+                        // #180: with notifications off the code can only
+                        // be read here — say so where the user stands.
+                        if !notificationsAllowed {
+                            Text("通知没开，验证码只能回到这里看；想在系统设置里也收到，去系统设置里给 Drift 打开通知。")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
-                    Button("取消", role: .destructive) { wirelessPair.cancel() }
                 }
             case .paired:
                 Label("无线配对完成", systemImage: "checkmark.circle").foregroundStyle(.green)
@@ -385,7 +401,7 @@ struct DriftSettingsView: View {
                     Label("清空记录", systemImage: "trash")
                 }
             }
-            Text("普通记录只是历史；带删除按钮的回执条目删的是设备上的那个描述符。")
+            Text("带「删除」的条目删的是设备上的壁纸；其余只是历史记录。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -394,28 +410,17 @@ struct DriftSettingsView: View {
     private func mergedRow(_ row: MergedRecord) -> some View {
         switch row.kind {
         case .run(let record):
+            // #185 (Grace, 2026-11-11): icon + pack name + method + time,
+            // nothing else. The full detail stays in the record itself
+            // and in the log package.
             HStack(spacing: 8) {
                 Image(systemName: record.success ? "checkmark.circle.fill" : "xmark.circle.fill")
                     .foregroundStyle(record.success ? .green : .red)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\((record.channel == "本机直刷") ? "本机直刷" : record.mode) · \(record.ios.isEmpty ? "未知系统" : "iOS \(record.ios)")")
+                    Text(recordTitle(record))
                         .font(.subheadline)
-                    if let channel = record.channel, !channel.isEmpty {
-                        Text("通道：\(channel)")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    if let verification = record.verification, !verification.isEmpty {
-                        Text("核验：\(verification)")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    if let effect = record.effect, !effect.isEmpty {
-                        Text("生效：\(effect)")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Text(record.timestamp).font(.caption).foregroundStyle(.secondary)
-                    if !record.success && !record.error.isEmpty {
-                        Text(record.error).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                    }
+                    Text(recordMeta(record))
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -426,14 +431,8 @@ struct DriftSettingsView: View {
                     .foregroundStyle(.blue)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(receipt.pack).font(.subheadline)
-                    Text(receipt.resolvedChannel == .local
-                         ? "本机直刷写入"
-                         : "隧道写入 · \(receipt.channelLabel)")
+                    Text("\(receipt.channelLabel) · \(displayTime(receipt.date))")
                         .font(.caption).foregroundStyle(.secondary)
-                    Text(receipt.summary)
-                        .font(.caption2).foregroundStyle(.secondary)
-                    Text("回执 · \(receipt.date)")
-                        .font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button(role: .destructive) {
@@ -444,6 +443,62 @@ struct DriftSettingsView: View {
                 .buttonStyle(.borderless)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// #185: the row's title — the pack name when the record carries
+    /// one; deletion records written before build 19 keep their name
+    /// inside the mode text; older flash records have no name at all
+    /// and fall back to the method text.
+    private func recordTitle(_ record: ApplyHistory.Record) -> String {
+        if let name = record.packName, !name.isEmpty { return name }
+        if record.mode.hasPrefix("删除壁纸 · ") {
+            return String(record.mode.dropFirst("删除壁纸 · ".count))
+        }
+        return recordMethod(record)
+    }
+
+    /// #185: the row's second line — method and time (plus the 删除
+    /// marker that tells a deletion record from a flash record).
+    private func recordMeta(_ record: ApplyHistory.Record) -> String {
+        let time = displayTime(record.timestamp)
+        if record.mode.hasPrefix("删除壁纸 · ") {
+            return "删除 · \(recordMethod(record)) · \(time)"
+        }
+        if let name = record.packName, !name.isEmpty {
+            return "\(recordMethod(record)) · \(time)"
+        }
+        return time
+    }
+
+    /// The method a record shows: the stamped channel when there is
+    /// one, else the mode text's leading segment. Route words from the
+    /// management layer are dressed back up to method names.
+    private func recordMethod(_ record: ApplyHistory.Record) -> String {
+        if let channel = record.channel, !channel.isEmpty {
+            return channel == "本机" ? "本机直刷" : channel
+        }
+        return String(record.mode.split(separator: "·").first ?? "")
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Record timestamps are ISO strings; rows show a human local
+    /// time ("11月11日 21:44") instead.
+    private func displayTime(_ raw: String) -> String {
+        let date = parsedRecordDate(raw)
+        guard date != .distantPast else { return raw }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日 HH:mm"
+        return formatter.string(from: date)
+    }
+
+    private func refreshNotificationStatus() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async {
+                notificationsAllowed = settings.authorizationStatus == .authorized
+                    || settings.authorizationStatus == .provisional
+            }
         }
     }
 

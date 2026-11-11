@@ -36,6 +36,10 @@ enum ApplyHistory {
         /// The store-verification grade ("已核验：在册 n/n" /
         /// "已写入、未确认显示：…"). Optional for old records.
         var verification: String? = nil
+        /// The wallpaper pack name(s) the run handled (#185: history rows
+        /// lead with the pack name). Optional — records written before
+        /// build 19 do not have it and fall back to the mode text.
+        var packName: String? = nil
 
         /// `datetime.now().astimezone().isoformat(timespec="seconds")`, which is
         /// local time with the offset (`"2026-10-12T14:05:33+03:00"`).
@@ -67,7 +71,7 @@ enum ApplyHistory {
                        device: String = "", model: String = "", ios: String = "",
                        udid: String = "", effect: String? = nil,
                        channel: String? = nil, provider: String? = nil,
-                       verification: String? = nil) {
+                       verification: String? = nil, packName: String? = nil) {
         let item = Record(timestamp: Record.now(),
                           mode: mode,
                           success: success,
@@ -79,7 +83,8 @@ enum ApplyHistory {
                           effect: effect,
                           channel: channel,
                           provider: provider,
-                          verification: verification)
+                          verification: verification,
+                          packName: packName)
         var records = load() + [item]
         if records.count > maxEntries {
             records = Array(records.suffix(maxEntries))

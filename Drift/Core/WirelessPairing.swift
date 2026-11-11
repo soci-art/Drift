@@ -1,4 +1,5 @@
 import Foundation
+import UserNotifications
 import SwiftUI
 import UIKit
 import Minimuxer
@@ -221,6 +222,35 @@ final class WirelessPairing: NSObject, ObservableObject, NetServiceDelegate {
         guard runGeneration == generation else { return }
         pin = receivedPin
         DriftEngine.shared.log("wireless pair: PIN \(receivedPin) — confirm it in Settings → Developer Mode")
+        postPinNotification(receivedPin)
+    }
+
+    /// #180 (Grace, 2026-11-11): the user confirms the PIN over in iOS
+    /// Settings, away from the app — surface the code as a local
+    /// notification so it is readable there (and waits in Notification
+    /// Center). Silently does nothing when notifications are not
+    /// authorized; the pairing page says so in that case.
+    private func postPinNotification(_ pin: String) {
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized
+                    || settings.authorizationStatus == .provisional else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "无线配对验证码"
+            content.body = "验证码：\(pin)。在系统设置里确认配对时核对这个码；点这条通知可以回到 Drift。"
+            content.sound = .default
+            let request = UNNotificationRequest(
+                identifier: Self.pinNotificationID, content: content, trigger: nil)
+            center.add(request)
+        }
+    }
+
+    private static let pinNotificationID = "drift.pairing.pin"
+
+    private func clearPinNotification() {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [Self.pinNotificationID])
+        center.removeDeliveredNotifications(withIdentifiers: [Self.pinNotificationID])
     }
 
     /// Handle the run's terminal result.  Main thread.
@@ -228,6 +258,7 @@ final class WirelessPairing: NSObject, ObservableObject, NetServiceDelegate {
         guard runGeneration == generation else { return }
         stopAdvertising()
         endBackgroundTask()
+        clearPinNotification()
 
         switch result {
         case .success(let paired):
@@ -264,6 +295,7 @@ final class WirelessPairing: NSObject, ObservableObject, NetServiceDelegate {
         generation += 1
         stopAdvertising()
         endBackgroundTask()
+        clearPinNotification()
         phase = .idle
         serviceName = nil
         port = nil
@@ -277,6 +309,7 @@ final class WirelessPairing: NSObject, ObservableObject, NetServiceDelegate {
     func reset() {
         stopAdvertising()
         endBackgroundTask()
+        clearPinNotification()
         phase = .idle
         serviceName = nil
         port = nil

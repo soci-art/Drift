@@ -13,6 +13,8 @@ struct DriftRootView: View {
     @ObservedObject private var tunnelMonitor = TunnelMonitor.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var inboxNote: String?
+    @State private var launchFlowDone = false
+    @State private var showAnnouncement = false
 
     var body: some View {
         Group {
@@ -27,6 +29,16 @@ struct DriftRootView: View {
         .task {
             session.bootstrap()
             startLiveDetection()
+            runLaunchFlow()
+        }
+        .onChange(of: firstRun.isComplete) { _, complete in
+            // The guide just finished: the same launch flow runs now —
+            // permissions, update check, announcement.
+            if complete { runLaunchFlow() }
+        }
+        .sheet(isPresented: $showAnnouncement, onDismiss: { AppAnnouncement.markSeen() }) {
+            AppAnnouncementView { showAnnouncement = false }
+                .presentationDetents([.medium])
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -69,9 +81,6 @@ struct DriftRootView: View {
         // going, cover the whole app with a blocking card — nothing can be
         // tapped until the run finishes. Deliberately minimal: spinner,
         // the words, nothing else.
-        .task {
-            await AppUpdateChecker.shared.autoCheck()
-        }
         .overlay {
             if session.flashCover {
                 ZStack {
@@ -105,6 +114,23 @@ struct DriftRootView: View {
         TunnelMonitor.shared.start()
         DeviceIdentityMonitor.shared.start()
         session.startPairingWatch()
+    }
+
+    /// The once-per-launch entry flow (#178/#181): permission prompts
+    /// first (system dialogs must not queue behind our own sheet),
+    /// then the silent update check — its real network request is
+    /// also what asks for wireless-data permission — then the update
+    /// announcement, if this build's has not been seen yet.
+    private func runLaunchFlow() {
+        guard firstRun.isComplete, !launchFlowDone else { return }
+        launchFlowDone = true
+        Task {
+            await AppPermissions.requestUndecidedOnce()
+            await AppUpdateChecker.shared.autoCheck()
+            if AppAnnouncement.shouldShow {
+                showAnnouncement = true
+            }
+        }
     }
 
     private func handleIncoming(_ url: URL) {

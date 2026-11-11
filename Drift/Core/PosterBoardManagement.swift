@@ -314,6 +314,7 @@ enum PosterBoardManagement {
                 ApplyHistory.record(mode: "删除壁纸 · \(entry.name)",
                                     success: true,
                                     ios: identityVersion,
+                                    packName: entry.name,
                                     channel: "隧道",
                                     provider: entry.provider,
                                     verification: "隧道删除后复核：描述符已不在册")
@@ -322,6 +323,7 @@ enum PosterBoardManagement {
                                     success: false,
                                     error: "已删除、未确认",
                                     ios: identityVersion,
+                                    packName: entry.name,
                                     channel: "隧道",
                                     provider: entry.provider,
                                     verification: "已删除、未确认：提交复核不可用")
@@ -342,6 +344,7 @@ enum PosterBoardManagement {
             ApplyHistory.record(mode: "删除壁纸 · \(entry.name)",
                                 success: true,
                                 ios: WorseQueryEscape.processVersion,
+                                packName: entry.name,
                                 channel: "本机",
                                 provider: entry.provider,
                                 verification: "本机删除后：目录已不在商店")
@@ -356,14 +359,22 @@ enum PosterBoardManagement {
     private static func record(_ receipt: PosterBoardLocalReceipt,
                                success: Bool,
                                verification: String) {
+        // #186 red line (Grace, 2026-11-11): a record's system version is
+        // always a real value — the tunnel-read device version when there
+        // is one, this device's own version otherwise. Never empty:
+        // "未知系统" must be impossible, the log package depends on it.
+        let tunnelVersion = DeviceIdentityMonitor.shared.current.version
+        let ios = receipt.resolvedChannel == .local
+            ? WorseQueryEscape.processVersion
+            : (tunnelVersion.isEmpty ? WorseQueryEscape.processVersion : tunnelVersion)
         ApplyHistory.record(mode: "删除壁纸 · \(receipt.pack)",
                             success: success,
                             error: success ? "" : verification,
-                            ios: receipt.resolvedChannel == .local
-                                ? WorseQueryEscape.processVersion : "",
+                            ios: ios,
                             channel: receipt.channelLabel,
                             provider: receipt.extensionID,
-                            verification: verification)
+                            verification: verification,
+                            packName: receipt.pack)
     }
 
     private struct StoreDeleteReply: Decodable {

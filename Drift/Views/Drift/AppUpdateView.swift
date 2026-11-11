@@ -13,6 +13,13 @@ struct AppUpdateView: View {
         let url: URL
     }
 
+    /// #179 (Grace, 2026-11-11): a refused wireless-data permission is
+    /// never re-asked by the system, so a network failure here must
+    /// tell the user where to turn it back on.
+    private var wirelessDataHint: String {
+        "如果之前在弹窗里点了「不允许」，系统不会再问第二次：到 系统设置 → Drift → 无线数据，选「无线局域网与蜂窝数据」，再回来试。"
+    }
+
     var body: some View {
         List {
             Section {
@@ -36,7 +43,10 @@ struct AppUpdateView: View {
             }
 
             if let error = checker.checkError {
-                Section { Text(error).foregroundStyle(.secondary) }
+                Section {
+                    Text(error).foregroundStyle(.secondary)
+                    Text(wirelessDataHint).font(.caption).foregroundStyle(.secondary)
+                }
             }
 
             if checker.updateAvailable, let latest = checker.latest {
@@ -54,6 +64,7 @@ struct AppUpdateView: View {
                     }
                     if case .failed(let message) = checker.downloadPhase {
                         Text(message).font(.caption).foregroundStyle(.red)
+                        Text(wirelessDataHint).font(.caption).foregroundStyle(.secondary)
                     }
                     Text("下的是未签名 IPA，保存或分享到签名工具里，签好再装。")
                         .font(.caption).foregroundStyle(.secondary)
