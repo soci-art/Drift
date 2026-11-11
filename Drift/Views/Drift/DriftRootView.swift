@@ -14,6 +14,7 @@ struct DriftRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var inboxNote: String?
     @State private var launchFlowDone = false
+    @State private var permissionPassDone = false
     @State private var showAnnouncement = false
 
     var body: some View {
@@ -29,6 +30,7 @@ struct DriftRootView: View {
         .task {
             session.bootstrap()
             startLiveDetection()
+            runPermissionPass()
             runLaunchFlow()
         }
         .onChange(of: firstRun.isComplete) { _, complete in
@@ -38,7 +40,7 @@ struct DriftRootView: View {
         }
         .sheet(isPresented: $showAnnouncement, onDismiss: { AppAnnouncement.markSeen() }) {
             AppAnnouncementView { showAnnouncement = false }
-                .presentationDetents([.medium])
+                .presentationDetents([.large])
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -116,20 +118,30 @@ struct DriftRootView: View {
         session.startPairingWatch()
     }
 
-    /// The once-per-launch entry flow (#178/#181): permission prompts
-    /// first (system dialogs must not queue behind our own sheet),
-    /// then the silent update check — its real network request is
-    /// also what asks for wireless-data permission — then the update
-    /// announcement, if this build's has not been seen yet.
-    private func runLaunchFlow() {
-        guard firstRun.isComplete, !launchFlowDone else { return }
-        launchFlowDone = true
+    /// The permission pass (#181) runs at first launch whether or
+    /// not the guide is finished — #190 (Grace, 2026-11-11): asking
+    /// only after the guide meant the pairing step inside the guide
+    /// could never post its PIN notification, because notification
+    /// permission had not been asked yet. The silent update check
+    /// rides along: its real network request is also what asks for
+    /// wireless-data permission.
+    private func runPermissionPass() {
+        guard !permissionPassDone else { return }
+        permissionPassDone = true
         Task {
             await AppPermissions.requestUndecidedOnce()
             await AppUpdateChecker.shared.autoCheck()
-            if AppAnnouncement.shouldShow {
-                showAnnouncement = true
-            }
+        }
+    }
+
+    /// The announcement half of the launch flow (#178): only inside
+    /// the shell — after the guide for new installs, on the first
+    /// launch after updating for everyone else.
+    private func runLaunchFlow() {
+        guard firstRun.isComplete, !launchFlowDone else { return }
+        launchFlowDone = true
+        if AppAnnouncement.shouldShow {
+            showAnnouncement = true
         }
     }
 

@@ -317,8 +317,7 @@ struct FirstRunView: View {
     private var pairingSlide: some View {
         SlideLayout(
             art: { FirstRunPairArt(linked: pairingReady, active: page == 2) },
-            title: "2 · 配对",
-            subtitle: "在电脑上用 iLoader 配对是最省事的一条路；下面的两张卡是备选办法。")
+            title: "2 · 配对")
         {
             VStack(alignment: .leading, spacing: 12) {
                 statusPill(done: pairingReady, working: wirelessPair.isRunning,
@@ -327,12 +326,10 @@ struct FirstRunView: View {
                     wirelessCard
                 } else {
                     helperCard
-                    actionCard(icon: "doc.badge.plus", title: "导入配对文件",
-                               subtitle: "在电脑上做好——隔空投送、「文件」、iCloud 云盘都可以") {
+                    actionCard(icon: "doc.badge.plus", title: "导入配对文件") {
                         showPairingImporter = true
                     }
-                    actionCard(icon: "wifi", title: "不用电脑配对",
-                               subtitle: "iOS 27 以上可用——iOS 26 请用电脑做好的文件") {
+                    actionCard(icon: "wifi", title: "不用电脑配对") {
                         wirelessPair.start()
                     }
                     NativeNote("没有电脑工具？也可以在电脑上配对（idevicepair、Sideloadly——手机弹窗时点「信任」），把 .plist 配对文件发到这台 iPhone，在上面导入。")
@@ -434,7 +431,7 @@ struct FirstRunView: View {
 
     /// A pairing-slide action as a full-width card (two halves truncate at
     /// large Dynamic Type sizes).
-    private func actionCard(icon: String, title: LocalizedStringKey, subtitle: LocalizedStringKey,
+    private func actionCard(icon: String, title: LocalizedStringKey, subtitle: LocalizedStringKey? = nil,
                             action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 14) {
@@ -446,10 +443,12 @@ struct FirstRunView: View {
                     Text(title)
                         .font(.headline)
                         .foregroundStyle(.primary)
-                    Text(subtitle)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
@@ -483,8 +482,10 @@ struct FirstRunView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 ProgressView()
-                if let serviceName = wirelessPair.serviceName {
-                    Text("正在广播“\(serviceName)”——等这台 iPhone 连进来…")
+                if wirelessPair.serviceName != nil {
+                    // #189 (Grace, 2026-11-11): the service UUID is not
+                    // user information — the status is just this.
+                    Text("正在等待配对…")
                         .font(.subheadline)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
@@ -499,7 +500,7 @@ struct FirstRunView: View {
                     .textSelection(.enabled)
                 NativeNote("在 设置 → 隐私与安全性 → 开发者模式 →「与 \(WirelessPairing.displayName) 配对」里确认。")
             } else {
-                NativeNote("这一页留着别关，然后在这台 iPhone 上：设置 → 隐私与安全性 → 开发者模式 →「与 \(WirelessPairing.displayName) 配对」。")
+                NativeNote("设置 → 隐私与安全性 → 开发者模式 →「与 \(WirelessPairing.displayName) 配对」")
             }
             Button(role: .destructive) {
                 wirelessPair.cancel()
@@ -613,7 +614,7 @@ struct FirstRunView: View {
 private struct SlideLayout<Art: View, Content: View>: View {
     @ViewBuilder var art: () -> Art
     var title: LocalizedStringKey
-    var subtitle: LocalizedStringKey
+    var subtitle: LocalizedStringKey? = nil
     @ViewBuilder var content: () -> Content
 
     var body: some View {
@@ -623,10 +624,12 @@ private struct SlideLayout<Art: View, Content: View>: View {
             VStack(spacing: 8) {
                 Text(title)
                     .font(.largeTitle.weight(.bold))
-                Text(subtitle)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .multilineTextAlignment(.center)
             .padding(.horizontal, 24)
