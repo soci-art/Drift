@@ -26,24 +26,6 @@ struct PosterBoardManagerView: View {
     /// How a deletion is made to take effect, keyed to how the wallpaper was
     /// flashed (Grace, #161): local → end PosterBoard; 免注销 → restart
     /// PosterBoard; 注销 and anything unknown → respring.
-    enum ActivationKind {
-        case endPosterBoard, restartPosterBoard, respring
-        var needText: String {
-            switch self {
-            case .endPosterBoard: return "要让删除生效，请打开 PosterBoard，再从应用切换器把它上滑关掉。"
-            case .restartPosterBoard: return "要让删除生效，需要重启 PosterBoard。"
-            case .respring: return "要让删除生效，需要注销一次。"
-            }
-        }
-        var actionTitle: String {
-            switch self {
-            case .endPosterBoard: return "打开 PosterBoard"
-            case .restartPosterBoard: return "重启 PosterBoard"
-            case .respring: return "立即注销"
-            }
-        }
-    }
-
     private var identity: DeviceIdentity { identityMonitor.current }
 
     private var tunnelReady: Bool {
@@ -246,7 +228,17 @@ struct PosterBoardManagerView: View {
                 }?.resolvedChannel
             }
             let channels = succeeded.map { flashedChannel(of: $0) }
-            if channels.contains(.airlift) || channels.contains(nil) {
+            if channels.contains(nil) {
+                // At least one wallpaper was flashed by ANOTHER app:
+                // there is no channel to key on, so choose by the
+                // methods usable right now (Grace, 2026-11-11) — the
+                // local channel usable → end PosterBoard; otherwise
+                // respring.
+                activationKind = WorseQueryEscape.isAvailable(
+                    deviceVersion: WorseQueryEscape.processVersion,
+                    buildVersion: WorseQueryEscape.processBuildVersion)
+                    ? .endPosterBoard : .respring
+            } else if channels.contains(.airlift) {
                 activationKind = .respring
             } else if channels.contains(.direct) {
                 activationKind = .restartPosterBoard
@@ -255,6 +247,26 @@ struct PosterBoardManagerView: View {
             }
             activationMessage = messages.joined(separator: "\n\n")
             showActivationPrompt = true
+        }
+    }
+}
+
+/// How a finished deletion takes effect, and the one tap that does it
+/// (#161). Shared by the management page and Settings' record deletion.
+enum ActivationKind {
+    case endPosterBoard, restartPosterBoard, respring
+    var needText: String {
+        switch self {
+        case .endPosterBoard: return "要让删除生效，请打开 PosterBoard，再从应用切换器把它上滑关掉。"
+        case .restartPosterBoard: return "要让删除生效，需要重启 PosterBoard。"
+        case .respring: return "要让删除生效，需要注销一次。"
+        }
+    }
+    var actionTitle: String {
+        switch self {
+        case .endPosterBoard: return "打开 PosterBoard"
+        case .restartPosterBoard: return "重启 PosterBoard"
+        case .respring: return "立即注销"
         }
     }
 }

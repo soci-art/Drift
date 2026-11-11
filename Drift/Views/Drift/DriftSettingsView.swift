@@ -21,6 +21,9 @@ struct DriftSettingsView: View {
     @State private var showSealedNotice = false
     @State private var receipts: [PosterBoardLocalReceipt] = PosterBoardLocalReceipts.load()
     @State private var receiptToDelete: PosterBoardLocalReceipt?
+    @State private var showDeleteActivation = false
+    @State private var deleteActivationKind: ActivationKind = .respring
+    @State private var deleteActivationMessage = ""
     @State private var confirmClearHistory = false
     @ObservedObject private var updateChecker = AppUpdateChecker.shared
     @State private var cacheBreakdown: AppCache.Breakdown?
@@ -91,6 +94,13 @@ struct DriftSettingsView: View {
                 Button("取消", role: .cancel) {}
             } message: {
                 Text("记录清空后无法恢复。此操作只清记录，不会删除设备上已刷入的壁纸——要删壁纸请用「管理刷入的壁纸」。")
+            }
+            .confirmationDialog("删除完成", isPresented: $showDeleteActivation,
+                                titleVisibility: .visible) {
+                Button(deleteActivationKind.actionTitle) { runDeleteActivation() }
+                Button("稍后再说", role: .cancel) {}
+            } message: {
+                Text(deleteActivationMessage + "\n\n" + deleteActivationKind.needText)
             }
             .alert("恢复刷已封存", isPresented: $showSealedNotice) {
                 Button("知道了", role: .cancel) {}
@@ -209,11 +219,45 @@ struct DriftSettingsView: View {
             }
             receipts = PosterBoardLocalReceipts.load()
             history = ApplyHistory.load()
-            recordsNote = outcome.message
+            if outcome.confirmed {
+                // #161 applies here too: prompt by the channel the
+                // receipt says flashed it; the tap executes at once.
+                deleteActivationKind = switch receipt.resolvedChannel {
+                case .local: .endPosterBoard
+                case .direct: .restartPosterBoard
+                case .airlift: .respring
+                }
+                deleteActivationMessage = outcome.message
+                showDeleteActivation = true
+            } else {
+                recordsNote = outcome.message
+            }
         } catch {
             receipts = PosterBoardLocalReceipts.load()
             history = ApplyHistory.load()
             session.errorText = error.localizedDescription
+        }
+    }
+
+    /// Execute the post-deletion activation the user tapped (#161,
+    /// Settings path). Feedback lands in the records note, like every
+    /// other Settings deletion outcome.
+    private func runDeleteActivation() {
+        switch deleteActivationKind {
+        case .endPosterBoard:
+            let opened = PosterBoardLaunch.open()
+            recordsNote = opened
+                ? "已打开 PosterBoard：请从应用切换器中关闭它，然后检查锁定屏幕壁纸选择器，删掉的壁纸就没了。"
+                : "没能自动打开 PosterBoard：请打开锁定屏幕壁纸选择器来刷新；如果删掉的壁纸还在，从应用切换器关闭 PosterBoard 后再看。"
+        case .restartPosterBoard:
+            Task {
+                let result = await PosterRefresh.attempt(pairingPath: AppPaths.pairingFile.path)
+                recordsNote = result.status.explanation + (result.confirmed
+                    ? "。删掉的壁纸已经生效移除。"
+                    : "。可以连上隧道再试，或改用注销。")
+            }
+        case .respring:
+            NeoSpring.trigger()
         }
     }
 
