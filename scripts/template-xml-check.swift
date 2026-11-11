@@ -2,14 +2,14 @@
 //
 // Run (the project's usual shape — top-level code needs the file to be `main.swift`):
 //   mkdir -p /tmp/tmpl-xml \
-//     && cat Nugget/Core/TemplateXML.swift Nugget/Core/XMLScanner.swift \
+//     && cat Drift/Core/TemplateXML.swift Drift/Core/XMLScanner.swift \
 //            scripts/template-xml-check.swift > /tmp/tmpl-xml/main.swift \
 //     && xcrun swiftc -O /tmp/tmpl-xml/main.swift -o /tmp/tmpl-xml/check \
 //     && /tmp/tmpl-xml/check
 //
 // Or without the copy, by naming the concatenation target `main.swift`:
-//   mkdir -p /tmp/tmpl-xml && cat Nugget/Core/TemplateXML.swift \
-//       Nugget/Core/XMLScanner.swift scripts/template-xml-check.swift \
+//   mkdir -p /tmp/tmpl-xml && cat Drift/Core/TemplateXML.swift \
+//       Drift/Core/XMLScanner.swift scripts/template-xml-check.swift \
 //       > /tmp/tmpl-xml/main.swift && xcrun swiftc -O /tmp/tmpl-xml/main.swift \
 //       -o /tmp/tmpl-xml/check && /tmp/tmpl-xml/check
 //

@@ -1,7 +1,7 @@
 # `.batter` templates: port scope, limits, verification
 
 > **Status: landed (2026-10-18).** `scripts/typecheck.sh` reports **0 errors, 0
-> warnings** in `Nugget/` (the one remaining diagnostic is the documented
+> warnings** in `Drift/` (the one remaining diagnostic is the documented
 > `AirliftFFI` phantom). The compile and apply stages were **differentially
 > tested against the reference**: 46 XML/globby cases and 38 end-to-end cases,
 > every field and every resulting file byte-identical or semantically identical
@@ -16,8 +16,8 @@
 Ported from: `~/GoldenNugget/src/tweaks/posterboard/template_file.py`,
 `tendie_file.py`, `template_options/` (five modules), `templates_tweak.py`, and
 `src/controllers/xml_handler.py`.
-Ported into: `Nugget/Core/Template*.swift`, `Nugget/Core/XMLScanner.swift`,
-`Nugget/Views/TemplatesView.swift`, and the engine / PosterBoard compile stages.
+Ported into: `Drift/Core/Template*.swift`, `Drift/Core/XMLScanner.swift`,
+`Drift/Views/TemplatesView.swift`, and the engine / PosterBoard compile stages.
 
 ---
 
@@ -50,7 +50,7 @@ Two delivery routes, and which one a template takes is decided by its own
 ## 3. Deliberate divergences
 
 **`Sparserestore-` templates are refused, with the reason on screen and in the
-run log.** This project deleted its whole `Nugget/Sparserestore/` tree on
+run log.** This project deleted its whole `Drift/Sparserestore/` tree on
 2026-09-19 (`d1830d9`, "some other big things") in favour of the protective
 backup route; that commit records no reason, so re-introducing the protocol is
 not something this port does quietly. The template is therefore left out of the
@@ -147,8 +147,8 @@ Templates`), and a run is not started for a template that cannot be delivered.
 
 ```bash
 # XML engine + globs, against the reference's own functions
-mkdir -p /tmp/tmpl-xml && for f in Nugget/Core/TemplateXML.swift \
-    Nugget/Core/XMLScanner.swift scripts/template-xml-check.swift; do
+mkdir -p /tmp/tmpl-xml && for f in Drift/Core/TemplateXML.swift \
+    Drift/Core/XMLScanner.swift scripts/template-xml-check.swift; do
   cat "$f"; printf '\n'; done > /tmp/tmpl-xml/main.swift
 xcrun swiftc -O -swift-version 5 -target arm64-apple-macosx26.0 \
     /tmp/tmpl-xml/main.swift -o /tmp/tmpl-xml/check && /tmp/tmpl-xml/check
@@ -161,9 +161,9 @@ xcrun swiftc -O -swift-version 5 -target arm64-apple-macosx26.0 \
 # `-target` must be ≥ 26 — `conformingTo:` is a UTType overload, and the spliced
 # file needs `import UniformTypeIdentifiers` (which the harness file declares)
 # for `.directory`/`.data` to resolve on the host.
-mkdir -p /tmp/tmpl-e2e && cat Nugget/Core/TemplateXML.swift \
-    Nugget/Core/XMLScanner.swift Nugget/Core/TemplateFile.swift \
-    Nugget/Core/TemplateOptions.swift scripts/template-e2e-check.swift \
+mkdir -p /tmp/tmpl-e2e && cat Drift/Core/TemplateXML.swift \
+    Drift/Core/XMLScanner.swift Drift/Core/TemplateFile.swift \
+    Drift/Core/TemplateOptions.swift scripts/template-e2e-check.swift \
     > /tmp/tmpl-e2e/main.swift
 xcrun swiftc -O -swift-version 5 -target arm64-apple-macosx26.0 \
     /tmp/tmpl-e2e/main.swift -o /tmp/tmpl-e2e/check && /tmp/tmpl-e2e/check

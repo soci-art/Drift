@@ -22,11 +22,11 @@
 //                reset record is the "no entries" one.
 //
 // Run:
-//   mkdir -p /tmp/sbcheck && cat Nugget/Core/TweakModel.swift \
-//       Nugget/Core/TweakCatalog.swift Nugget/Core/TweakCatalogDaemons.swift \
-//       Nugget/Core/TweakDomainMap.swift Nugget/Core/TweakCompiler.swift \
-//       Nugget/Core/StatusBarModel.swift Nugget/Core/StatusBarArchive.swift \
-//       Nugget/Core/StatusBarSelection.swift Nugget/Views/Extensions/Extensions.swift \
+//   mkdir -p /tmp/sbcheck && cat Drift/Core/TweakModel.swift \
+//       Drift/Core/TweakCatalog.swift Drift/Core/TweakCatalogDaemons.swift \
+//       Drift/Core/TweakDomainMap.swift Drift/Core/TweakCompiler.swift \
+//       Drift/Core/StatusBarModel.swift Drift/Core/StatusBarArchive.swift \
+//       Drift/Core/StatusBarSelection.swift Drift/Views/Extensions/Extensions.swift \
 //       scripts/statusbar-check.swift > /tmp/sbcheck/main.swift \
 //     && xcrun swiftc -O /tmp/sbcheck/main.swift -o /tmp/sbcheck/check \
 //     && /tmp/sbcheck/check

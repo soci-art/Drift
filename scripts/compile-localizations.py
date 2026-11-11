@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CATALOG_DIR = ROOT / "layout" / "Applications" / "GoldenNuggetMobile.app"
+CATALOG_DIR = ROOT / "layout" / "Applications" / "Drift.app"
 DEFAULT_OUTPUT = ROOT / "build" / "localizations"
 
 # The `.xcstrings` name maps to the `.strings` table Foundation loads.

@@ -23,7 +23,7 @@ SOURCES = ["TweakModel", "TweakCatalog", "TweakCatalogDaemons", "TweakDomainMap"
            "TweakReset", "StatusBarModel", "StatusBarArchive", "StatusBarSelection"]
 SUPPORT = r'''
 import Foundation
-struct GoldenNuggetError: LocalizedError {
+struct DriftError: LocalizedError {
     let text: String
     init(_ text: String) { self.text = text }
     var errorDescription: String? { text }
@@ -353,7 +353,7 @@ def main():
         paths = []
         for name in SOURCES:
             path = folder / f"{name}.swift"
-            path.write_text((ROOT / "Nugget/Core" / f"{name}.swift").read_text().replace("import ZIPFoundation", ""))
+            path.write_text((ROOT / "Drift/Core" / f"{name}.swift").read_text().replace("import ZIPFoundation", ""))
             paths.append(path)
         harness = folder / "Check.swift"
         harness.write_text(SUPPORT)

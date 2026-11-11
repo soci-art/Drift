@@ -5,13 +5,13 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
-availability = (ROOT / "Nugget/Core/AirliftAvailability.swift").read_text()
-modes = (ROOT / "Nugget/Core/PosterBoardApplyMode.swift").read_text().replace(
+availability = (ROOT / "Drift/Core/AirliftAvailability.swift").read_text()
+modes = (ROOT / "Drift/Core/PosterBoardApplyMode.swift").read_text().replace(
     '"PosterBoardApplyMode"', '"AirliftAvailabilityHarnessMode"')
-airlift = (ROOT / "Nugget/Core/Airlift.swift").read_text()
+airlift = (ROOT / "Drift/Core/Airlift.swift").read_text()
 gate = airlift.split("    // MARK: - Availability", 1)[1].split(
     "    /// Refuse unless", 1)[0]
-model = (ROOT / "Nugget/Core/TweakModel.swift").read_text()
+model = (ROOT / "Drift/Core/TweakModel.swift").read_text()
 version = "enum TweakVersion {" + model.split("enum TweakVersion {", 1)[1].split(
     "\nextension TweakSpec", 1)[0]
 # `PosterBoardApplyModeSettings.resolved` asks the in-process route whether it

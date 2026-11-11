@@ -21,9 +21,9 @@
 //                    off spec contributes nothing.
 //
 // Run:
-//   mkdir -p /tmp/conflictcheck && cat Nugget/Core/TweakModel.swift \
-//       Nugget/Core/TweakCatalog.swift Nugget/Core/TweakCatalogDaemons.swift \
-//       Nugget/Core/TweakConflicts.swift scripts/tweak-conflicts-check.swift \
+//   mkdir -p /tmp/conflictcheck && cat Drift/Core/TweakModel.swift \
+//       Drift/Core/TweakCatalog.swift Drift/Core/TweakCatalogDaemons.swift \
+//       Drift/Core/TweakConflicts.swift scripts/tweak-conflicts-check.swift \
 //       > /tmp/conflictcheck/main.swift \
 //     && xcrun swiftc -O /tmp/conflictcheck/main.swift -o /tmp/conflictcheck/check \
 //     && /tmp/conflictcheck/check

@@ -21,7 +21,7 @@
 > diverge (SPM compiles, xcodebuild is missing one file). It now accepts both
 > spellings, and running it twice is verified to produce identical output.
 
-Audit scope: `Nugget/Core/*` (our own code) and `Vendor/MinimuxerGateway/idevice/*`
+Audit scope: `Drift/Core/*` (our own code) and `Vendor/MinimuxerGateway/idevice/*`
 (a SideStore fork, so changes cost upstream merge effort). **`Vendor/MinimuxerSources/`
 is a forwarding layer — changing a signature means changing both layers**
 (`MinimuxerApi.swift:298/320` ↔ `IdeviceGateway.swift:2864/2896`).
@@ -35,7 +35,7 @@ slowness**. Only 2 are actual slowdowns; the rest are reliability. Item by item 
 
 | # | Issue | Changed in |
 |---|---|---|
-| 1 | The cancellation flag was never wired up | New `Nugget/Core/InFlightCall.swift`; `MobileBackup2Delegate.swift` (inject `cancellationRequested`); `IdeviceGateway.swift` + `MinimuxerApi.swift` (add the parameter in both layers); `ProtectiveBackup.swift`, `RestoreRunner.swift` (pass `CancelFlag`) |
+| 1 | The cancellation flag was never wired up | New `Drift/Core/InFlightCall.swift`; `MobileBackup2Delegate.swift` (inject `cancellationRequested`); `IdeviceGateway.swift` + `MinimuxerApi.swift` (add the parameter in both layers); `ProtectiveBackup.swift`, `RestoreRunner.swift` (pass `CancelFlag`) |
 | 2 | Abandoned calls had no reaping gate | `StallGuard.swift` (enter/leave/noteAbandoned); `ChannelRecovery.swift` (bounded wait for drain before retrying); `PoCEngine.swift` (entry gate, and **before `clearCancel()`**) |
 | 3 | Diagnostics tears down its own session | `Diagnostics.swift` (skip the session probes entirely when a call is in flight; a single snapshot replaces two full reads) |
 | 4 | Handshake-silence detection re-read the whole log every 5 s | `WireCensus.swift` (two counters + `handshakeSilent`); `RustLog.swift` (`deviceSilentAtHandshake()` shrinks to one line, the `since:` parameter is deleted) |
@@ -94,7 +94,7 @@ And a repo-wide grep shows that **`isCancelled` has exactly one declaration, one
 and no writes at all**:
 
 ```
-$ grep -rn "isCancelled" Vendor/MinimuxerGateway/ Vendor/MinimuxerSources/ Nugget/
+$ grep -rn "isCancelled" Vendor/MinimuxerGateway/ Vendor/MinimuxerSources/ Drift/
 MobileBackup2Delegate.swift:57:    var isCancelled = false          ← declaration
 MobileBackup2Delegate.swift:680:    context(ctx)?.isCancelled ?? false ← read
 ```
@@ -269,7 +269,7 @@ recovery ladder: **freeing the adapter out from under an in-flight call**.
 
 ### Fix
 
-**(a) Add an in-flight gate** (new file `Nugget/Core/InFlightCall.swift`):
+**(a) Add an in-flight gate** (new file `Drift/Core/InFlightCall.swift`):
 
 ```swift
 import Foundation

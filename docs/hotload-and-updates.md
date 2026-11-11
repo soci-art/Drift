@@ -107,6 +107,6 @@ concurrent checks. No real device or GitHub account is used by the harness.
 Validated on 2026-10-26 with Swift 6.3.3, Xcode 26.6 and iOS 26.5 SDK:
 56 isolated HotLoad/update checks, 124 existing community/preset/reset checks,
 and 3204 desktop compiler differential cases passed. The device Release build
-produces `build/GoldenNuggetMobile.ipa` (unsigned). Physical-device installation
+produces `build/Drift.ipa` (unsigned). Physical-device installation
 and the remote mobile rules endpoint require publishing the rules file and
 installing the IPA through a sideloading tool.

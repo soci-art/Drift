@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Keep the launch-time log privacy pass bounded.
 
-`GoldenNuggetEngine.enableRustFileLogging()` runs `PairingLogPrivacy` over
+`DriftEngine.enableRustFileLogging()` runs `PairingLogPrivacy` over
 `minimuxer.log` before the Rust sink is installed, and it runs from the first
 view body — i.e. on the main thread, inside launch. A Rust generation is capped
 at 64 MB, so the pass has to read up to 128 MB of protocol log at launch.
@@ -14,7 +14,7 @@ On 2026-10-29 the app was killed by the scene-create watchdog on every launch:
     Array<A>.contains(sequence:)
     PairingLogPrivacy.scan(_:)
     PairingLogPrivacy.removeLegacyDumps(at:limit:)
-    GoldenNuggetEngine.enableRustFileLogging()
+    DriftEngine.enableRustFileLogging()
     GoldenNuggetView.body.getter
 
 19.96 s of wall clock for a 54 MB `minimuxer.log`, so the shell never appeared.
@@ -30,7 +30,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
-source = (ROOT / "Nugget/Core/Logging.swift").read_text().splitlines()
+source = (ROOT / "Drift/Core/Logging.swift").read_text().splitlines()
 
 # The declaration that makes up the pass, taken verbatim. (The byte-array
 # substring helper it used to carry is gone; the search is Foundation's now.)

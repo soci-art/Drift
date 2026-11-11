@@ -30,7 +30,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CATALOG="$ROOT/layout/Applications/GoldenNuggetMobile.app/Assets.xcassets"
+CATALOG="$ROOT/layout/Applications/Drift.app/Assets.xcassets"
 OUT="$ROOT/build/assets"
 SHIM="$ROOT/tools/assetkit-cli/.build/release/assetkit-cli"
 
@@ -42,7 +42,7 @@ if [[ ! -d "$CATALOG" ]]; then
     exit 1
 fi
 
-ACTOOL_CAR="$ROOT/layout/Applications/GoldenNuggetMobile.app/Assets.car"
+ACTOOL_CAR="$ROOT/layout/Applications/Drift.app/Assets.car"
 FORCE_SHIM="${ASSETKIT_SHIM_FORCE:-0}"
 
 if [[ -s "$ACTOOL_CAR" && "$FORCE_SHIM" != "1" ]]; then
@@ -52,7 +52,7 @@ if [[ -s "$ACTOOL_CAR" && "$FORCE_SHIM" != "1" ]]; then
     rm -rf "$OUT"
     mkdir -p "$OUT"
     cp "$ACTOOL_CAR" "$OUT/Assets.car"
-    cp "$ROOT/layout/Applications/GoldenNuggetMobile.app/AppIcon-partial.plist" \
+    cp "$ROOT/layout/Applications/Drift.app/AppIcon-partial.plist" \
        "$OUT/AppIcon-partial.plist" 2>/dev/null || true
     echo "compile-assets: wrote $(ls -1 "$OUT" | wc -l) files to build/assets"
     exit 0

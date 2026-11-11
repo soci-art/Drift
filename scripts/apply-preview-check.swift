@@ -17,13 +17,13 @@
 //                  minute; the storage line reads the volume without crashing.
 //
 // Run:
-//   mkdir -p /tmp/previewcheck && cat Nugget/Core/TweakModel.swift \
-//       Nugget/Core/TweakCatalog.swift Nugget/Core/TweakCatalogDaemons.swift \
-//       Nugget/Core/TweakDomainMap.swift Nugget/Core/TweakCompiler.swift \
-//       Nugget/Core/StatusBarModel.swift Nugget/Core/StatusBarArchive.swift \
-//       Nugget/Core/StatusBarSelection.swift Nugget/Core/SkipSetupCatalog.swift \
-//       Nugget/Core/SkipSetup.swift Nugget/Views/Extensions/Extensions.swift \
-//       Nugget/Core/TweakConflicts.swift Nugget/Core/ApplyPreview.swift \
+//   mkdir -p /tmp/previewcheck && cat Drift/Core/TweakModel.swift \
+//       Drift/Core/TweakCatalog.swift Drift/Core/TweakCatalogDaemons.swift \
+//       Drift/Core/TweakDomainMap.swift Drift/Core/TweakCompiler.swift \
+//       Drift/Core/StatusBarModel.swift Drift/Core/StatusBarArchive.swift \
+//       Drift/Core/StatusBarSelection.swift Drift/Core/SkipSetupCatalog.swift \
+//       Drift/Core/SkipSetup.swift Drift/Views/Extensions/Extensions.swift \
+//       Drift/Core/TweakConflicts.swift Drift/Core/ApplyPreview.swift \
 //       scripts/apply-preview-check.swift > /tmp/previewcheck/main.swift \
 //     && xcrun swiftc -O /tmp/previewcheck/main.swift -o /tmp/previewcheck/check \
 //     && /tmp/previewcheck/check

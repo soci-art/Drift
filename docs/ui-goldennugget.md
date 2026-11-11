@@ -6,17 +6,17 @@
 > Features and information architecture are **completely unchanged**: all bindings, actions, strings, logs, alerts, file pickers and share items stay exactly as they were;
 > only the colours, fonts, component styles, spacing and layout changed.
 
-Receiving side: `Nugget/Views/GoldenTheme.swift` (tokens), `Nugget/Views/NativeUI.swift` (components),
-`Nugget/Views/GoldenNuggetView.swift` (main page), `Nugget/Views/TweaksView.swift` (Tweaks page).
+Receiving side: `Drift/Views/GoldenTheme.swift` (tokens), `Drift/Views/NativeUI.swift` (components),
+`Drift/Views/GoldenNuggetView.swift` (main page), `Drift/Views/TweaksView.swift` (Tweaks page).
 Reference: the **iOS GUI** in `~/GoldenNugget` — that is the only place the GoldenNugget Mobile look was ever written down.
 
 > **Superseded (the design-system port itself).** This document is the record of the design-system
 > port, kept because it states where every token and metric came from. The ported code was later
 > deleted as dead code: the `Golden*` component library (`GoldenPage`, `GoldenCard`, `GoldenHeader`,
-> `GoldenLogo`, …) in `Nugget/Views/GoldenComponents.swift`, and with it `Nugget/Views/GoldenTheme.swift`
+> `GoldenLogo`, …) in `Drift/Views/GoldenComponents.swift`, and with it `Drift/Views/GoldenTheme.swift`
 > (palette, metrics, type scale) — the native screens never read either, they use `List`/`Form`,
 > Dynamic Type text styles and semantic colours. What survives is `GoldenTone` in
-> `Nugget/Views/NativeUI.swift`, the status-line tone slot, now resolved to platform colours by
+> `Drift/Views/NativeUI.swift`, the status-line tone slot, now resolved to platform colours by
 > `nativeColor`. Every name in the tables below is therefore history; the tables stay because they are
 > the only record of the reference values the port was built from.
 
@@ -151,7 +151,7 @@ The four rules for a narrow window (the narrowest is computed from Slide Over 32
 the rule is the same as the reference's), the 720 cap of `GoldenPage` (it only centres when the window is wider than it, so it does nothing in a narrow window),
 the height of `GoldenLogView` (Slide Over is still full height).
 
-### Shell: sidebar on a tablet, tab bar on a phone (`Nugget/Views/AppShell.swift`)
+### Shell: sidebar on a tablet, tab bar on a phone (`Drift/Views/AppShell.swift`)
 
 `horizontalSizeClass` picks the shell, and each platform gets the idiom it is built around:
 
@@ -193,7 +193,7 @@ pulled out separately in the previous revert).
 Two pages were sorted out once the shells stopped needing a menu row for each:
 
 - **Daemons is now the Tweaks page's second mode**, behind a segmented switch pinned above the list
-  (`TweaksMode` in `Nugget/Views/TweaksView.swift`, with `DaemonsView` embedded as the `.daemons` branch). They were
+  (`TweaksMode` in `Drift/Views/TweaksView.swift`, with `DaemonsView` embedded as the `.daemons` branch). They were
   always one job — the same selection, the same autosave, the same preset import, and the same single Apply on the home
   page — and upstream only splits them because a desktop has a sidebar to put them in. The switch is drawn only while
   HotLoad leaves `Daemons` visible; a mode that can only say "Feature unavailable" is worse than no mode. `.daemons`
@@ -231,13 +231,13 @@ scripts/sync-pbxproj-sources.py --check   # the project's source list matches Pa
 **The two traps in `typecheck.sh` (both have been hit)**:
 
 1. `swiftc -typecheck` stops as soon as it has reported **the first file that errors**, and the source files
-   queued after it are **not checked at all**. In this project `Nugget/Core/AfcFileExplorer.swift` always throws
+   queued after it are **not checked at all**. In this project `Drift/Core/AfcFileExplorer.swift` always throws
    28 phantom errors because the module cache is older than Vendor, so any new error under Views/ would read
    as a "pass". After adding or heavily changing a file, use `--first` to move it to the front and run it again.
 2. `-target` must match the deployment target (26.0 in this project). Written as ios16.0, iOS 17+ APIs like
    `onChange(of:initial:_:)` get reported as **false** "only available in iOS 17.0 or newer".
 
 > `sync-pbxproj-sources.py` no longer hardcodes the project file name: the project was just renamed from
-> `PoC.xcodeproj` to `GoldenNuggetMobile.xcodeproj`, and hardcoding the old name would make it die straight
+> `PoC.xcodeproj` to `Drift.xcodeproj`, and hardcoding the old name would make it die straight
 > away with a `FileNotFoundError` (fixed: glob the unique `*.xcodeproj` at the repo root, and error out if
 > there is more than one).

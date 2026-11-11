@@ -22,7 +22,7 @@ with tempfile.TemporaryDirectory(prefix="goldennugget-freshness-") as folder:
     fake = root / "bin/xcodebuild"
     fake.write_text("#!/bin/sh\nexit 42\n")
     fake.chmod(0o755)
-    ipa = root / "build/GoldenNuggetMobile.ipa"
+    ipa = root / "build/Drift.ipa"
     ipa.write_bytes(b"previous successful IPA")
     env = {**os.environ, "PATH": str(root / "bin") + ":" + os.environ["PATH"]}
     result = subprocess.run(["/bin/zsh", str(script), "Release"], env=env, capture_output=True, text=True)

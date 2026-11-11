@@ -1,7 +1,7 @@
 import Foundation
 import Minimuxer
 
-/// Drift 2.0.0's engine facade — the replacement for `GoldenNuggetEngine`.
+/// Drift 2.0.0's engine facade — the replacement for `DriftEngine`.
 ///
 /// What changed in the swap, and what deliberately did not:
 ///
@@ -236,7 +236,7 @@ final class DriftEngine {
         if selection.fullReset || !selection.resetModes.isEmpty {
             let carriesWallpapers = !selection.tendies.isEmpty || selection.video != nil
             if carriesWallpapers {
-                throw GoldenNuggetError("PosterBoard 页已有一个待执行的重置："
+                throw DriftError("PosterBoard 页已有一个待执行的重置："
                     + "（\(selection.describe)），同时还选中了壁纸。重置运行"
                     + "不会安装任何壁纸——它会清空库，并在读取壁纸包之前就返回"
                     + "——所以这样应用会抹掉所有壁纸且不新增任何一张。请"
@@ -247,7 +247,7 @@ final class DriftEngine {
         }
 
         guard selection.isActive || selection.fullReset || !selection.resetModes.isEmpty else {
-            throw GoldenNuggetError("没有可应用的内容：PosterBoard 页没有选择任何内容。")
+            throw DriftError("没有可应用的内容：PosterBoard 页没有选择任何内容。")
         }
 
         // The apply mode picks the mechanism. The in-process route reads
@@ -292,7 +292,7 @@ final class DriftEngine {
             // apply: these routes never take or restore a backup.
             let minimuxer = Minimuxer.shared()
             guard await testReady(minimuxer) else {
-                throw GoldenNuggetError("minimuxer 尚未就绪。请确保 Wi-Fi 和隧道可用（LocalDevVPN 或 WireGuard + em_proxy），然后选择配对文件。")
+                throw DriftError("minimuxer 尚未就绪。请确保 Wi-Fi 和隧道可用（LocalDevVPN 或 WireGuard + em_proxy），然后选择配对文件。")
             }
             // Everything after this byte offset is this run's Rust output.
             markRustLog()
@@ -324,7 +324,7 @@ final class DriftEngine {
             // backup or restore code behind this facade to fall back to.
             // The session funnel refuses this mode first; this is the
             // second, engine-side refusal with the same notice.
-            throw GoldenNuggetError(DriftRestoreGate.notice)
+            throw DriftError(DriftRestoreGate.notice)
         }
     }
 
@@ -356,28 +356,28 @@ final class DriftEngine {
                                      deviceVersion: String,
                                      buildVersion: String) throws {
         if templates.contains(where: \.isContainer) {
-            throw GoldenNuggetError("直刷只安装模板描述文件。所选模板还带有容器文件；"
+            throw DriftError("直刷只安装模板描述文件。所选模板还带有容器文件；"
                 + "请切换到「恢复刷」来应用全部内容。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         if selection.fullReset || !selection.resetModes.isEmpty {
-            throw GoldenNuggetError("直刷无法重置 PosterBoard 库——它只会添加壁纸。"
+            throw DriftError("直刷无法重置 PosterBoard 库——它只会添加壁纸。"
                 + "要重置，请把刷入方式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         if selection.video != nil {
-            throw GoldenNuggetError("直刷无法应用 PosterBoard 视频：它的帧是为恢复准备的。"
+            throw DriftError("直刷无法应用 PosterBoard 视频：它的帧是为恢复准备的。"
                 + "请把刷入方式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         if selection.tendies.contains(where: \.isUnsafeContainer) {
-            throw GoldenNuggetError("包含商店数据库的壁纸包只能用恢复刷；恢复刷已封存，暂时刷不了。")
+            throw DriftError("包含商店数据库的壁纸包只能用恢复刷；恢复刷已封存，暂时刷不了。")
         }
         let reason = PosterBoardDirect.unavailableReason(deviceVersion: deviceVersion,
                                                          buildVersion: buildVersion)
-        guard reason.isEmpty else { throw GoldenNuggetError(reason) }
+        guard reason.isEmpty else { throw DriftError(reason) }
         guard FileManager.default.fileExists(atPath: AppPaths.pairingFile.path) else {
-            throw GoldenNuggetError("直刷需要一份配对记录，但还没有保存任何一份。"
+            throw DriftError("直刷需要一份配对记录，但还没有保存任何一份。"
                 + "请先在首页导入一份，本机通道可用时会自动改走本机通道。")
         }
     }
@@ -411,24 +411,24 @@ final class DriftEngine {
     private func checkAirliftCanApply(posterBoard: PosterBoardSelection,
                                      templates: [TemplateFile] = [], deviceVersion: String, buildVersion: String = "") throws {
         if templates.contains(where: \.isContainer) {
-            throw GoldenNuggetError("AirLift 只安装模板描述文件。所选模板"
+            throw DriftError("AirLift 只安装模板描述文件。所选模板"
                 + "还带有容器文件；请切换到「恢复刷」来应用全部内容。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
-            throw GoldenNuggetError("AirLift 无法重置 PosterBoard 库——它只会添加"
+            throw DriftError("AirLift 无法重置 PosterBoard 库——它只会添加"
                 + "壁纸。要重置，请把应用模式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         if posterBoard.video != nil {
-            throw GoldenNuggetError("AirLift 无法应用 PosterBoard 视频：它的帧是"
+            throw DriftError("AirLift 无法应用 PosterBoard 视频：它的帧是"
                 + "是为恢复准备的。请把应用模式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         let reason = Airlift.unsupportedReason(deviceVersion: deviceVersion, buildVersion: buildVersion)
-        guard reason.isEmpty else { throw GoldenNuggetError(reason) }
+        guard reason.isEmpty else { throw DriftError(reason) }
         guard FileManager.default.fileExists(atPath: AppPaths.pairingFile.path) else {
-            throw GoldenNuggetError("AirLift 需要一份配对记录，但还没有保存任何一份。"
+            throw DriftError("AirLift 需要一份配对记录，但还没有保存任何一份。"
                 + "请先在首页导入一份。")
         }
     }
@@ -445,30 +445,30 @@ final class DriftEngine {
                                     hasOtherPayloads: Bool,
                                     deviceVersion: String) throws {
         if hasOtherPayloads {
-            throw GoldenNuggetError("本机通道只能写入壁纸：所选内容里还有调整、跳过设置、"
+            throw DriftError("本机通道只能写入壁纸：所选内容里还有调整、跳过设置、"
                 + "状态栏或其他模板文件，它们不会通过这条路径送达。请只保留壁纸，"
                 + "或改用其他刷入方式。")
         }
         if templates.contains(where: \.isContainer) {
-            throw GoldenNuggetError("本机通道只安装模板描述文件。所选模板还带有容器文件；"
+            throw DriftError("本机通道只安装模板描述文件。所选模板还带有容器文件；"
                 + "请改用「恢复刷」来应用全部内容。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
-            throw GoldenNuggetError("本机通道无法重置 PosterBoard 库——它只会添加壁纸。"
+            throw DriftError("本机通道无法重置 PosterBoard 库——它只会添加壁纸。"
                 + "要重置，请把刷入方式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         if posterBoard.video != nil {
-            throw GoldenNuggetError("本机通道无法应用 PosterBoard 视频：它的帧是为恢复准备的。"
+            throw DriftError("本机通道无法应用 PosterBoard 视频：它的帧是为恢复准备的。"
                 + "请把刷入方式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         if posterBoard.tendies.contains(where: \.isUnsafeContainer) {
-            throw GoldenNuggetError("包含商店数据库的壁纸包只能用恢复刷；恢复刷已封存，暂时刷不了。")
+            throw DriftError("包含商店数据库的壁纸包只能用恢复刷；恢复刷已封存，暂时刷不了。")
         }
         let reason = WorseQueryEscape.unavailableReason(deviceVersion: deviceVersion)
-        guard reason.isEmpty else { throw GoldenNuggetError(reason) }
+        guard reason.isEmpty else { throw DriftError(reason) }
     }
 
     /// Run the AirLift PosterBoard injection, reporting through the run log.

@@ -4,7 +4,7 @@ import Foundation
 import SQLite3
 import UniformTypeIdentifiers
 
-struct GoldenNuggetError: Error, CustomStringConvertible {
+struct DriftError: Error, CustomStringConvertible {
     let description: String
     init(_ value: String) { description = value }
 }
@@ -32,7 +32,7 @@ func check(_ condition: Bool, _ label: String) {
 }
 func execute(_ db: OpaquePointer?, _ sql: String) throws {
     guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
-        throw GoldenNuggetError(String(cString: sqlite3_errmsg(db)))
+        throw DriftError(String(cString: sqlite3_errmsg(db)))
     }
 }
 /// Mirrors `PosterBoardStore.open`: a read-only handle only reads a WAL-mode

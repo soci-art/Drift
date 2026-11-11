@@ -11,6 +11,6 @@ SOURCES = ["TweakModel", "TweakCatalog", "TweakCatalogDaemons", "TweakDomainMap"
 with tempfile.TemporaryDirectory(prefix="goldennugget-hotload-") as temporary:
     binary = Path(temporary) / "check"
     subprocess.run(["xcrun", "swiftc", "-swift-version", "5", "-parse-as-library",
-                    *[str(ROOT / "Nugget/Core" / f"{name}.swift") for name in SOURCES],
+                    *[str(ROOT / "Drift/Core" / f"{name}.swift") for name in SOURCES],
                     str(ROOT / "scripts/hotload-check.swift"), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)

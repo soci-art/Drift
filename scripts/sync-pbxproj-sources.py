@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Reconcile the Xcode project's project.pbxproj with Package.swift.
 
-Package.swift is the single source of truth for which files the GoldenNuggetMobile target
+Package.swift is the single source of truth for which files the Drift target
 compiles.  It did not use to be: the manifest carried a hand-maintained list of
 50 paths that had to be kept in step with the Xcode project by hand, and that
-list had already drifted — Nugget/Core/InFlightCall.swift was missing from it.
+list had already drifted — Drift/Core/InFlightCall.swift was missing from it.
 
 This script asks SwiftPM itself (`swift package describe --disable-sandbox`)
 which files the target resolves and makes the Xcode project agree.  It never
@@ -39,7 +39,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-NUGGET = "Nugget"
+NUGGET = "Drift"
 SWIFT_TYPE = "sourcecode.swift"
 
 HEX24 = re.compile(r"^[0-9A-F]{24}$")
@@ -49,7 +49,7 @@ def find_pbxproj() -> Path:
     """The project file, found rather than named.
 
     This used to be the literal ``PoC.xcodeproj/project.pbxproj``, and the
-    project was then renamed to ``GoldenNuggetMobile.xcodeproj`` — which turned
+    project was then renamed to ``Drift.xcodeproj`` — which turned
     every hardcoded spelling of the old name into a `FileNotFoundError`, this
     script included.  There is exactly one ``*.xcodeproj`` in the repo root, so
     it is discovered; a future rename then costs nothing.
@@ -79,7 +79,7 @@ def resolved_sources() -> list[str]:
     """The target's sources as SwiftPM resolves them — never a guess.
 
     `xcrun` is absent on a Linux host, where SwiftPM cannot be asked anything, so
-    there is a fallback: the manifest declares `sources: ["Nugget"]`, and for a
+    there is a fallback: the manifest declares `sources: ["Drift"]`, and for a
     directory entry SwiftPM's answer *is* every `.swift` file under it. The walk
     is therefore not a second source of truth — it is the same answer computed
     without the tool that normally computes it, and the manifest is still the

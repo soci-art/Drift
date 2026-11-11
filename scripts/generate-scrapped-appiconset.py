@@ -27,7 +27,7 @@ import sys
 from PIL import Image
 
 CATALOG = pathlib.Path(
-    "layout/Applications/GoldenNuggetMobile.app/Assets.xcassets"
+    "layout/Applications/Drift.app/Assets.xcassets"
 )
 SET = CATALOG / "ScrappedIcon.appiconset"
 

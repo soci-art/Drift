@@ -21,7 +21,7 @@ passes all 3204 cases (267 selections across 12 device profiles).
 Community/preset/reset checks pass all 124 assertions, including Python
 decoding of Swift GN1 output.
 Release device build succeeds with `scripts/build-ipa.sh Release` using
-Xcode 26.6 / iOS 26.5 SDK, producing `build/GoldenNuggetMobile.ipa` (unsigned).
+Xcode 26.6 / iOS 26.5 SDK, producing `build/Drift.ipa` (unsigned).
 
 Existing mobile Siri hardware policy, AirLift gates, transport and restore
 behavior remain as documented in the previous synchronization.

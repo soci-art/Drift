@@ -156,7 +156,7 @@ enum Diagnostics {
     static func preflightBackupEncryption() async throws {
         switch await backupEncryptionEnabled() {
         case .some(true):
-            throw GoldenNuggetError("""
+            throw DriftError("""
                 This device has "Encrypt local backup" turned on (lockdown \
                 com.apple.mobile.backup / WillEncrypt = true).
                 GoldenNugget's premise is a plaintext Manifest.db: prune and inject rewrite it \

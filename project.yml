@@ -7,7 +7,7 @@
 # must not be edited by hand.
 #
 # Package.swift is, separately, the source of truth for the *source list*:
-# `- path: Nugget` below is deliberately the same source root Package.swift
+# `- path: Drift` below is deliberately the same source root Package.swift
 # declares.  XcodeGen cannot know that list — it does not read Package.swift —
 # so generation ends by running `scripts/sync-pbxproj-sources.py` (see
 # `postGenCommand` below), which asks SwiftPM what the target resolves and
@@ -176,7 +176,7 @@ targets:
     type: application
     platform: iOS
     sources:
-      - path: Nugget
+      - path: Drift
       # The String Catalogs are the source of truth for every user-facing string.
       # Xcode compiles them to <lang>.lproj/Localizable.strings and
       # <lang>.lproj/InfoPlist.strings at build time; the xtool path gets the
@@ -240,7 +240,7 @@ targets:
         product: WorseQuery
       - sdk: libsqlite3.tbd
       # NeoSpring resprings by loading a payload into a WKWebView
-      # (Nugget/Core/NeoSpring.swift), so WebKit has to be linked. It is a
+      # (Drift/Core/NeoSpring.swift), so WebKit has to be linked. It is a
       # system framework, so it is linked, not embedded.
       - sdk: WebKit.framework
       # EMProxy is deliberately NOT listed here.  It reaches the app through the

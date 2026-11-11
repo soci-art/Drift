@@ -125,7 +125,7 @@ struct PosterBoardTendie: Identifiable, Hashable {
         do {
             archive = try Archive(url: url, accessMode: .read)
         } catch {
-            throw GoldenNuggetError("\(url.lastPathComponent) 不是可读的 .tendies 文件："
+            throw DriftError("\(url.lastPathComponent) 不是可读的 .tendies 文件："
                 + "归档：\(error.localizedDescription)")
         }
 
@@ -176,7 +176,7 @@ struct PosterBoardTendie: Identifiable, Hashable {
         }
 
         if descriptors == 0 && !container {
-            throw GoldenNuggetError("\(url.lastPathComponent) 里既没有描述文件也没有"
+            throw DriftError("\(url.lastPathComponent) 里既没有描述文件也没有"
                 + "container — it does not look like a .tendies pack.")
         }
         self.descriptorCount = descriptors
@@ -270,12 +270,12 @@ struct PosterBoardTendie: Identifiable, Hashable {
             let relative = entry.path
             guard !relative.hasPrefix("/"),
                   !relative.split(separator: "/").contains("..") else {
-                throw GoldenNuggetError("\(name)：归档里有一个条目会逃出以下目录："
+                throw DriftError("\(name)：归档里有一个条目会逃出以下目录："
                     + "extraction directory (\(relative)).")
             }
             let target = URL(fileURLWithPath: root + "/" + relative)
             guard target.standardizedFileURL.path.hasPrefix(root) else {
-                throw GoldenNuggetError("\(name)：拒绝把 \(relative) 写到以下位置之外："
+                throw DriftError("\(name)：拒绝把 \(relative) 写到以下位置之外："
                     + "extraction directory.")
             }
             // A directory entry can legitimately be repeated or already exist
@@ -380,10 +380,10 @@ enum PosterBoardImports {
         try? FileManager.default.removeItem(at: destination)
         do {
             try unwrappedPackData(from: source).write(to: destination, options: .atomic)
-        } catch let error as GoldenNuggetError {
+        } catch let error as DriftError {
             throw error
         } catch {
-            throw GoldenNuggetError("无法把 \(source.lastPathComponent) 拷贝进应用："
+            throw DriftError("无法把 \(source.lastPathComponent) 拷贝进应用："
                 + error.localizedDescription)
         }
         do {
@@ -413,7 +413,7 @@ enum PosterBoardImports {
         do {
             data = try Data(contentsOf: source)
         } catch {
-            throw GoldenNuggetError("无法把 \(source.lastPathComponent) 拷贝进应用："
+            throw DriftError("无法把 \(source.lastPathComponent) 拷贝进应用："
                 + error.localizedDescription)
         }
         if data.starts(with: [0x50, 0x4B]) { return data } // "PK": a plain ZIP

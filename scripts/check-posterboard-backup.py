@@ -5,11 +5,11 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-backup = (ROOT / "Nugget/Core/PosterBoardBackup.swift").read_text()
+backup = (ROOT / "Drift/Core/PosterBoardBackup.swift").read_text()
 # Compile the actual consolidation methods; the mobilebackup2 fetch needs iOS.
 consolidation = backup.split("    // MARK: - Consolidation\n", 1)[1]
 consolidation = consolidation.split("/// What the targeted backup offered", 1)[0]
-source = (ROOT / "Nugget/Core/PosterBoardStore.swift").read_text()
+source = (ROOT / "Drift/Core/PosterBoardStore.swift").read_text()
 source += "\nenum PosterBoardBackup {\n" + consolidation
 source += (ROOT / "scripts/posterboard-backup-check.swift").read_text()
 with tempfile.TemporaryDirectory(prefix="posterboard-backup-") as work:

@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Type-check the GoldenNuggetMobile sources WITHOUT running xcodebuild.
+# Type-check the Drift sources WITHOUT running xcodebuild.
 #
 # Why this exists: `xcodebuild` needs to evaluate SwiftPM manifests, which means
 # it shells out to `sandbox-exec` and writes ~/.swiftpm.  In a sandboxed
@@ -19,7 +19,7 @@ PRODUCTS="${1:-}"
 # `--first <pattern>` hoists every matching source to the front of the list.
 # Load-bearing, not cosmetic: `swiftc -typecheck` reports diagnostics for the
 # files it reaches and then stops, so a source that always errors (a stale
-# vendored module turns `Nugget/Core/AfcFileExplorer.swift` into 28 phantom
+# vendored module turns `Drift/Core/AfcFileExplorer.swift` into 28 phantom
 # errors) means **nothing after it in the list is checked at all** — a
 # brand-new file with a real error reads as a clean pass.  `scripts/typecheck.sh
 # "" --first AppShell.swift` is how you check a file sitting behind that.
@@ -94,7 +94,7 @@ stale="$(find Vendor -name '*.swift' -newer "$PRODUCTS/Minimuxer.swiftmodule" -p
 if [[ -n "$stale" ]]; then
   echo "WARNING: $stale is newer than the modules in $PRODUCTS." >&2
   echo "         Errors naming a vendor symbol are PHANTOM until you rebuild with" >&2
-  echo "         Xcode; errors in Nugget/ are real either way." >&2
+  echo "         Xcode; errors in Drift/ are real either way." >&2
 fi
 
 # `-target` must match the deployment target this project actually builds with
@@ -126,8 +126,8 @@ xargs < /tmp/typecheck-sources.txt xcrun swiftc -typecheck \
 # `grep -c` exits 1 on zero matches, hence the `|| true` guards.
 errors=$(grep -c 'error:' /tmp/typecheck.log || true)
 warnings=$(grep -c 'warning:' /tmp/typecheck.log || true)
-own=$(grep -cE '^Nugget/(Core|Views|AppPackage|Tunnel|NuggetApp)[^:]*:.*(warning|error):' /tmp/typecheck.log || true)
-echo "=== $errors error(s), $warnings warning(s) ($own in Nugget/ app code) ==="
+own=$(grep -cE '^Drift/(Core|Views|AppPackage|Tunnel|NuggetApp)[^:]*:.*(warning|error):' /tmp/typecheck.log || true)
+echo "=== $errors error(s), $warnings warning(s) ($own in Drift/ app code) ==="
 if (( errors > 0 )); then
   echo "NOTE: swiftc -typecheck stops reporting after the first failing file, so" >&2
   echo "      sources behind it are NOT checked in this run.  To guarantee a" >&2

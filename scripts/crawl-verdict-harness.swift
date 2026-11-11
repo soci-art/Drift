@@ -1,4 +1,4 @@
-// Regression harness for the tunnel-crawl verdict in Nugget/Core/StallGuard.swift.
+// Regression harness for the tunnel-crawl verdict in Drift/Core/StallGuard.swift.
 //
 // The rule is "the tunnel is stuck", and it has to accept every shape of stuck
 // while leaving healthy and recovering streams alone.  Two of those shapes are

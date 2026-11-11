@@ -21,10 +21,10 @@
 //
 // Run:
 //   mkdir -p /tmp/skipsetup \
-//     && cat Nugget/Core/SkipSetupCatalog.swift Nugget/Core/SkipSetup.swift \
-//            Nugget/Core/TweakModel.swift Nugget/Core/TweakCatalog.swift \
-//            Nugget/Core/TweakCatalogDaemons.swift Nugget/Core/TweakDomainMap.swift \
-//            Nugget/Core/TweakCompiler.swift scripts/skipsetup-check.swift \
+//     && cat Drift/Core/SkipSetupCatalog.swift Drift/Core/SkipSetup.swift \
+//            Drift/Core/TweakModel.swift Drift/Core/TweakCatalog.swift \
+//            Drift/Core/TweakCatalogDaemons.swift Drift/Core/TweakDomainMap.swift \
+//            Drift/Core/TweakCompiler.swift scripts/skipsetup-check.swift \
 //            > /tmp/skipsetup/main.swift \
 //     && xcrun swiftc -O /tmp/skipsetup/main.swift -o /tmp/skipsetup/check \
 //     && /tmp/skipsetup/check [CloudConfigurationDetails.plist] [com.apple.purplebuddy.plist]

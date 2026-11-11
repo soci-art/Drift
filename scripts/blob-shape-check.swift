@@ -34,7 +34,7 @@
 //
 // Run:
 //   mkdir -p /tmp/blob-shape \
-//     && cat Nugget/Core/MBFileBlob.swift scripts/blob-shape-check.swift > /tmp/blob-shape/main.swift \
+//     && cat Drift/Core/MBFileBlob.swift scripts/blob-shape-check.swift > /tmp/blob-shape/main.swift \
 //     && xcrun swiftc -O /tmp/blob-shape/main.swift -o /tmp/blob-shape/check \
 //     && /tmp/blob-shape/check [path/to/Manifest.db]
 //

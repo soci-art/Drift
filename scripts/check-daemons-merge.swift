@@ -7,9 +7,9 @@
 // TweakCompiler -- so it runs on Linux with no device and no UIKit.
 //
 //   swiftc -O -o /tmp/daemons-check \
-//     scripts/check-daemons-merge.swift Nugget/Core/TweakModel.swift \
-//     Nugget/Core/TweakCatalog.swift Nugget/Core/TweakCatalogDaemons.swift \
-//     Nugget/Core/TweakDomainMap.swift Nugget/Core/TweakCompiler.swift
+//     scripts/check-daemons-merge.swift Drift/Core/TweakModel.swift \
+//     Drift/Core/TweakCatalog.swift Drift/Core/TweakCatalogDaemons.swift \
+//     Drift/Core/TweakDomainMap.swift Drift/Core/TweakCompiler.swift
 //   /tmp/daemons-check
 //
 // It exists because of the two defects this path had: the compiler assigned

@@ -102,7 +102,7 @@ enum PosterBoardDirect {
         // The engine checks this too; repeating it here means a caller cannot
         // start a transaction the route knows is closed for this build.
         guard isAvailable(deviceVersion: deviceVersion, buildVersion: buildVersion) else {
-            throw GoldenNuggetError(unavailableReason(deviceVersion: deviceVersion,
+            throw DriftError(unavailableReason(deviceVersion: deviceVersion,
                                                        buildVersion: buildVersion))
         }
         let packs = selection.tendies
@@ -128,7 +128,7 @@ enum PosterBoardDirect {
                 PosterBoard.convertLegacyPack(template.title, at: stage, log: log)
             }
         }
-        guard !sources.isEmpty else { throw GoldenNuggetError("没有可写入的 PosterBoard 包或模板。") }
+        guard !sources.isEmpty else { throw DriftError("没有可写入的 PosterBoard 包或模板。") }
 
         var container = PosterBoardAirlift.cachedContainer
         if container.isEmpty {
@@ -189,7 +189,7 @@ enum PosterBoardDirect {
                 let descriptors = PosterBoardAirlift.findDescriptors(
                     in: stage, defaultExtension: source.defaultExtension, log: log)
                 guard !descriptors.isEmpty else {
-                    throw GoldenNuggetError("在 \(source.name) 中没有找到壁纸描述文件。"
+                    throw DriftError("在 \(source.name) 中没有找到壁纸描述文件。"
                         + "对于交付容器文件的模板，需要走「恢复刷」。"
                         + DriftRestoreGate.unavailableSuffix)
                 }
@@ -232,7 +232,7 @@ enum PosterBoardDirect {
         }
 
         guard injected > 0 else {
-            throw GoldenNuggetError("没有写入任何 PosterBoard 描述文件。设备必须保持解锁，"
+            throw DriftError("没有写入任何 PosterBoard 描述文件。设备必须保持解锁，"
                 + "并让 LocalDevVPN 连通；如果当时已经解锁，那么缓存的容器信息已过期，"
                 + "并已为下一次尝试清除。")
         }
@@ -258,7 +258,7 @@ enum PosterBoardDirect {
             log("⚠️ 免注销刷新未确认（\(refresh.status.explanation)），改用注销。")
             let triggered = await MainActor.run { NeoSpring.trigger() }
             guard triggered else {
-                throw GoldenNuggetError("壁纸已经写入，但自动刷新失败，而且没有可用的窗口来触发注销。"
+                throw DriftError("壁纸已经写入，但自动刷新失败，而且没有可用的窗口来触发注销。"
                     + "手动注销一次，PosterBoard 就会读到它们。")
             }
             progress(100)

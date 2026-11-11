@@ -2,7 +2,7 @@ import Foundation
 
 /// Production services run against an in-process HTTP stub. No GitHub request,
 /// device connection, persistent preference or real app cache is used here.
-struct GoldenNuggetError: LocalizedError {
+struct DriftError: LocalizedError {
     let message: String
     init(_ message: String) { self.message = message }
     var errorDescription: String? { message }

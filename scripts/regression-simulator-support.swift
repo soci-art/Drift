@@ -5,7 +5,7 @@ import Foundation
 import UIKit
 import UniformTypeIdentifiers
 
-struct GoldenNuggetError: Error, LocalizedError {
+struct DriftError: Error, LocalizedError {
     let message: String
     init(_ message: String) { self.message = message }
     var errorDescription: String? { message }
@@ -19,8 +19,8 @@ enum AppPaths {
     static var appLog: URL { root.appendingPathComponent("goldennugget.log") }
 }
 
-final class GoldenNuggetEngine {
-    static let shared = GoldenNuggetEngine()
+final class DriftEngine {
+    static let shared = DriftEngine()
     func log(_ text: String) { AppLog.write(text) }
 }
 
@@ -54,7 +54,7 @@ final class IdeviceGateway {
     func afcEntryInfo(path: String) async throws -> AfcFsEntry {
         if path == "/DCIM" { return .init(path: path, name: "DCIM", isDirectory: true, size: 0) }
         if path == largePath { return .init(path: path, name: "video.mov", isDirectory: false, size: largeSize) }
-        guard let data = files[path] else { throw GoldenNuggetError("Missing fake AFC file") }
+        guard let data = files[path] else { throw DriftError("Missing fake AFC file") }
         return .init(path: path, name: URL(fileURLWithPath: path).lastPathComponent,
                      isDirectory: false, size: Int64(data.count))
     }
@@ -65,7 +65,7 @@ final class IdeviceGateway {
         return result
     }
     func afcStreamFile(path: String, chunkSize: Int, _ consume: (Data) throws -> Void) async throws -> Int64 {
-        if path == failurePath { throw GoldenNuggetError("Injected AFC disconnect") }
+        if path == failurePath { throw DriftError("Injected AFC disconnect") }
         if path == largePath {
             streamCount += 1
             var remaining = largeSize
@@ -98,10 +98,10 @@ enum Airlift {
     static var successesAllowed = 0
     static func writeDir(pairingPath: String, sourceDir: String, targetDir: String) async throws {
         attempts += 1
-        if attempts > successesAllowed { throw GoldenNuggetError("Injected AirLift write failure") }
+        if attempts > successesAllowed { throw DriftError("Injected AirLift write failure") }
     }
     static func extractPassthm(archivePath: String, destDir: String) async throws -> String {
-        throw GoldenNuggetError("No archive extraction in this hardware double")
+        throw DriftError("No archive extraction in this hardware double")
     }
 }
 
@@ -117,6 +117,6 @@ enum AirliftPairing {
     static func run(name: String, model: String, outPath: String, hostAltIRKHex: String?,
                     onReady: @escaping (Ready) -> Void,
                     onPin: @escaping (String) -> Void) throws -> Paired {
-        throw GoldenNuggetError("No RemotePairing device in simulator tests")
+        throw DriftError("No RemotePairing device in simulator tests")
     }
 }

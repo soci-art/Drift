@@ -18,4 +18,4 @@ default; this is not a replacement with the historical light/dark PNG artwork.
 
 `scripts/build-ipa.sh` checks compiled icon appearances and moves a previous
 IPA into `build/previous/` before building. A failed build therefore cannot
-leave an old archive at `build/GoldenNuggetMobile.ipa`.
+leave an old archive at `build/Drift.ipa`.

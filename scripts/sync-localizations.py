@@ -9,7 +9,7 @@ is the authoritative list — it knows whether an interpolation became `%lld` or
 
 Two kinds of key the compiler cannot see are added by hand here:
 
-  * the custom view components in `Nugget/Views/NativeUI.swift` and the small
+  * the custom view components in `Drift/Views/NativeUI.swift` and the small
     row/card helpers the views declare — they take a `String` or a
     `LocalizedStringKey` (so the call sites stay readable) and localize it
     inside their body, which is invisible to the extractor,
@@ -44,9 +44,9 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-APP_DIR = ROOT / "layout" / "Applications" / "GoldenNuggetMobile.app"
+APP_DIR = ROOT / "layout" / "Applications" / "Drift.app"
 CATALOG = APP_DIR / "Localizable.xcstrings"
-SOURCES = sorted((ROOT / "Nugget").rglob("*.swift"))
+SOURCES = sorted((ROOT / "Drift").rglob("*.swift"))
 
 # The component initializers whose literal argument never reaches a SwiftUI
 # initializer the compiler recognizes.  Keep in sync with NativeUI.swift and the
@@ -175,7 +175,7 @@ def component_keys() -> set[str]:
 def component_stringsdata(keys: set[str]) -> dict:
     """A `.stringsdata` document the same shape Xcode writes."""
     return {
-        "source": str(ROOT / "Nugget" / "Views" / "NativeUI.swift"),
+        "source": str(ROOT / "Drift" / "Views" / "NativeUI.swift"),
         "tables": {
             "Localizable": [
                 {"comment": "", "key": key, "location": {"startingColumn": 1, "startingLine": 1}}
@@ -192,7 +192,7 @@ def build_stringsdata() -> list[Path]:
     """Find (or make) the `.stringsdata` files the catalog is synced from."""
     directories = sorted(
         (ROOT / "build" / "xderived").glob(
-            "Build/Intermediates.noindex/GoldenNuggetMobile.build/*/GoldenNuggetMobile.build/Objects-normal/*"),
+            "Build/Intermediates.noindex/Drift.build/*/Drift.build/Objects-normal/*"),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )

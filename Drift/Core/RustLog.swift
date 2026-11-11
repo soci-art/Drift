@@ -1,7 +1,7 @@
 import Foundation
 
 /// Everything that reads `<Documents>/minimuxer.log` — the Rust `tracing` sink
-/// installed by `GoldenNuggetEngine.enableRustFileLogging()`.
+/// installed by `DriftEngine.enableRustFileLogging()`.
 ///
 /// This file is the only host-side window into the protocol *and* the transport:
 /// the mobilebackup2 DeviceLink conversation and jktcp's UDP retransmit logs land

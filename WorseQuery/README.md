@@ -27,7 +27,7 @@ tunnel; this one does not, which is why it also works on iOS 26.0 – 26.1 and o
 Group container the app is entitled to, and asks containermanagerd to resolve
 it — so the app's signing profile must contain
 `com.apple.security.application-groups` with the identifier Drift asks for
-(`group.com.sociart.drift`, see `Nugget/Core/WorseQuery.swift`).
+(`group.com.sociart.drift`, see `Drift/Core/WorseQuery.swift`).
 
 In practice that means a paid Apple Developer account: free "personal team"
 profiles cannot register App Groups. A sideloaded build survives, because the

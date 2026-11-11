@@ -21,7 +21,7 @@
 //
 // Run:
 //   mkdir -p /tmp/pbconv2 \
-//     && cat Nugget/Core/PosterBoardConverter.swift scripts/converter-units-check.swift \
+//     && cat Drift/Core/PosterBoardConverter.swift scripts/converter-units-check.swift \
 //        > /tmp/pbconv2/main.swift \
 //     && xcrun swiftc -O -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
 //          -target arm64-apple-ios26.0 -swift-version 5 /tmp/pbconv2/main.swift \
@@ -55,7 +55,7 @@ struct Archive: Sequence {
     func makeIterator() -> AnyIterator<Entry> { AnyIterator { nil } }
 }
 
-struct GoldenNuggetError: Error, CustomStringConvertible {
+struct DriftError: Error, CustomStringConvertible {
     let description: String
     init(_ description: String) { self.description = description }
 }

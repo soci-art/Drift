@@ -553,7 +553,7 @@ static func stagingDirectory() throws -> URL {
     /// Upstream routes a `Sparserestore-<absolute path>` domain through the
     /// sparse-restore protocol (`templates_tweak.recursive_add` strips the
     /// prefix and sets the restore domain to `None`).  This project removed its
-    /// whole `Nugget/Sparserestore/` tree on 2026-09-19 (`d1830d9`, "some other
+    /// whole `Drift/Sparserestore/` tree on 2026-09-19 (`d1830d9`, "some other
     /// big things") in favour of the protective-backup route, and that commit
     /// records no reason.  So the template is **refused with that reason**,
     /// rather than being delivered through a channel that was never going to

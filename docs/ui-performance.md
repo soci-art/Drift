@@ -8,7 +8,7 @@
 
 > **Note on the `GoldenComponents.swift` citations below.** That file has since been deleted as dead
 > code — the native screens never used the `Golden*` component library, and `RunLog`/`RunLogCard`
-> (`Nugget/Views/RunLog.swift`) are what actually carry the log view the audit is about. The
+> (`Drift/Views/RunLog.swift`) are what actually carry the log view the audit is about. The
 > `file:line` references are therefore a snapshot of the code as it was on 2026-09-26; the findings
 > and the effects they had still stand.
 
@@ -62,7 +62,7 @@ The fix:
 
 ## 2. Evidence (item by item)
 
-- `AfcMediaBackup.read()`: `Nugget/Core/AfcMediaBackup.swift:339` (before the fix) = `Data(contentsOf: manifestURL)` + `JSONDecoder().decode(Manifest.self, …)`; the call site is `Nugget/Views/GoldenNuggetView.swift:178-184` (`mediaDetail`), a property used as `detail:` in the Media card of `tweakCards` ⇒ inside `body`. The comment next to it reads "read from the manifest rather than a directory walk, so it costs nothing on every body pass" — **the first half is right, the second half is wrong**.
+- `AfcMediaBackup.read()`: `Drift/Core/AfcMediaBackup.swift:339` (before the fix) = `Data(contentsOf: manifestURL)` + `JSONDecoder().decode(Manifest.self, …)`; the call site is `Drift/Views/GoldenNuggetView.swift:178-184` (`mediaDetail`), a property used as `detail:` in the Media card of `tweakCards` ⇒ inside `body`. The comment next to it reads "read from the manifest rather than a directory walk, so it costs nothing on every body pass" — **the first half is right, the second half is wrong**.
 - Logs: `Logging.swift:145` dispatches the UI handler with `DispatchQueue.main.async`; `GoldenNuggetView.swift:876-884` (before the fix) does `logs.append` + `logs.count > 600 { removeFirst }` inside the handler ⇒ an `@State` write ⇒ the whole page is invalidated.
 - Non-lazy lists: `GoldenComponents.swift:17-35` (`GoldenPage`, a `VStack` before the fix); the row sources are `TweaksView.swift:151-165` (`ForEach(specs)`) and `FilesView.swift:143-196`.
 - The two walks in `MediaView`: `MediaView.swift:56,60,75` (`hasStoredFiles` in three `.disabled` calls).
@@ -72,7 +72,7 @@ The fix:
 
 | Change | File | Why this change is safe |
 |---|---|---|
-| Add `RunLog` (`ObservableObject`, a per-thread-locked buffer + coalesced flush) and `RunLogCard` (the **only** observer) | `Nugget/Views/RunLog.swift` (new) | The page no longer reads the logs ⇒ one log line only recomputes that card; `append` can be entered from any thread (the engine callbacks are on the main queue today, and the store does not depend on that), bursts are coalesced into a single main-queue flush; no lines are dropped |
+| Add `RunLog` (`ObservableObject`, a per-thread-locked buffer + coalesced flush) and `RunLogCard` (the **only** observer) | `Drift/Views/RunLog.swift` (new) | The page no longer reads the logs ⇒ one log line only recomputes that card; `append` can be entered from any thread (the engine callbacks are on the main queue today, and the store does not depend on that), bursts are coalesced into a single main-queue flush; no lines are dropped |
 | All of the home page's `logs` now go through the store; `spawnLogPrinter`, the diagnostic dump, the two "start run" clear points; the log area unconditionally holds a `RunLogCard()` (when empty it draws nothing by itself) | `GoldenNuggetView.swift` | Behaviourally equivalent: the window is still 600 rows, and diagnostic blocks are still appended as one multi-line entry; `grep` confirms that the whole repo has only one place setting `onLog`, so they cannot overwrite each other |
 | `AfcMediaBackup.read()` caches the decoded result by "file size + mtime" | `AfcMediaBackup.swift` | `write` uses `.atomic`: any save changes the size or the mtime ⇒ the next read re-decodes (it will not read a stale value); when the file does not exist it caches an empty manifest under the `<absent>` key ✓ the semantics match the original, it just no longer decodes every time |
 | `MediaView.hasStoredFiles` becomes state, computed once in `loadManifest()` (also added once on the pull path) | `MediaView.swift` | The predicate itself is not changed by a single word; the trigger timing matches the original logic (entering the page / the end of each action) |
@@ -84,7 +84,7 @@ run goes from "1 + number of log lines" to "1", and there is **no** heavy work l
 command:
 
 ```bash
-grep -nE "contentsOf|JSONDecoder|enumerator|attributesOfItem|AfcMediaBackup\.read" Nugget/Views/*.swift
+grep -nE "contentsOf|JSONDecoder|enumerator|attributesOfItem|AfcMediaBackup\.read" Drift/Views/*.swift
 ```
 
 After the change only four hits remain, and each one is allowed on inspection: `GoldenComponents.swift:505-507`

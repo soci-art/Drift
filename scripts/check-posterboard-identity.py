@@ -6,7 +6,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
-source = (ROOT / "Nugget/Core/PosterBoard.swift").read_text()
+source = (ROOT / "Drift/Core/PosterBoard.swift").read_text()
 source += (ROOT / "scripts/posterboard-identity-check.swift").read_text()
 # compile() names TemplateFile, but this harness exercises only the real disk
 # walker. Actual template extraction is covered by check-template-safety.py.

@@ -29,7 +29,7 @@ final class RegressionSuite {
         await run("partial media stream reports bytes and keeps original") {
             let gateway = try self.resetStore("partial-stream")
             gateway.files = ["/DCIM/a.jpg": Data([1, 2, 3])]
-            gateway.afterStream = { throw GoldenNuggetError("Injected disconnect after write") }
+            gateway.afterStream = { throw DriftError("Injected disconnect after write") }
             do {
                 _ = try await AfcMediaBackup.pull(deletingOriginals: true)
                 self.check(false, "partial stream must throw")

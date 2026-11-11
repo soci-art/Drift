@@ -17,7 +17,7 @@ let package = Package(
     products: [
         // xtool picks the single automatic (static) library product as the app.
         // The product name IS the app binary's name, and CFBundleExecutable in
-        // layout/Applications/GoldenNuggetMobile.app/Info.plist has to agree with
+        // layout/Applications/Drift.app/Info.plist has to agree with
         // it — a mismatch here fails the xtool build at the signing step with
         // "Can't parse BundleExecute file!".  Keep the two in step.
         .library(
@@ -46,7 +46,7 @@ let package = Package(
                 // The AirTraffic sandbox escape, for the features that write into
                 // app containers directly (Apple Wallet card art, the passcode
                 // dialer's TelephonyUI caches) instead of going through a backup
-                // restore. See Nugget/Core/Airlift.swift for why it is separate
+                // restore. See Drift/Core/Airlift.swift for why it is separate
                 // from the Minimuxer gateway.
                 .product(name: "AirliftFFI", package: "Vendor"),
                 // The in-process sandbox escape, used by `PosterBoardLocal`
@@ -72,17 +72,17 @@ let package = Package(
                 "build",
             ],
             // One entry, not a hand-maintained list.  The list that used to live
-            // here had already drifted — it was missing Nugget/Core/InFlightCall
+            // here had already drifted — it was missing Drift/Core/InFlightCall
             // .swift — and it had to be kept in step with project.pbxproj by
             // hand.  Naming the directory means SwiftPM picks up new files on
             // its own, and it is the same expression project.yml uses
-            // (`- path: Nugget`).
+            // (`- path: Drift`).
             //
-            // GoldenNuggetMobile.xcodeproj/project.pbxproj still enumerates files
+            // Drift.xcodeproj/project.pbxproj still enumerates files
             // (Xcode has no directory reference for sources), so it is reconciled
             // from this target's resolved source list by
             // scripts/sync-pbxproj-sources.py.
-            sources: ["Nugget"],
+            sources: ["Drift"],
             swiftSettings: [
                 .swiftLanguageMode(.v5),
                 // -Osize in release: the linked binary is ~90% prebuilt Rust
@@ -102,7 +102,7 @@ let package = Package(
             ],
             linkerSettings: [
                 .linkedFramework("UIKit"),
-                // NeoSpring (Nugget/Core/NeoSpring.swift) resprings by loading a
+                // NeoSpring (Drift/Core/NeoSpring.swift) resprings by loading a
                 // payload into a WKWebView, so WebKit has to be linked.
                 .linkedFramework("WebKit"),
                 .linkedLibrary("sqlite3"),

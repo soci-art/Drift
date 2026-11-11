@@ -408,7 +408,7 @@ pub unsafe extern "C" fn al_find_app_container(
 ///
 /// The name is a trap: this is a full device reboot, not a respring. There is
 /// no respring in this library — the app does that with NeoSpring
-/// (`Nugget/Core/NeoSpring.swift`), which needs no device service.
+/// (`Drift/Core/NeoSpring.swift`), which needs no device service.
 #[no_mangle]
 pub unsafe extern "C" fn al_device_respring(
     pairing_path: *const c_char,

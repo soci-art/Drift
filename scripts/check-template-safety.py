@@ -64,7 +64,7 @@ extension URL { static var documents: URL { URL(fileURLWithPath: ProcessInfo.pro
 '''
         paths = []
         for name in SOURCES:
-            content = (ROOT / "Nugget/Core" / (name + ".swift")).read_text().replace("import ZIPFoundation", "")
+            content = (ROOT / "Drift/Core" / (name + ".swift")).read_text().replace("import ZIPFoundation", "")
             if name == "TemplateFile":
                 # ZIPFoundation is compiled into this same test module, so the
                 # production iOS branch is exercised without a second zip reader.
@@ -94,7 +94,7 @@ extension URL { static var documents: URL { URL(fileURLWithPath: ProcessInfo.pro
         backup.write_text("import Foundation\nimport UniformTypeIdentifiers\nimport SQLite3\n" + support
                           + (ROOT / "scripts/posterboard-template-check.swift").read_text())
         backup_sources = [folder / (name + ".swift") for name in ["TemplateXML", "XMLScanner", "TemplateFile", "TemplateOptions"]]
-        backup_sources += [ROOT / "Nugget/Core/PosterBoard.swift", ROOT / "Nugget/Core/PosterBoardStore.swift"]
+        backup_sources += [ROOT / "Drift/Core/PosterBoard.swift", ROOT / "Drift/Core/PosterBoardStore.swift"]
         subprocess.run(["xcrun", "swiftc", "-swift-version", "5", "-warnings-as-errors", "-parse-as-library",
                         *map(str, vendor + backup_sources), str(backup), "-o", str(binary)], check=True)
         subprocess.run([str(binary)], env={**os.environ, "GN_TEST_ROOT": str(folder)}, check=True)

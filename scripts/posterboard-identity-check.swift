@@ -31,7 +31,7 @@
 //              (`.DS_Store`, `._*`, `__MACOSX`) rather than "starts with a dot".
 //
 // Run:
-//   cat Nugget/Core/PosterBoard.swift scripts/posterboard-identity-check.swift \
+//   cat Drift/Core/PosterBoard.swift scripts/posterboard-identity-check.swift \
 //     > /tmp/pbcheck/main.swift
 //   && swiftc -swift-version 5 /tmp/pbcheck/main.swift -o /tmp/pbcheck/check
 //   && /tmp/pbcheck/check
@@ -86,7 +86,7 @@ struct TweakPayload: Equatable {
     }
 }
 
-struct GoldenNuggetError: Error, CustomStringConvertible {
+struct DriftError: Error, CustomStringConvertible {
     let description: String
     init(_ description: String) { self.description = description }
 }
@@ -221,7 +221,7 @@ func plist(_ dictionary: [String: Any]) -> Data {
 
 /// The identity shape of one descriptor, as Apple and third-party packs write it.
 func userInfo(wallpaperID: String?, nested: [String: Any] = [:]) -> Data {
-    var root: [String: Any] = ["category": "Featured", "groupName": "Nugget"]
+    var root: [String: Any] = ["category": "Featured", "groupName": "Drift"]
     if let wallpaperID { root["wallpaperRepresentingIdentifier"] = wallpaperID }
     if !nested.isEmpty { root["suggestionMetadata"] = nested }
     return plist(root)

@@ -14,7 +14,7 @@
 # once the headers match, or on a toolchain new enough not to need it.
 #
 # Usage: ./scripts/build-ipa-xtool.sh [--clean]
-# Output: xtool/GoldenNuggetMobile.ipa, repacked in place
+# Output: xtool/Drift.ipa, repacked in place
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -22,8 +22,8 @@ if [[ "${1:-}" == "--clean" ]]; then
     # xtool does not clean its own staging app dir, so a .xcassets left in there
     # from an earlier run makes every later build try actool again and fail.
     echo "cleaning xtool staging and .build/out"
-    rm -rf xtool/GoldenNuggetMobile.app xtool/.xtool-tmp
-    rm -rf .build/out/Products/Release-iphoneos/GoldenNuggetMobile-App
+    rm -rf xtool/Drift.app xtool/.xtool-tmp
+    rm -rf .build/out/Products/Release-iphoneos/Drift-App
 fi
 
 bash scripts/fix-sdk-arm-headers.sh
@@ -37,6 +37,6 @@ python3 scripts/compile-localizations.py
 echo "building with xtool"
 xtool dev build -c release -i
 
-python3 scripts/repack-ipa.py xtool/GoldenNuggetMobile.ipa
+python3 scripts/repack-ipa.py xtool/Drift.ipa
 
-echo "done: xtool/GoldenNuggetMobile.ipa"
+echo "done: xtool/Drift.ipa"

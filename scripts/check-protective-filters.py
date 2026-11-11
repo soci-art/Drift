@@ -22,7 +22,7 @@ NOT match the archive, and the archive needs its own entry.
 
 Usage:
     scripts/check-protective-filters.py
-    scripts/check-protective-filters.py --swift-source Nugget/Core/ProtectiveBackup.swift
+    scripts/check-protective-filters.py --swift-source Drift/Core/ProtectiveBackup.swift
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_SOURCE = ROOT / "Nugget" / "Core" / "ProtectiveBackup.swift"
+DEFAULT_SOURCE = ROOT / "Drift" / "Core" / "ProtectiveBackup.swift"
 
 PASS = 0
 FAIL = 0

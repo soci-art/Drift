@@ -11,7 +11,7 @@
 		<string>IOSurfaceRootUserClient</string>
 	</array>
 	<!--
-	  The in-process wallpaper route (Nugget/Core/PosterBoardLocal.swift) needs
+	  The in-process wallpaper route (Drift/Core/PosterBoardLocal.swift) needs
 	  this group: worse_query stages its symlink inside the group's
 	  Library/Caches and asks containermanagerd to resolve it.
 

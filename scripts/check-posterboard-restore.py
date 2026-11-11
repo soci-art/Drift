@@ -188,9 +188,9 @@ def run_and_verify_delta(binary, source, target):
 with tempfile.TemporaryDirectory(prefix='pb-restore-') as work:
     work = Path(work)
     main = work / 'main.swift'
-    main.write_text((ROOT / 'Nugget/Core/PosterBoardSnapshot.swift').read_text() + '\n' + support + '\n' +
-                    (ROOT / 'Nugget/Core/MBFileBlob.swift').read_text() + '\n' +
-                    (ROOT / 'Nugget/Core/TweakInjector.swift').read_text() + '\n' + harness)
+    main.write_text((ROOT / 'Drift/Core/PosterBoardSnapshot.swift').read_text() + '\n' + support + '\n' +
+                    (ROOT / 'Drift/Core/MBFileBlob.swift').read_text() + '\n' +
+                    (ROOT / 'Drift/Core/TweakInjector.swift').read_text() + '\n' + harness)
     binary = work / 'check'
     subprocess.run(['xcrun', 'swiftc', '-warnings-as-errors', str(main), '-o', str(binary)], check=True)
     source = work / 'source'

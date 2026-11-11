@@ -106,7 +106,7 @@ enum Airlift {
             identity = await MainActor.run { DeviceIdentityMonitor.shared.current }
         }
         guard isSupported(deviceVersion: identity.version, buildVersion: identity.buildVersion) else {
-            throw GoldenNuggetError(unsupportedReason(deviceVersion: identity.version, buildVersion: identity.buildVersion))
+            throw DriftError(unsupportedReason(deviceVersion: identity.version, buildVersion: identity.buildVersion))
         }
     }
 
@@ -175,7 +175,7 @@ enum Airlift {
             let rc = al_exploit_write_dir(pairingPath, sourceDir, targetDir,
                                           logTrampoline, nil, &outError)
             guard rc == 0 else {
-                throw GoldenNuggetError(take(outError) ?? "AirLift 目录写入返回了 \(rc)。")
+                throw DriftError(take(outError) ?? "AirLift 目录写入返回了 \(rc)。")
             }
         }
     }
@@ -192,7 +192,7 @@ enum Airlift {
             let rc = al_exploit_inject_folder(pairingPath, folderPath, targetParentDir, destName,
                                               logTrampoline, nil, &outError)
             guard rc == 0 else {
-                throw GoldenNuggetError(take(outError) ?? "AirLift 文件夹注入返回了 \(rc)。")
+                throw DriftError(take(outError) ?? "AirLift 文件夹注入返回了 \(rc)。")
             }
         }
     }
@@ -220,7 +220,7 @@ enum Airlift {
                 preferenceFile, preferenceTargetA, preferenceTargetB,
                 logTrampoline, nil, &outError)
             guard rc == 0 else {
-                throw GoldenNuggetError(take(outError) ?? "AirLift 写入事务返回了 \(rc)。")
+                throw DriftError(take(outError) ?? "AirLift 写入事务返回了 \(rc)。")
             }
         }
     }
@@ -243,7 +243,7 @@ enum Airlift {
             let container = take(outContainer)
             let message = take(outError)
             guard rc == 0, let container else {
-                throw GoldenNuggetError(message ?? "找不到 \(bundleID) 的容器（代码 \(rc)）。")
+                throw DriftError(message ?? "找不到 \(bundleID) 的容器（代码 \(rc)）。")
             }
             return container
         }
@@ -263,7 +263,7 @@ enum Airlift {
     static func respring() async throws {
         let attached = await MainActor.run { NeoSpring.trigger() }
         guard attached else {
-            throw GoldenNuggetError("没有可用来注销的窗口。请把应用留在"
+            throw DriftError("没有可用来注销的窗口。请把应用留在"
                 + "foreground and run it again.")
         }
         // Give WebKit the moment it needs to load the payload. Returning
@@ -285,7 +285,7 @@ enum Airlift {
             var outError: UnsafeMutablePointer<CChar>?
             let rc = al_device_respring(pairingPath, logTrampoline, nil, &outError)
             guard rc == 0 else {
-                throw GoldenNuggetError(take(outError) ?? "重启返回了 \(rc)。")
+                throw DriftError(take(outError) ?? "重启返回了 \(rc)。")
             }
         }
     }
@@ -360,7 +360,7 @@ enum Airlift {
     static func extractPassthm(archivePath: String, destDir: String) async throws -> String {
         try await offMainActor {
             let rc = al_passthm_extract(archivePath, destDir)
-            guard rc == 0 else { throw GoldenNuggetError("无法解包 \(archivePath)（代码 \(rc)）。") }
+            guard rc == 0 else { throw DriftError("无法解包 \(archivePath)（代码 \(rc)）。") }
         }
         return destDir
     }
@@ -371,7 +371,7 @@ enum Airlift {
     static func extractZip(archivePath: String, destDir: String) async throws -> String {
         try await offMainActor {
             let rc = al_zip_extract_all(archivePath, destDir)
-            guard rc == 0 else { throw GoldenNuggetError("无法解包 \(archivePath)（代码 \(rc)）。") }
+            guard rc == 0 else { throw DriftError("无法解包 \(archivePath)（代码 \(rc)）。") }
         }
         return destDir
     }
@@ -409,12 +409,12 @@ enum Airlift {
             _ = take(outStatus)
             let message = take(outError)
             guard rc == 0 else {
-                throw GoldenNuggetError(message ?? "商店枚举返回了 \(rc)。")
+                throw DriftError(message ?? "商店枚举返回了 \(rc)。")
             }
             guard let json,
                   let reply = try? JSONDecoder().decode(PosterStoreListReply.self,
                                                         from: Data(json.utf8)) else {
-                throw GoldenNuggetError("商店枚举的返回无法解析。")
+                throw DriftError("商店枚举的返回无法解析。")
             }
             return reply.items
         }
@@ -443,7 +443,7 @@ enum Airlift {
             _ = take(outStatus)
             let message = take(outError)
             guard rc == 0 else {
-                throw GoldenNuggetError(message ?? "商店删除返回了 \(rc)。")
+                throw DriftError(message ?? "商店删除返回了 \(rc)。")
             }
             return json ?? ""
         }

@@ -216,7 +216,7 @@ enum WallpaperCatalog {
         request.cachePolicy = .returnCacheDataElseLoad
         let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw GoldenNuggetError("\(source.label) 为其目录返回了 HTTP \(http.statusCode)")
+            throw DriftError("\(source.label) 为其目录返回了 HTTP \(http.statusCode)")
         }
         try? data.write(to: cacheURL, options: .atomic)
         return Load(wallpapers: try parse(data, source: source), failures: [], fromCache: false)
@@ -233,20 +233,20 @@ enum WallpaperCatalog {
         switch source {
         case .cowabunga:
             guard let category else {
-                throw GoldenNuggetError("Cowabunga 按类别发布其目录；"
+                throw DriftError("Cowabunga 按类别发布其目录；"
                     + "请选择「自定义」或「Apple」。")
             }
             guard let url = URL(string: cowabungaBase + category.fileName) else {
-                throw GoldenNuggetError("Cowabunga 的目录 URL 格式不正确")
+                throw DriftError("Cowabunga 的目录 URL 格式不正确")
             }
             return url
         case .caplayground:
             guard let url = URL(string: caplaygroundJSON) else {
-                throw GoldenNuggetError("CaPlayground 的目录 URL 格式不正确")
+                throw DriftError("CaPlayground 的目录 URL 格式不正确")
             }
             return url
         case .all:
-            throw GoldenNuggetError("「全部」不是目录；它展开为两个来源")
+            throw DriftError("「全部」不是目录；它展开为两个来源")
         }
     }
 
@@ -262,7 +262,7 @@ enum WallpaperCatalog {
         switch source {
         case .cowabunga:
             guard let items = object as? [[String: Any]] else {
-                throw GoldenNuggetError("Cowabunga 的目录不是壁纸列表")
+                throw DriftError("Cowabunga 的目录不是壁纸列表")
             }
             return items.compactMap { item in
                 wallpaper(item: item,
@@ -288,7 +288,7 @@ enum WallpaperCatalog {
                           source: source)
             }
         case .all:
-            throw GoldenNuggetError("「全部」没有自己的目录可解析")
+            throw DriftError("「全部」没有自己的目录可解析")
         }
     }
 
@@ -391,10 +391,10 @@ enum WallpaperCatalog {
     static func download(_ wallpaper: Wallpaper) async throws -> URL {
         let (data, response) = try await session.data(from: wallpaper.downloadURL)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw GoldenNuggetError("\(wallpaper.name)：服务器返回了 HTTP \(http.statusCode)")
+            throw DriftError("\(wallpaper.name)：服务器返回了 HTTP \(http.statusCode)")
         }
         guard !data.isEmpty else {
-            throw GoldenNuggetError("\(wallpaper.name)：下载返回了空内容")
+            throw DriftError("\(wallpaper.name)：下载返回了空内容")
         }
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(sanitised(wallpaper.name)).tendies")

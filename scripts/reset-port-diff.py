@@ -14,8 +14,8 @@ This script re-derives both sides mechanically and compares them:
 
   reference  `src/devicemanagement/device_manager.py`   -- parsed with `ast`
             `src/tweaks/basic_plist_locations.py`       -- `FileLocation` member -> path
-  this port  `Nugget/Core/TweakReset.swift`             -- the page table + stock dict
-            `Nugget/Core/GoldenNuggetEngine.swift`      -- how the payloads are ordered
+  this port  `Drift/Core/TweakReset.swift`             -- the page table + stock dict
+            `Drift/Core/DriftEngine.swift`      -- how the payloads are ordered
 
 `ast` rather than import, so no PySide6 / pymobiledevice3 is needed and the check runs on
 a machine that has never had the reference's dependencies installed.  The Python side is
@@ -30,7 +30,7 @@ What is compared, and what is not:
              and where they land in the payload order.
   NOT        anything that needs a device or a running process: the Manifest.db vs MBDB
   COMPARED  fork, the backup pull, the prune set, the restore itself, and the
-             no-psysbackup decision.  Those are in `Nugget/Core/TweakReset.swift`'s doc
+             no-psysbackup decision.  Those are in `Drift/Core/TweakReset.swift`'s doc
              comment and `docs/tweak-port.md` §2.4, and are verified by reading the
              reference, not by this script.
 
@@ -306,8 +306,8 @@ def _const_dict(node: ast.Dict) -> dict:
 
 class Port:
     def __init__(self) -> None:
-        self.reset_src = (REPO / "Nugget/Core/TweakReset.swift").read_text(encoding="utf-8")
-        self.engine_src = (REPO / "Nugget/Core/GoldenNuggetEngine.swift").read_text(encoding="utf-8")
+        self.reset_src = (REPO / "Drift/Core/TweakReset.swift").read_text(encoding="utf-8")
+        self.engine_src = (REPO / "Drift/Core/DriftEngine.swift").read_text(encoding="utf-8")
 
     def page_locations(self) -> dict[str, list[str]]:
         """`case .springboard: return [.a, .b]` -> {page: [location names]}."""
@@ -361,7 +361,7 @@ class Port:
         if not body:
             body = re.search(r"func resetPages\(.*?\n    \}", self.engine_src, re.S)
         if not body:
-            sys.exit("error: resetPagesRun()/resetPages() not found in GoldenNuggetEngine.swift")
+            sys.exit("error: resetPagesRun()/resetPages() not found in DriftEngine.swift")
         m = re.search(r"tweakPayloads: (.+?),", body.group(0))
         if not m:
             sys.exit("error: tweakPayloads not found inside resetPagesRun()")
@@ -475,7 +475,7 @@ def compare(ref: Reference, port: Port, verbose: bool) -> list[str]:
 
 def _location_path(name: str) -> str:
     """The Swift `TweakFileLocation` rawValue for a case name, from the generated enum."""
-    catalog = (REPO / "Nugget/Core/TweakCatalog.swift").read_text(encoding="utf-8")
+    catalog = (REPO / "Drift/Core/TweakCatalog.swift").read_text(encoding="utf-8")
     m = re.search(rf'case {re.escape(name)}\s*=\s*"([^"]+)"', catalog)
     return m.group(1) if m else f"<{name} not found in TweakCatalog.swift>"
 

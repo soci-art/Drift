@@ -18,7 +18,7 @@
 #     plist in `layout/Applications/Drift.app/Info.plist` is NEVER edited.
 #   * Only afterwards, on a COPY of the finished .app, this script injects
 #     `DriftResearchBuild = true` into Info.plist (that key is what
-#     `DriftResearchBuild.isActive` reads; see Nugget/Core/
+#     `DriftResearchBuild.isActive` reads; see Drift/Core/
 #     DriftResearchBuild.swift) and renames the home-screen label to
 #     "Drift 研究版". The copy is rezipped under a different file name.
 #   * A distribution IPA therefore cannot turn research by accident: the

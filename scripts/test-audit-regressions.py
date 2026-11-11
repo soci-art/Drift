@@ -20,13 +20,13 @@ OUT = ROOT / "build" / "regression-simulator"
 BUNDLE = "org.goldennugget.RegressionTests"
 SOURCES = [
     "scripts/regression-simulator-support.swift",
-    "Nugget/Views/Extensions/Extensions.swift",
-    "Nugget/Core/Logging.swift", "Nugget/Core/InFlightCall.swift",
-    "Nugget/Core/TweakModel.swift", "Nugget/Core/TweakCatalog.swift",
-    "Nugget/Core/TweakCatalogDaemons.swift",
-    "Nugget/Core/StatusBarModel.swift", "Nugget/Core/StatusBarArchive.swift",
-    "Nugget/Core/AfcMediaBackup.swift", "Nugget/Core/WirelessPairing.swift",
-    "Nugget/Core/PasscodeTheme.swift", "scripts/regression-simulator-check.swift",
+    "Drift/Views/Extensions/Extensions.swift",
+    "Drift/Core/Logging.swift", "Drift/Core/InFlightCall.swift",
+    "Drift/Core/TweakModel.swift", "Drift/Core/TweakCatalog.swift",
+    "Drift/Core/TweakCatalogDaemons.swift",
+    "Drift/Core/StatusBarModel.swift", "Drift/Core/StatusBarArchive.swift",
+    "Drift/Core/AfcMediaBackup.swift", "Drift/Core/WirelessPairing.swift",
+    "Drift/Core/PasscodeTheme.swift", "scripts/regression-simulator-check.swift",
 ]
 DEVICE_IMPORTS = {"import Minimuxer", "import DeviceGatewayAPI", "import IdeviceGateway", "import IDevice"}
 

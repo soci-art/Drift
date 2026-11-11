@@ -6,7 +6,7 @@ confirm).  The other half — turning a tweak selection into a set of plists and
 domains — is pure data, and "looks right" is not evidence for pure data.  So this
 compares it against the reference itself:
 
-    Swift side   `Nugget/Core/TweakCompiler.swift` (+ TweakModel/TweakCatalog/
+    Swift side   `Drift/Core/TweakCompiler.swift` (+ TweakModel/TweakCatalog/
                  TweakDomainMap, compiled by `xcrun swiftc` for the host)
     Python side  GoldenNugget's own `SPECS` + `BasicPlistTweak.apply_tweak` /
                  `AdvancedPlistTweak.apply_tweak` + `split_path_into_domain`
@@ -41,7 +41,7 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CORE = ROOT / "Nugget" / "Core"
+CORE = ROOT / "Drift" / "Core"
 HARNESS = ROOT / "scripts" / "tweak-port-harness" / "main.swift"
 DEFAULT_SOURCE = os.path.expanduser("~/GoldenNugget")
 

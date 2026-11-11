@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
-source = (ROOT / "Nugget/Core/PosterBoardSnapshot.swift").read_text()
+source = (ROOT / "Drift/Core/PosterBoardSnapshot.swift").read_text()
 support = (ROOT / "scripts/posterboard-identity-check.swift").read_text()
 support = support.split("struct TweakPayload", 1)[1].split("enum PosterBoardResources", 1)[0]
 # Only the common payload and error definitions are needed.

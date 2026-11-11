@@ -13,8 +13,8 @@
 //            a real Mercury pack claimed to be a container dump.
 //
 // Run:
-//   cat Nugget/Core/PosterBoardTendie.swift \
-//       Nugget/Core/PosterBoardApplyMode.swift \
+//   cat Drift/Core/PosterBoardTendie.swift \
+//       Drift/Core/PosterBoardApplyMode.swift \
 //       scripts/postertype-check.swift > /tmp/ptype/main.swift
 //   && swiftc -O /tmp/ptype/main.swift -o /tmp/ptype/check
 //   && /tmp/ptype/check <pack.tendies> [more.tendies ...]
@@ -65,7 +65,7 @@ struct Archive: Sequence {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         proc.waitUntilExit()
         guard proc.terminationStatus == 0 else {
-            throw GoldenNuggetError("unzip -Z1 failed (\(proc.terminationStatus))")
+            throw DriftError("unzip -Z1 failed (\(proc.terminationStatus))")
         }
         let text = String(decoding: data, as: UTF8.self)
         entries = text.split(separator: "\n", omittingEmptySubsequences: true)
@@ -83,7 +83,7 @@ struct Archive: Sequence {
 
     /// Unused by the init; present because the same file's extractor calls it.
     func extract(_ entry: Entry, to url: URL) throws -> Data {
-        throw GoldenNuggetError("the harness does not extract")
+        throw DriftError("the harness does not extract")
     }
 }
 
@@ -126,7 +126,7 @@ enum PosterBoardPreferences {
     static func reset() {}
 }
 
-struct GoldenNuggetError: Error { let message: String; init(_ m: String) { message = m } }
+struct DriftError: Error { let message: String; init(_ m: String) { message = m } }
 
 // MARK: - The check
 

@@ -26,11 +26,11 @@
 //                  synthetic times so nothing sleeps.
 //
 // Run:
-//   mkdir -p /tmp/appliedstate && cat Nugget/Core/TweakModel.swift \
-//       Nugget/Core/TweakCatalog.swift Nugget/Core/TweakCatalogDaemons.swift \
-//       Nugget/Core/GoldenNuggetPreset.swift Nugget/Core/GoldenNuggetAutosave.swift \
-//       Nugget/Core/GoldenNuggetPresets.swift Nugget/Core/ApplyHistory.swift \
-//       Nugget/Core/ProgressEta.swift scripts/applied-state-check.swift \
+//   mkdir -p /tmp/appliedstate && cat Drift/Core/TweakModel.swift \
+//       Drift/Core/TweakCatalog.swift Drift/Core/TweakCatalogDaemons.swift \
+//       Drift/Core/GoldenNuggetPreset.swift Drift/Core/GoldenNuggetAutosave.swift \
+//       Drift/Core/GoldenNuggetPresets.swift Drift/Core/ApplyHistory.swift \
+//       Drift/Core/ProgressEta.swift scripts/applied-state-check.swift \
 //       > /tmp/appliedstate/main.swift \
 //     && xcrun swiftc -O /tmp/appliedstate/main.swift -o /tmp/appliedstate/check \
 //     && /tmp/appliedstate/check
@@ -48,9 +48,9 @@ struct DeviceIdentity {
     var isIPhone: Bool
 }
 
-// `GoldenNuggetPreset.parse` throws `GoldenNuggetError`, which lives in the
+// `GoldenNuggetPreset.parse` throws `DriftError`, which lives in the
 // engine file (Minimuxer-heavy); the harness carries its shape.
-struct GoldenNuggetError: Error, LocalizedError {
+struct DriftError: Error, LocalizedError {
     let message: String
     init(_ message: String) { self.message = message }
     var errorDescription: String? { message }

@@ -7,13 +7,13 @@ Catalog; there is no `.lproj` file to edit by hand in the source tree.
 
 | File | Purpose |
 | --- | --- |
-| `layout/Applications/GoldenNuggetMobile.app/Localizable.xcstrings` | Every string the app itself displays. Keys are the English source text. |
-| `layout/Applications/GoldenNuggetMobile.app/InfoPlist.xcstrings` | `NSLocalNetworkUsageDescription` and `UTTypeDescription`. Keys are the plist keys. |
+| `layout/Applications/Drift.app/Localizable.xcstrings` | Every string the app itself displays. Keys are the English source text. |
+| `layout/Applications/Drift.app/InfoPlist.xcstrings` | `NSLocalNetworkUsageDescription` and `UTTypeDescription`. Keys are the plist keys. |
 | `scripts/sync-localizations.py` | Merges compiler-extracted keys into `Localizable.xcstrings`; `--check` is the CI guard. |
 | `scripts/compile-localizations.py` | Compiles the catalogs to `<lang>.lproj` for the xtool build (Linux-safe). |
 | `docs/localization.md` | This file. |
 
-`GoldenNuggetMobile.xcodeproj` is generated: the catalogs are listed in
+`Drift.xcodeproj` is generated: the catalogs are listed in
 `project.yml`, and Xcode compiles them itself. The xtool path cannot compile a
 catalog, so `scripts/build-ipa-xtool.sh` runs `compile-localizations.py` first
 and `xtool.yml` ships each generated `<lang>.lproj` directory.
@@ -45,7 +45,7 @@ and `xtool.yml` ships each generated `<lang>.lproj` directory.
    compiler too, so `scripts/sync-localizations.py` lists them in
    `COMPONENT_KEYS`; a new helper of that shape needs one line there.
 4. **Core model titles are localized where they are defined.** Enum `title`
-   properties in `Nugget/Core` return `String(localized:)`, so every screen that
+   properties in `Drift/Core` return `String(localized:)`, so every screen that
    displays them gets the translation.
 5. **Literal text that is not prose is not a key.** A scheme shown in the file
    browser (`afc://`), a number, a path or any other verbatim value uses

@@ -42,8 +42,8 @@
 > A real-device build still needs `scripts/build-ipa.sh` run locally.
 
 Ported from: `~/GoldenNugget` (Python / PySide6, `src/tweaks/` and `src/controllers/`).
-Ported into: `Nugget/Core/Tweak*.swift`, `Nugget/Core/GoldenNuggetPreset.swift`,
-`Nugget/Views/TweaksView.swift`.
+Ported into: `Drift/Core/Tweak*.swift`, `Drift/Core/GoldenNuggetPreset.swift`,
+`Drift/Views/TweaksView.swift`.
 
 ---
 
@@ -62,7 +62,7 @@ imports the reference's `src/tweaks/registry.py` through a PySide6 stub (replaci
 `QT_TRANSLATE_NOOP`) and emits the `TweakSpec` table (`id` / `section` / `title` /
 `location` / `key` / default value / `Kind` / `min_version` / `max_version` /
 `iphone_only` / `ipad_only` / `description` / `factory`) straight into
-`Nugget/Core/TweakCatalog.swift`, with the `FileLocation` enum generated alongside.
+`Drift/Core/TweakCatalog.swift`, with the `FileLocation` enum generated alongside.
 `--check` detects drift.
 → Upstream adds a tweak, re-run the script and it appears here; **a mistyped spec is not
 possible**.
@@ -106,7 +106,7 @@ silently dropped.
 > 2026-09-24.
 >
 > **Amended 2026-09-27:** Daemons has since been ported — `TweakCatalogDaemons.swift`
-> (generated) plus `Nugget/Views/DaemonsView.swift`, the ScreenTime nullify included — so
+> (generated) plus `Drift/Views/DaemonsView.swift`, the ScreenTime nullify included — so
 > the last row records the state as of 2026-09-24, not today. It is also the page a reset
 > can act on (§2.4).
 >
@@ -228,8 +228,8 @@ and that half was never implemented, so they were removed together with the Supe
   `SystemPreferencesDomain` is not in the keep-set, so writing them first would have them
   pruned. Both branches (iOS 27 = pull + prune, iOS 26 = synthesised MBDB with no flat
   prune) share the one payload array, so both files are delivered on both paths.
-- **Code**: `Nugget/Core/SkipSetup.swift` (behaviour) +
-  `Nugget/Core/SkipSetupCatalog.swift` (**generated, do not hand-edit**). Verification:
+- **Code**: `Drift/Core/SkipSetup.swift` (behaviour) +
+  `Drift/Core/SkipSetupCatalog.swift` (**generated, do not hand-edit**). Verification:
   `scripts/skipsetup-check.swift` diffed against the reference's output (see §3.3).
 
 ### 2.4 Page-level reset (ported 2026-09-27, no psysbackup on either branch)
@@ -309,8 +309,8 @@ either way; values this app wrote are reset; values something else wrote are los
   `globalPreferences`. The reference behaves the same way — its resettable-page list has no
   Liquid Glass entry either. The UI follows the reference rather than inventing a split.
 
-Code: `Nugget/Core/TweakReset.swift` (page table + payload plan),
-`GoldenNuggetEngine.resetPages` (the chain), `Nugget/Views/ResetPagesSheet.swift` (the
+Code: `Drift/Core/TweakReset.swift` (page table + payload plan),
+`DriftEngine.resetPages` (the chain), `Drift/Views/ResetPagesSheet.swift` (the
 sheet).
 
 **Verified mechanically**, not by hand: `scripts/reset-port-diff.py` re-derives both sides
@@ -504,7 +504,7 @@ scripts/gen-pb-templates-from-goldennugget.py [--goldennugget ~/GoldenNugget] [-
 
 # Routine gates
 scripts/typecheck.sh                 # passes only at 0 errors
-scripts/sync-pbxproj-sources.py      # must be run after adding/removing files under Nugget/
+scripts/sync-pbxproj-sources.py      # must be run after adding/removing files under Drift/
 scripts/check-linked-symbols.py      # every C symbol the gateway calls must be in the archive that is linked
 ```
 
@@ -530,7 +530,7 @@ and `ZIPFoundation` (the latter for `.tendies` packs, which are ZIPs).
   identical**. The diff also checks the plist **types** (`bool` / `int` / `real` / `str`) —
   that check caught a real defect: comparing through JSON first collapsed `1.0` and `1` into
   the same value, so the test would have missed a type mismatch.
-- **Type check**: `scripts/typecheck.sh` → `0 errors` (8 warnings, 3 of them in `Nugget/`,
+- **Type check**: `scripts/typecheck.sh` → `0 errors` (8 warnings, 3 of them in `Drift/`,
   the same as the pre-port baseline).
 - **Generators are re-checkable**: `gen-tweaks-from-goldennugget.py --check` is idempotent.
 - **Reset differential test**: `scripts/reset-port-diff.py` — 12 checks over the reset's

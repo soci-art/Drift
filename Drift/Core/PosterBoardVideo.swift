@@ -135,7 +135,7 @@ enum PosterBoardVideo {
                                   log: @escaping @Sendable (String) -> Void) async throws {
         let asset = AVURLAsset(url: video)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
-            throw GoldenNuggetError("\(video.lastPathComponent) 没有视频轨道。")
+            throw DriftError("\(video.lastPathComponent) 没有视频轨道。")
         }
         // `naturalSize`, **not** the size after `preferredTransform`: the frames
         // below come out of a reader in their stored orientation, and OpenCV's
@@ -146,7 +146,7 @@ enum PosterBoardVideo {
         let width = Int(abs(naturalSize.width.rounded()))
         let height = Int(abs(naturalSize.height.rounded()))
         guard width > 0, height > 0 else {
-            throw GoldenNuggetError("\(video.lastPathComponent) 报告了一个 "
+            throw DriftError("\(video.lastPathComponent) 报告了一个 "
                 + "\(width)×\(height) 的帧——没有可解码的内容。")
         }
         if transform != .identity {
@@ -159,7 +159,7 @@ enum PosterBoardVideo {
         let seconds = CMTimeGetSeconds(try await asset.load(.duration))
         let estimate = max(1, Int((seconds * fps).rounded()))
         guard estimate <= frameLimit else {
-            throw GoldenNuggetError("\(video.lastPathComponent) 大约有 \(estimate) 帧；"
+            throw DriftError("\(video.lastPathComponent) 大约有 \(estimate) 帧；"
                 + "CoreAnimation 壁纸的帧数上限是 \(frameLimit)。请修剪视频，或者"
                 + "使用实况照片方式（关闭循环）。")
         }
@@ -210,7 +210,7 @@ enum PosterBoardVideo {
             return true
         }
         guard written > 0 else {
-            throw GoldenNuggetError("\(video.lastPathComponent) 没有解码出任何帧。")
+            throw DriftError("\(video.lastPathComponent) 没有解码出任何帧。")
         }
         caml += PosterBoardTemplates.camlFooter()
         try caml.write(to: caDirectory.appendingPathComponent("main.caml"),
@@ -332,7 +332,7 @@ enum PosterBoardVideo {
                       output: segmentation.appendingPathComponent("segmentation.data.aar"))
 
         guard let thumbnail = plan.thumbnail else {
-            throw GoldenNuggetError("实况照片壁纸需要一帧定格图（.heic）。"
+            throw DriftError("实况照片壁纸需要一帧定格图（.heic）。"
                 + "在「视频」标签页选一帧，或者打开循环。")
         }
         // The reference writes the picked bytes over all three slots without
@@ -370,7 +370,7 @@ enum PosterBoardVideo {
 
         try? FileManager.default.removeItem(at: output)
         guard FileManager.default.createFile(atPath: output.path, contents: nil) else {
-            throw GoldenNuggetError("无法创建 \(output.lastPathComponent)。")
+            throw DriftError("无法创建 \(output.lastPathComponent)。")
         }
         let handle = try FileHandle(forWritingTo: output)
         defer { try? handle.close() }
@@ -442,11 +442,11 @@ enum PosterBoardVideo {
             outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
         output.alwaysCopiesSampleData = false
         guard reader.canAdd(output) else {
-            throw GoldenNuggetError("这个视频的帧无法在这台设备上解码。")
+            throw DriftError("这个视频的帧无法在这台设备上解码。")
         }
         reader.add(output)
         guard reader.startReading() else {
-            throw GoldenNuggetError("帧解码失败："
+            throw DriftError("帧解码失败："
                 + (reader.error?.localizedDescription ?? "没有给出原因"))
         }
         while let sample = output.copyNextSampleBuffer() {
@@ -459,14 +459,14 @@ enum PosterBoardVideo {
         }
         if reader.status == .reading { reader.cancelReading() }
         if reader.status == .failed {
-            throw GoldenNuggetError("帧解码失败："
+            throw DriftError("帧解码失败："
                 + (reader.error?.localizedDescription ?? "没有给出原因"))
         }
     }
 
     private static func jpeg(_ image: CGImage) throws -> Data {
         guard let data = UIImage(cgImage: image).jpegData(compressionQuality: jpegQuality) else {
-            throw GoldenNuggetError("解码后的某一帧无法编码为 JPEG。")
+            throw DriftError("解码后的某一帧无法编码为 JPEG。")
         }
         return data
     }
@@ -494,12 +494,12 @@ enum PosterBoardVideo {
         let asset = AVURLAsset(url: video)
         guard let session = AVAssetExportSession(asset: asset,
                                                  presetName: AVAssetExportPresetPassthrough) else {
-            throw GoldenNuggetError("\(video.lastPathComponent) 无法重新封装为 .mov。")
+            throw DriftError("\(video.lastPathComponent) 无法重新封装为 .mov。")
         }
         do {
             try await session.export(to: output, as: .mov)
         } catch {
-            throw GoldenNuggetError("无法把 \(video.lastPathComponent) 重新封装为 .mov："
+            throw DriftError("无法把 \(video.lastPathComponent) 重新封装为 .mov："
                 + error.localizedDescription)
         }
         return output

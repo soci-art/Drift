@@ -242,7 +242,7 @@ enum PosterBoardLocal {
                 PosterBoard.convertLegacyPack(template.title, at: stage, log: log)
             }
         }
-        guard !sources.isEmpty else { throw GoldenNuggetError("没有可注入的 PosterBoard 包或模板。") }
+        guard !sources.isEmpty else { throw DriftError("没有可注入的 PosterBoard 包或模板。") }
 
         // The handle is held for the whole run. One query for the container
         // beats one per descriptor, and every copy below needs the extension
@@ -282,7 +282,7 @@ enum PosterBoardLocal {
                 let descriptors = PosterBoardAirlift.findDescriptors(
                     in: stage, defaultExtension: source.defaultExtension, log: log)
                 guard !descriptors.isEmpty else {
-                    throw GoldenNuggetError("在 \(source.name) 中没有找到壁纸描述文件。"
+                    throw DriftError("在 \(source.name) 中没有找到壁纸描述文件。"
                         + "对于交付容器文件的模板，需要走「恢复式」。"
                         + DriftRestoreGate.unavailableSuffix)
                 }
@@ -324,7 +324,7 @@ enum PosterBoardLocal {
         }
 
         guard injected > 0 else {
-            throw GoldenNuggetError("没有写入任何 PosterBoard 描述文件。请确认签名授予了可用的 App Group，"
+            throw DriftError("没有写入任何 PosterBoard 描述文件。请确认签名授予了可用的 App Group，"
                 + "并且设备系统在本机直刷的支持范围内；缓存已过期的话，下一次会重新查找容器。")
         }
         return injected
@@ -377,7 +377,7 @@ enum PosterBoardLocal {
                 among: WorseQueryEscape.leakedChildren(of: applicationsRoot))
         }
         guard let path = found else {
-            throw GoldenNuggetError("找不到 PosterBoard 的容器。这个系统可能还没有壁纸商店的数据目录；"
+            throw DriftError("找不到 PosterBoard 的容器。这个系统可能还没有壁纸商店的数据目录；"
                 + "先添加一张系统壁纸，或者改用 AirLift。")
         }
         let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)

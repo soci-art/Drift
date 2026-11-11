@@ -25,8 +25,8 @@ run only takes them if a switch says so.
 | P0 | landed | Wire-byte accounting on `MobileBackup2BackupContext` (`Vendor/…/MobileBackup2Delegate.swift:153-205`), fed from `mb2_on_progress` (`:813`), `mb2_should_preserve` (`:827`), `mb2_write_chunk` (`:626`); emitted as `byteSummary()` after both exchange summaries (`IdeviceGateway.swift`) | always on | measurement only, changes no behaviour. The summary ends in a machine-readable `[bytes=N total=N offered=N kept=N drained=N stored=N]` tail because `ByteCountFormatter` output is locale-dependent |
 | P0 | landed | `scripts/backup-cost-report.py` | n/a | per-run budget table, drain share, first-vs-last comparison |
 | P1b | landed | Manifest-keyed skip in `AfcMediaBackup.pull` (`AfcMediaBackup.swift:150-192`), reported as `"AFC media: N file(s) already stored, N byte(s) not transferred"` (`:260-262`) | always on | a cold store behaves exactly as before; only the repeat path short-circuits |
-| P1a | landed, **gated** | `MergedContainer` (`GoldenNuggetEngine.swift:480-486`) + `deliver(… merged:)` post-pull hook (`:572-573`); filter split into `namesStore` / `keepsMergedFile` / `MergedFilter` (`PosterBoardBackup.swift:203-266`); `extractFromPull` (`:230`) | `Dev.MergePulls` = **off** | the four ordering constraints in §2.1 are encoded as the container's four fields, not as prose |
-| P2 | landed, **gated** | `Nugget/Core/BackupBaseline.swift` (`plan` / `seedManifest` / `snapshot` / `commit` / `clear`); `ManifestStore.rowCount` (`:49`) + `dropRows` (`:137`); retained tree under `AppPaths.baselineDir` (`:60`) | `Dev.IncrementalPull` = **off** | `dropDomain` was added to `seedManifest` — see "self-caught bugs" below |
+| P1a | landed, **gated** | `MergedContainer` (`DriftEngine.swift:480-486`) + `deliver(… merged:)` post-pull hook (`:572-573`); filter split into `namesStore` / `keepsMergedFile` / `MergedFilter` (`PosterBoardBackup.swift:203-266`); `extractFromPull` (`:230`) | `Dev.MergePulls` = **off** | the four ordering constraints in §2.1 are encoded as the container's four fields, not as prose |
+| P2 | landed, **gated** | `Drift/Core/BackupBaseline.swift` (`plan` / `seedManifest` / `snapshot` / `commit` / `clear`); `ManifestStore.rowCount` (`:49`) + `dropRows` (`:137`); retained tree under `AppPaths.baselineDir` (`:60`) | `Dev.IncrementalPull` = **off** | `dropDomain` was added to `seedManifest` — see "self-caught bugs" below |
 | P3 / P4 | not started | — | — | §4 is research; §5 needs a number from P0 first |
 
 **Incidental fix.** `HostManifests.writeSQLiteManifest` now takes `keepingExisting:`
@@ -73,7 +73,7 @@ restore**, and it opens **two mobilebackup2 sessions**:
 |---|---|---|---|---|
 | 1 | PosterBoard fetch | `PosterBoardBackup.fetch` | A backup session whose filter keeps only the store | `PosterBoardBackup.swift:68-163` |
 | 2 | Protective pull | `ProtectiveBackup.run` | A backup session: the whole device minus app containers | `ProtectiveBackup.swift:85-118` |
-| 3 | AFC media | `AfcMediaBackup.pull` | **Every file in the Media trees, every run** | `GoldenNuggetEngine.swift:484-488`, `AfcMediaBackup.swift:128-219` |
+| 3 | AFC media | `AfcMediaBackup.pull` | **Every file in the Media trees, every run** | `DriftEngine.swift:484-488`, `AfcMediaBackup.swift:128-219` |
 | 4 | Restore | `RestoreRunner.run` | Only the pruned keep-set (~hundreds of rows) | `RestoreRunner.swift:49-74` |
 
 Three facts in that table are the whole problem:
@@ -90,7 +90,7 @@ that costs us is the **offered** set, not the **kept** set:
 
 **(b) The device's `Manifest.db` baseline is the only lever that shrinks the offered
 set — and this app wipes it on every run.** Three separate places delete it:
-`resetDirectory(backupRoot)` (`GoldenNuggetEngine.swift:774-777`), `HostManifests.reset`
+`resetDirectory(backupRoot)` (`DriftEngine.swift:774-777`), `HostManifests.reset`
 on attempt 1 (`ProtectiveBackup.swift:60-62`), and `writeSQLiteManifest`, which removes
 and recreates the file empty (`HostManifests.swift:177-181`). The code already knows
 what that costs — the retry comment says wiping the baseline "makes every retry a FULL
@@ -104,7 +104,7 @@ used inside one run, and only by accident.**
 check — the manifest it writes already records `source`/`size`/`modified` per entry
 (`AfcMediaBackup.swift:204-206`) and is persisted (`AppPaths.swift:26-32`), but the pull
 loop never consults it. Since `deletingOriginals` is `false` on the apply path
-(`GoldenNuggetEngine.swift:487`), the device ends up holding **two copies of every
+(`DriftEngine.swift:487`), the device ends up holding **two copies of every
 photo**: the originals, and the app container's `Media/` store. On a device with a
 large library this is both the biggest transfer and the biggest storage consumer the
 app has.
@@ -132,7 +132,7 @@ Add five monotonic counters and log them once per stage:
 | `offeredBytes` / `offeredFiles` | the `shouldPreserve` closure (`ProtectiveBackup.swift:97-101`), summed from the delegate's per-file size | the number the device actually spent |
 | `keptBytes` / `keptFiles` | same closure, `keep == true` branch | what we paid for something we use |
 | `restoredRows` / `restoredBytes` | `ManifestStore.auditAgainstDisk()` (`ManifestStore.swift:418`) + the restore delegate | what the restore costs |
-| `retries` | `ChannelRecovery` (`ProtectiveBackup.swift:46`, `GoldenNuggetEngine.swift:808`) | a retry *is* a second walk |
+| `retries` | `ChannelRecovery` (`ProtectiveBackup.swift:46`, `DriftEngine.swift:808`) | a retry *is* a second walk |
 | `stageSeconds` | `StageTimer` already prints this | wall clock per stage |
 
 Acceptance: three consecutive applies produce a stable budget table. That table is the
@@ -157,7 +157,7 @@ exchange: one Trust/session authorization, one device walk.
 This is *parity*, not a new mechanism. The reference builds one file list from every
 feature and lets `needs_posterboard` decide only whether the store must be fetched
 first — "There is no separate apply for wallpapers"
-(`GoldenNuggetEngine.swift:180-190`). This port kept a second exchange
+(`DriftEngine.swift:180-190`). This port kept a second exchange
 (`AppPaths.swift:38-46` exists precisely to stop the two roots from wiping each other).
 
 Work items, and the ordering constraint that makes them non-trivial:
@@ -171,12 +171,12 @@ Work items, and the ordering constraint that makes them non-trivial:
    the prune** — the prune would otherwise drop rows outside the protective keep-set,
    and the WAL merge has to happen while the payloads are still on disk.
 4. Move `PosterBoard.compile` into `deliver`'s post-pull phase
-   (`GoldenNuggetEngine.swift:276-298` runs it before the pull today, which is why the
+   (`DriftEngine.swift:276-298` runs it before the pull today, which is why the
    database is fetched early).
 
 Cost: the pattern is proven (the fetch filters on the device path and refuses a run
 that kept nothing — `PosterBoardBackup.swift:123-186`), and the refactor is confined to
-`GoldenNuggetEngine.applyTweaks` + `ProtectiveBackup`. Payoff: one full device walk
+`DriftEngine.applyTweaks` + `ProtectiveBackup`. Payoff: one full device walk
 removed from every wallpaper apply.
 
 ### 2.2 AFC media: skip what is already stored  *(landed; always on)*
@@ -190,14 +190,14 @@ streaming it. The verification order the file's own doc comment insists on
 
 The skip is now load-bearing for a second caller, not just the apply path: the container
 is topped up automatically once the setup guide finishes and once per launch
-(`GoldenNuggetEngine.startAutomaticMediaPull`, rate-limited to one an hour), so the
+(`DriftEngine.startAutomaticMediaPull`, rate-limited to one an hour), so the
 repeat case is the *normal* case rather than an optimization for a double apply. The
 log line `N file(s) already stored, N byte(s) not transferred` is what tells the two
 apart in a bug report.
 
 Two follow-ups worth deciding explicitly (they are product calls, not engineering ones):
 
-- The apply path pulls media on **every** iOS 27 apply (`GoldenNuggetEngine.swift:484-488`),
+- The apply path pulls media on **every** iOS 27 apply (`DriftEngine.swift:484-488`),
   with `skipAfcMedia` as the only escape. With 2.2 the repeat cost collapses, but the
   survey (an AFC directory walk) still runs. Consider making the apply-time pull
   conditional on the survey reporting files the manifest does not already cover. An
@@ -275,7 +275,7 @@ which is the failure mode we are trying to avoid).
 ### Gate (per your own rule: a half-working toggle is worse than a narrow proven one)
 
 - Default stays **full pull**. The delta path lives behind `Dev.IncrementalPull`, in the
-  same shape as `Dev.SkipAfcMedia` (`GoldenNuggetEngine.swift:484`).
+  same shape as `Dev.SkipAfcMedia` (`DriftEngine.swift:484`).
 - It is promoted to default only when, on two devices × three consecutive runs:
   1. the restore's keep-set content is identical to a full-pull run of the same selection,
   2. every kept file is non-empty and byte-identical for unchanged paths,
@@ -307,7 +307,7 @@ which is the failure mode we are trying to avoid).
 ## 5. P4 — Transport and session (measure first, then tune)
 
 - **Retries are double-spend.** `ChannelRecovery.retry(attempts: 3)` wraps both the pull
-  and the restore (`ProtectiveBackup.swift:46`, `GoldenNuggetEngine.swift:808-812`). The P0
+  and the restore (`ProtectiveBackup.swift:46`, `DriftEngine.swift:808-812`). The P0
   counter will say how often it fires; every firing repeats a handshake and a partial walk.
 - **jktcp-level bytes.** `WireCensus` already detects the two transports states that mean
   re-sent bytes — `held=false` (reorder window full, `WireCensus.swift:38-41`) and an
@@ -343,9 +343,9 @@ the baseline. On a phone, the media store and the baseline are the ones that mat
 | Phase | Change | Files | Expected effect | Risk | Verification | State |
 |---|---|---|---|---|---|---|
 | P0 | Cost counters + log parser | `WireCensus.swift`, `ProtectiveBackup.swift`, `RestoreRunner.swift`, `AfcMediaBackup.swift`, `scripts/backup-cost-report.py` | none (measurement) | none | 3 runs produce a stable table | **landed** |
-| P1a | Merge the two pulls | `GoldenNuggetEngine.swift`, `ProtectiveBackup.swift`, `PosterBoardBackup.swift` | one device walk removed per wallpaper apply | medium (ordering: pull → extract → compile → prune → inject) | same restore content; one fewer backup session in the log | **landed, `Dev.MergePulls` off** |
+| P1a | Merge the two pulls | `DriftEngine.swift`, `ProtectiveBackup.swift`, `PosterBoardBackup.swift` | one device walk removed per wallpaper apply | medium (ordering: pull → extract → compile → prune → inject) | same restore content; one fewer backup session in the log | **landed, `Dev.MergePulls` off** |
 | P1b | AFC incremental skip | `AfcMediaBackup.swift` | media re-copy → near zero on repeat applies | low | stored file count and bytes on run 2 | **landed** |
-| P2 | Baseline reuse (gated) | new `BackupBaseline.swift`, `HostManifests`, `GoldenNuggetEngine`, `ProtectiveBackup`, `ManifestStore`, `AppPaths` | offered bytes on repeat applies, order-of-magnitude | high (device semantics) | §3 gate | **landed, `Dev.IncrementalPull` off; gate unrun** |
+| P2 | Baseline reuse (gated) | new `BackupBaseline.swift`, `HostManifests`, `DriftEngine`, `ProtectiveBackup`, `ManifestStore`, `AppPaths` | offered bytes on repeat applies, order-of-magnitude | high (device semantics) | §3 gate | **landed, `Dev.IncrementalPull` off; gate unrun** |
 | P4 | Retry/jktcp/serialization | `ChannelRecovery.swift`, `Airlift` call sites | removes double-spend | low-medium | retry counter + wire counters | not started |
 
 **Do not redo** (already landed, see `docs/restore-path-audit.md:34-44`): the prune's single

@@ -2,11 +2,11 @@ import Foundation
 
 /// An error whose message is meant for the operator, not for a stack trace.
 ///
-/// Moved out of `GoldenNuggetEngine.swift` in the 2.0.0 engine swap: the type
+/// Moved out of `DriftEngine.swift` in the 2.0.0 engine swap: the type
 /// is referenced across the whole app (24 files at the time of the move), so
 /// it lives here, in the retained core, while the engine file goes away. The
 /// name is kept so every existing reference survives untouched.
-struct GoldenNuggetError: Error, LocalizedError {
+struct DriftError: Error, LocalizedError {
     let message: String
     init(_ message: String) { self.message = message }
     var errorDescription: String? { message }
@@ -119,7 +119,7 @@ struct TweakPayload: Equatable {
 
 /// A payload whose bytes are on disk and are no longer there.
 ///
-/// Its own type rather than `GoldenNuggetError`, which lives in the engine: this
+/// Its own type rather than `DriftError`, which lives in the engine: this
 /// file is one of the five `scripts/tweak-port-diff.py` compiles for the host,
 /// and the engine pulls in Minimuxer and SwiftUI, which that harness has no use
 /// for.  The message is spelled the way the app's status line reads.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Nugget/Core/SkipSetupCatalog.swift from GoldenNugget's pane list.
+"""Generate Drift/Core/SkipSetupCatalog.swift from GoldenNugget's pane list.
 
 Why generate instead of retype: the reference keeps the setup-pane list in exactly
 one place — ``SKIP_ALL_PANES`` in ``src/restore/skip_setup27.py`` — and says so in
@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUTPUT = ROOT / "Nugget" / "Core" / "SkipSetupCatalog.swift"
+OUTPUT = ROOT / "Drift" / "Core" / "SkipSetupCatalog.swift"
 DEFAULT_SOURCE = os.path.expanduser("~/GoldenNugget")
 RELATIVE_SOURCE = "src/restore/skip_setup27.py"
 LIST_NAME = "SKIP_ALL_PANES"

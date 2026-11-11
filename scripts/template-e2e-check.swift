@@ -6,9 +6,9 @@
 // `main.swift`; `-target` is ≥ 26 because the template sources use
 // `URL.appendingPathComponent(_:conformingTo:)`, and the host build must not
 // need ZIPFoundation):
-//   mkdir -p /tmp/tmpl-e2e && cat Nugget/Core/TemplateXML.swift \
-//       Nugget/Core/XMLScanner.swift Nugget/Core/TemplateFile.swift \
-//       Nugget/Core/TemplateOptions.swift scripts/template-e2e-check.swift \
+//   mkdir -p /tmp/tmpl-e2e && cat Drift/Core/TemplateXML.swift \
+//       Drift/Core/XMLScanner.swift Drift/Core/TemplateFile.swift \
+//       Drift/Core/TemplateOptions.swift scripts/template-e2e-check.swift \
 //       > /tmp/tmpl-e2e/main.swift && xcrun swiftc -O \
 //       -target arm64-apple-macosx26.0 /tmp/tmpl-e2e/main.swift \
 //       -o /tmp/tmpl-e2e/check
@@ -52,7 +52,7 @@ import UniformTypeIdentifiers
 // (`PosterBoardPlist.set`).  Both live in `PosterBoard.swift`, which drags in
 // the device stack and `PosterBoardTendie`'s unconditional `import ZIPFoundation`
 // — neither of which a host harness can link.  The bodies below are **verbatim**
-// copies of `Nugget/Core/PosterBoard.swift` (they are Foundation-only), so the
+// copies of `Drift/Core/PosterBoard.swift` (they are Foundation-only), so the
 // harness measures the real template code, not a re-implementation of its
 // helpers.  If the real ones change, these have to follow — and this comment is
 // where to notice.
@@ -84,7 +84,7 @@ enum PosterBoardPlist {
         let data = try Data(contentsOf: url)
         let object = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
         guard let plist = object as? [String: Any] else {
-            throw GoldenNuggetError("\(url.lastPathComponent) is a plist but not a dictionary.")
+            throw DriftError("\(url.lastPathComponent) is a plist but not a dictionary.")
         }
         return plist
     }
@@ -118,13 +118,13 @@ enum PosterBoardPlist {
 // MARK: - A stand-in for the engine's error type
 //
 // Only the `PosterBoardPlist` stub above throws it; the real type is declared
-// in `GoldenNuggetEngine.swift` — and that file imports Minimuxer, SwiftUI and
+// in `DriftEngine.swift` — and that file imports Minimuxer, SwiftUI and
 // the whole device stack, none of which a host harness can link.  Declaring it
 // here is safe precisely because it is **only** ever used for its message: the
 // harness compares outcomes (threw / did not throw, and the text), never the
 // type.  If the real type ever gains behaviour this would have to follow, and
 // this comment is where to notice.
-struct GoldenNuggetError: Error, LocalizedError {
+struct DriftError: Error, LocalizedError {
     let message: String
     init(_ message: String) { self.message = message }
     var errorDescription: String? { message }

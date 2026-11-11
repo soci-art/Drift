@@ -409,7 +409,7 @@ enum PosterBoardConverter {
         do {
             archive = try Archive(url: packURL, accessMode: .read)
         } catch {
-            throw GoldenNuggetError("\(packURL.lastPathComponent) 不是可读的 .tendies 文件："
+            throw DriftError("\(packURL.lastPathComponent) 不是可读的 .tendies 文件："
                 + "归档：\(error.localizedDescription)")
         }
         var bundles: Set<String> = []
@@ -756,7 +756,7 @@ enum PosterBoardConverter {
         let full = NSRange(text.startIndex..., in: text)
         guard let match = rootLayerRE.firstMatch(in: text, range: full),
               let matchRange = Range(match.range, in: text) else {
-            throw GoldenNuggetError("main.caml 没有根 CALayer")
+            throw DriftError("main.caml 没有根 CALayer")
         }
         let tag = String(text[matchRange])
         let oldID = xmlAttribute(tag, "id")
@@ -804,7 +804,7 @@ enum PosterBoardConverter {
         let unitsInPixels = planeUnits(index, logicalWidth: logicalWidth)
         let mainCAML = planeDir.appendingPathComponent("main.caml")
         guard let original = readText(mainCAML) else {
-            throw GoldenNuggetError("\(planeDir.lastPathComponent) 没有 main.caml")
+            throw DriftError("\(planeDir.lastPathComponent) 没有 main.caml")
         }
         let stripped = stripScripts(original)
         let text: String
@@ -841,7 +841,7 @@ enum PosterBoardConverter {
                                         maxMultiplier: Double = defaultMaxAdaptiveTimeMultiplier) throws {
         let path = wallpaperDir.appendingPathComponent("Wallpaper.plist")
         var data = readPlist(path)
-        guard !data.isEmpty else { throw GoldenNuggetError("\(path.lastPathComponent) 缺失或不可读") }
+        guard !data.isEmpty else { throw DriftError("\(path.lastPathComponent) 缺失或不可读") }
 
         data["family"] = clownfishFamily
         // `setdefault`, so a package that already carries these keeps its own
@@ -1065,7 +1065,7 @@ enum PosterBoardConverter {
                                   maxMultiplier: Double = defaultMaxAdaptiveTimeMultiplier) throws
         -> PosterBoardConversion {
         guard let wallpaperDir = findWallpaperDir(descriptorDir) else {
-            throw GoldenNuggetError("\(descriptorDir.lastPathComponent) 没有壁纸文件夹")
+            throw DriftError("\(descriptorDir.lastPathComponent) 没有壁纸文件夹")
         }
         let data = readPlist(wallpaperDir.appendingPathComponent("Wallpaper.plist"))
         // The reference's fallback is 390x844@3 here and 393x852@3 in

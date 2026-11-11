@@ -59,7 +59,7 @@ doubles. Community/preset/reset harness: 124 checks plus Python decoding Swift's
 GN1 output. Protective filters: 31 checks. Template safety: 31 checks; template
 backup: 16 checks; PosterBoard snapshot preservation: 14 checks. All passed.
 Release device build succeeded with Xcode 26.6 / iOS 26.5 SDK and produced
-`build/GoldenNuggetMobile.ipa` (unsigned), including icon-appearance and binary
+`build/Drift.ipa` (unsigned), including icon-appearance and binary
 freshness checks.
 
 ```sh

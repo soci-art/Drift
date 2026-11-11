@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Nugget/Core/TweakCatalog.swift from GoldenNugget's tweak registry.
+"""Generate Drift/Core/TweakCatalog.swift from GoldenNugget's tweak registry.
 
 Why generate instead of retype: the reference defines every plist tweak exactly
 once, as a ``TweakSpec`` in ``src/tweaks/registry.py`` (id / section / title /
@@ -33,7 +33,7 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUTPUT = ROOT / "Nugget" / "Core" / "TweakCatalog.swift"
+OUTPUT = ROOT / "Drift" / "Core" / "TweakCatalog.swift"
 DEFAULT_SOURCE = os.path.expanduser("~/GoldenNugget")
 
 # Python Section member name -> Swift case name.

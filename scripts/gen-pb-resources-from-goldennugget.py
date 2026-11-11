@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Nugget/Core/PosterBoardResources.swift from GoldenNugget's bundled
+"""Generate Drift/Core/PosterBoardResources.swift from GoldenNugget's bundled
 PosterBoard assets.
 
 Why generate instead of copying the directory: the reference reads these through
@@ -42,7 +42,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUTPUT = ROOT / "Nugget" / "Core" / "PosterBoardResources.swift"
+OUTPUT = ROOT / "Drift" / "Core" / "PosterBoardResources.swift"
 DEFAULT_SOURCE = os.path.expanduser("~/GoldenNugget")
 RELATIVE_SOURCE = "files/posterboard"
 

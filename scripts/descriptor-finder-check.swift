@@ -64,7 +64,7 @@ struct PosterBoardSelection {
     var describe: String { "harness" }
 }
 
-struct GoldenNuggetError: Error { let message: String; init(_ m: String) { message = m } }
+struct DriftError: Error { let message: String; init(_ m: String) { message = m } }
 
 /// Models configuration before injection; the template safety harness separately
 /// compiles the real TemplateFile and its option engine against ZIPFoundation.
@@ -95,7 +95,7 @@ enum Airlift {
     static func injectFolder(pairingPath: String, folderPath: String,
                              targetParentDir: String, destName: String) async throws {
         targets.append(targetParentDir)
-        if failInjection { throw GoldenNuggetError("fixture injection failed") }
+        if failInjection { throw DriftError("fixture injection failed") }
     }
     static func respring() async throws { resprings += 1 }
 }
@@ -108,7 +108,7 @@ enum Airlift {
 struct Archive: Sequence {
     enum AccessMode { case read, create, update }
     struct Entry { let path: String }
-    init(url: URL, accessMode access: AccessMode) throws { throw GoldenNuggetError("no zip in harness") }
+    init(url: URL, accessMode access: AccessMode) throws { throw DriftError("no zip in harness") }
     func makeIterator() -> AnyIterator<Entry> { AnyIterator { nil } }
 }
 
@@ -148,7 +148,7 @@ func extract(_ archive: URL, to stage: URL) throws {
     try proc.run()
     proc.waitUntilExit()
     guard proc.terminationStatus == 0 else {
-        throw GoldenNuggetError("unzip failed (\(proc.terminationStatus))")
+        throw DriftError("unzip failed (\(proc.terminationStatus))")
     }
 }
 

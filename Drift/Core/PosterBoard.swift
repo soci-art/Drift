@@ -103,7 +103,7 @@ enum PosterBoard {
                 + "（\(deviceVersion.isEmpty ? "系统版本未知" : "iOS \(deviceVersion)")），"
                 + "不往不确定的商店目录里写。"
             log("Store structure version check failed: \(message)")
-            throw GoldenNuggetError(message)
+            throw DriftError(message)
         }
         let closed272 = ceiling == 0
             && !AirliftAvailability.early272Builds.contains(build)
@@ -112,7 +112,7 @@ enum PosterBoard {
                 + "（\(build.isEmpty ? "构建号未知" : build)）上验证过商店结构版本，"
                 + "已停止写入；请改用其他刷入方式。"
             log("Store structure version check failed: \(message)")
-            throw GoldenNuggetError(message)
+            throw DriftError(message)
         }
         log("Store structure version \(fallbackStructureVersion) — verified for iOS "
             + "\(deviceVersion)\(build.isEmpty ? "" : " (\(build))")，"
@@ -476,7 +476,7 @@ extension PosterBoard {
         //    fail on a fetch whose result would not be used.
         let stagedItems = builder.configs
         if database == nil && !stagedItems.isEmpty {
-            throw GoldenNuggetError(
+            throw DriftError(
                 "PosterBoard 没有可把这些壁纸加进去的数据库：本地既没有缓存"
                 + "的设备数据库副本，也没能新建空数据库——数据库决定了"
                 + "壁纸是否出现在选择器中。请把日志发给维护者定位。")
@@ -580,14 +580,14 @@ extension PosterBoard {
         // not a stricter one.  Guessing "not 26.4" would silently write a
         // smaller plist than a 26.4+ device needs.
         guard let atLeast264 = compareVersion(deviceVersion, "26.4") else {
-            throw GoldenNuggetError("PosterBoard 需要设备的 iOS 版本来决定使用哪种"
+            throw DriftError("PosterBoard 需要设备的 iOS 版本来决定使用哪种"
                 + "要写入的重置偏好（26.4 新增了两个迁移列表），而且"
                 + "「\(deviceVersion)」不是一个版本号。请读取设备身份后重试。")
         }
         var plist: [String: Any] = [:]
         if let existing {
             guard let decoded = try PropertyListSerialization.propertyList(from: existing, format: nil) as? [String: Any] else {
-                throw GoldenNuggetError("实时 PosterBoard 偏好不是字典；应用已停止以保留它们。")
+                throw DriftError("实时 PosterBoard 偏好不是字典；应用已停止以保留它们。")
             }
             plist = decoded
         }
@@ -811,7 +811,7 @@ private struct PosterBoardBuilder {
                     // has that shape.
                     let components = restorePath.components(separatedBy: "/")
                     guard components.count > 6 else {
-                        throw GoldenNuggetError("PosterBoard：无法读取提供方："
+                        throw DriftError("PosterBoard：无法读取提供方："
                             + "扩展名从 \(restorePath) 中剥离——描述文件被送到了"
                             + "意料之外的地方。")
                     }
@@ -1037,7 +1037,7 @@ extension PosterBoard {
         do {
             try fm.copyItem(at: source, to: destination)
         } catch {
-            throw GoldenNuggetError("无法把 \(source.lastPathComponent) 拷贝进应用："
+            throw DriftError("无法把 \(source.lastPathComponent) 拷贝进应用："
                 + error.localizedDescription)
         }
         return destination
@@ -1063,7 +1063,7 @@ enum PosterBoardPlist {
         let data = try Data(contentsOf: url)
         let object = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
         guard let plist = object as? [String: Any] else {
-            throw GoldenNuggetError("\(url.lastPathComponent) 是 plist 但不是字典。")
+            throw DriftError("\(url.lastPathComponent) 是 plist 但不是字典。")
         }
         return plist
     }
@@ -1114,7 +1114,7 @@ enum PosterBoardPlist {
     static func alignedForFamily(_ data: Data) throws -> Data {
         let object = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
         guard var plist = object as? [String: Any] else {
-            throw GoldenNuggetError("Wallpaper.plist 不是字典。")
+            throw DriftError("Wallpaper.plist 不是字典。")
         }
         let newIdentifier = plist["identifier"]
         if let assets = plist["assets"] as? [String: Any],

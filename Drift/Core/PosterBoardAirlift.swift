@@ -87,7 +87,7 @@ enum PosterBoardAirlift {
                 PosterBoard.convertLegacyPack(template.title, at: stage, log: log)
             }
         }
-        guard !sources.isEmpty else { throw GoldenNuggetError("没有可注入的 PosterBoard 包或模板。") }
+        guard !sources.isEmpty else { throw DriftError("没有可注入的 PosterBoard 包或模板。") }
 
         var container = cachedContainer
         if container.isEmpty {
@@ -157,7 +157,7 @@ enum PosterBoardAirlift {
                                                 defaultExtension: source.defaultExtension,
                                                 log: log)
                 guard !descriptors.isEmpty else {
-                    throw GoldenNuggetError("在 \(source.name) 中没有找到壁纸描述文件。"
+                    throw DriftError("在 \(source.name) 中没有找到壁纸描述文件。"
                         + "对于交付容器文件的模板，需要走「恢复刷」。"
                         + DriftRestoreGate.unavailableSuffix)
                 }
@@ -210,7 +210,7 @@ enum PosterBoardAirlift {
         }
 
         guard injected > 0 else {
-            throw GoldenNuggetError("没有注入任何 PosterBoard 描述文件。设备必须"
+            throw DriftError("没有注入任何 PosterBoard 描述文件。设备必须"
                 + "保持解锁并让 LocalDevVPN 连通；如果当时已经解锁，那么缓存的容器信息已过期，并已"
                 + "为下一次尝试清除。")
         }
@@ -449,7 +449,7 @@ enum PosterBoardAirlift {
         guard let walker = FileManager.default.enumerator(
             at: folder, includingPropertiesForKeys: [.isRegularFileKey]
         ) else {
-            throw GoldenNuggetError("无法读取描述文件：\(folder.lastPathComponent)")
+            throw DriftError("无法读取描述文件：\(folder.lastPathComponent)")
         }
 
         while let url = walker.nextObject() as? URL {

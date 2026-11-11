@@ -190,7 +190,7 @@ enum PairingRecord {
         // silently adopted — or, worse, misread as a wallpaper pack. The
         // content check below still decides whether a `.plist` IS a record.
         guard url.pathExtension.lowercased() == "plist" else {
-            throw GoldenNuggetError("\(url.lastPathComponent) 不是 .plist 文件："
+            throw DriftError("\(url.lastPathComponent) 不是 .plist 文件："
                 + "Drift 的配对文件只接收 .plist。请在电脑上把配对文件导出为"
                 + " .plist（内容不变、只改后缀也可以），再导入一次。")
         }
@@ -208,19 +208,19 @@ enum PairingRecord {
         // here instead of being silently mangled on the way to disk.
         let data = try Data(contentsOf: url)
         guard let raw = String(data: data, encoding: .utf8) else {
-            throw GoldenNuggetError("\(url.lastPathComponent) 不是 UTF-8 文本："
+            throw DriftError("\(url.lastPathComponent) 不是 UTF-8 文本："
                 + "（\(data.count) 字节）。配对文件必须是 XML plist，因为"
                 + "minimuxer 解析的正是它——二进制 plist 必须先转换。")
         }
 
         let record = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !record.isEmpty else {
-            throw GoldenNuggetError("\(url.lastPathComponent) 是空的——没有可导入的内容。"
+            throw DriftError("\(url.lastPathComponent) 是空的——没有可导入的内容。"
                 + "如果它在 iCloud 云盘里，请先在「文件」中打开一次让它下载下来，"
                 + "然后再导入一次。")
         }
         guard usable(record) else {
-            throw GoldenNuggetError("\(url.lastPathComponent) 不是属性列表："
+            throw DriftError("\(url.lastPathComponent) 不是属性列表："
                 + "（\(sourceLabel(record))）。配对文件必须是 XML plist——"
                 + "minimuxer 不解析其他格式。")
         }
@@ -234,7 +234,7 @@ enum PairingRecord {
         let written = try String(contentsOf: dest, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard written == record else {
-            throw GoldenNuggetError("配对文件在写入以下位置时没能存活："
+            throw DriftError("配对文件在写入以下位置时没能存活："
                 + "\(dest.lastPathComponent)：\(record.count) 个字节只回来了 \(written.count) 个"
                 + "。请重新导入。")
         }
@@ -254,7 +254,7 @@ enum PairingRecord {
     @discardableResult
     static func adoptFromDisk() throws -> String {
         guard let record = onDisk() else {
-            throw GoldenNuggetError("配对服务已完成，但在以下位置没有可用的记录："
+            throw DriftError("配对服务已完成，但在以下位置没有可用的记录："
                 + "\(AppPaths.pairingFile.lastPathComponent)（\(sourceLabelOnDisk())）。"
                 + "请改导入一份配对文件。")
         }

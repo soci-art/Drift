@@ -36,7 +36,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-OUTPUT = REPO / "Nugget/Core/TweakCatalogDaemons.swift"
+OUTPUT = REPO / "Drift/Core/TweakCatalogDaemons.swift"
 
 # Filled from the desktop GUI's literal row tables by load_reference().
 MAIN: list[tuple[str, str, str | None]] = []
@@ -76,7 +76,7 @@ def load_reference(root: Path):
     tables = []
 
     def parsed_title(node) -> str | None:
-        # Rows bind either `QCoreApplication.translate("Nugget", 'Title')`
+        # Rows bind either `QCoreApplication.translate("Drift", 'Title')`
         # (or `self.tr('Title')`): the string payload is the last positional
         # string constant, never the translate context.
         if isinstance(node, ast.Constant) and isinstance(node.value, str):

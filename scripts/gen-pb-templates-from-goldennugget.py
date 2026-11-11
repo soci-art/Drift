@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Nugget/Core/PosterBoardTemplates.swift from GoldenNugget's caml writer.
+"""Generate Drift/Core/PosterBoardTemplates.swift from GoldenNugget's caml writer.
 
 A video wallpaper works by handing PosterBoard a `.ca` bundle whose `main.caml`
 is a frame list: one `<CGImage src="assets/N.jpg"/>` per extracted frame, wrapped
@@ -35,7 +35,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUTPUT = ROOT / "Nugget" / "Core" / "PosterBoardTemplates.swift"
+OUTPUT = ROOT / "Drift" / "Core" / "PosterBoardTemplates.swift"
 DEFAULT_SOURCE = os.path.expanduser("~/GoldenNugget")
 RELATIVE_SOURCE = "src/controllers/video_handler.py"
 

@@ -158,7 +158,7 @@ enum PosterBoardStore {
         try? FileManager.default.removeItem(at: url)
         var db: OpaquePointer?
         guard sqlite3_open(url.path, &db) == SQLITE_OK, let db else {
-            throw GoldenNuggetError("无法在以下位置创建空的 PosterBoard 数据库："
+            throw DriftError("无法在以下位置创建空的 PosterBoard 数据库："
                 + "\(url.lastPathComponent).")
         }
         defer { sqlite3_close(db) }
@@ -181,7 +181,7 @@ enum PosterBoardStore {
             );
             """
         guard exec(db, schema) else {
-            throw GoldenNuggetError("无法创建空的 PosterBoard 数据库结构："
+            throw DriftError("无法创建空的 PosterBoard 数据库结构："
                 + String(cString: sqlite3_errmsg(db)))
         }
         // Same shipping requirement as a stitched store: the reset delivers this
@@ -189,7 +189,7 @@ enum PosterBoardStore {
         // rollback-journal database to WAL (see `declareWAL`).
         try declareWAL(db, describing: "空的 PosterBoard 数据库")
         guard validate(url) else {
-            throw GoldenNuggetError("空的 PosterBoard 数据库没有通过校验。重置已在写入设备之前停止。")
+            throw DriftError("空的 PosterBoard 数据库没有通过校验。重置已在写入设备之前停止。")
         }
     }
 
@@ -203,14 +203,14 @@ enum PosterBoardStore {
                        items: [PosterBoardConfigItem],
                        workingDirectory: URL) throws -> URL {
         if isEncrypted(database) {
-            throw GoldenNuggetError(
+            throw DriftError(
                 "该 PosterBoard 数据库是加密的。请在"
                 + "访达 / iTunes 中关闭「加密本地备份」，重新做一份备份再获取——明文"
                 + "载荷注入加密库后无法被"
                 + "恢复代理解密（MBErrorDomain/205）。")
         }
         if let complaint = diagnose(database, strict: false) {
-            throw GoldenNuggetError(
+            throw DriftError(
                 "该 PosterBoard 数据库不可用——\(complaint)（表："
                 + "\(describeTables(database))）。它可能是一次被截断或中断的"
                 + "获取；请重新获取。")
@@ -223,26 +223,26 @@ enum PosterBoardStore {
         try? fm.removeItem(at: staged)
         try fm.copyItem(at: database, to: staged)
         guard validate(staged) else {
-            throw GoldenNuggetError("PosterBoard 数据库的暂存副本没有"
+            throw DriftError("PosterBoard 数据库的暂存副本没有"
                 + "校验——来源可能已损坏。请重新获取。")
         }
 
         var db: OpaquePointer?
         guard sqlite3_open(staged.path, &db) == SQLITE_OK, let db else {
-            throw GoldenNuggetError("无法打开暂存的 PosterBoard 数据库。")
+            throw DriftError("无法打开暂存的 PosterBoard 数据库。")
         }
         defer { sqlite3_close(db) }
         guard exec(db, "PRAGMA busy_timeout = 10000") else {
-            throw GoldenNuggetError("无法为暂存数据库设置忙碌超时。")
+            throw DriftError("无法为暂存数据库设置忙碌超时。")
         }
         guard exec(db, "BEGIN IMMEDIATE") else {
-            throw GoldenNuggetError("无法在暂存的 PosterBoard 上开启事务："
+            throw DriftError("无法在暂存的 PosterBoard 上开启事务："
                 + "database: " + String(cString: sqlite3_errmsg(db)))
         }
         do {
             try write(db, items: items)
             guard exec(db, "COMMIT") else {
-                throw GoldenNuggetError("无法提交 PosterBoard 数据行："
+                throw DriftError("无法提交 PosterBoard 数据行："
                     + String(cString: sqlite3_errmsg(db)))
             }
         } catch {
@@ -276,13 +276,13 @@ enum PosterBoardStore {
     private static func declareWAL(_ db: OpaquePointer, describing what: String) throws {
         guard exec(db, "PRAGMA journal_mode=WAL"),
               try scalarText(db, "PRAGMA journal_mode")?.lowercased() == "wal" else {
-            throw GoldenNuggetError("\(what)无法切换到 WAL 模式（"
+            throw DriftError("\(what)无法切换到 WAL 模式（"
                 + String(cString: sqlite3_errmsg(db)) + "）。PosterBoard 打开它的库时"
                 + "以只读方式并要求 WAL，而回滚日志模式的数据库会让这件事"
                 + "失败——然后它会重建库并丢掉所有壁纸。")
         }
         guard exec(db, "PRAGMA wal_checkpoint(TRUNCATE)") else {
-            throw GoldenNuggetError("无法为\(what)做检查点——直接交付它会"
+            throw DriftError("无法为\(what)做检查点——直接交付它会"
                 + "把数据行留在一个恢复不会带走的文件里："
                 + String(cString: sqlite3_errmsg(db)))
         }
@@ -469,7 +469,7 @@ enum PosterBoardStore {
         var statement: OpaquePointer?
         defer { sqlite3_finalize(statement) }
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw GoldenNuggetError("PosterBoard 查询失败：\(sql) —— "
+            throw DriftError("PosterBoard 查询失败：\(sql) —— "
                 + String(cString: sqlite3_errmsg(db)))
         }
         bind(statement, bindings)
@@ -484,7 +484,7 @@ enum PosterBoardStore {
         var statement: OpaquePointer?
         defer { sqlite3_finalize(statement) }
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw GoldenNuggetError("PosterBoard 查询失败：\(sql) —— "
+            throw DriftError("PosterBoard 查询失败：\(sql) —— "
                 + String(cString: sqlite3_errmsg(db)))
         }
         bind(statement, bindings)
@@ -499,12 +499,12 @@ enum PosterBoardStore {
         var statement: OpaquePointer?
         defer { sqlite3_finalize(statement) }
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw GoldenNuggetError("PosterBoard 写入失败：\(sql) —— "
+            throw DriftError("PosterBoard 写入失败：\(sql) —— "
                 + String(cString: sqlite3_errmsg(db)))
         }
         bind(statement, bindings)
         guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw GoldenNuggetError("PosterBoard 写入失败：\(sql) —— "
+            throw DriftError("PosterBoard 写入失败：\(sql) —— "
                 + String(cString: sqlite3_errmsg(db)))
         }
     }

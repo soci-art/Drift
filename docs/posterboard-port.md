@@ -18,7 +18,7 @@
 > behind them — but that reference ran on a different host.
 
 Ported from: `~/GoldenNugget` (Python).
-Landed in: `Nugget/Core/PosterBoard*.swift`, `Nugget/Views/PosterBoardView.swift`.
+Landed in: `Drift/Core/PosterBoard*.swift`, `Drift/Views/PosterBoardView.swift`.
 Reference files: `src/tweaks/posterboard/{posterboard_tweak,tendie_file,pb_config_manager,pb_config_item}.py` ·
 `src/restore/{posterboard_backup,protective}.py` · `src/controllers/{video_handler.py,aar/aar.py}` ·
 `src/gui/ios/posterboard.py` · `files/posterboard/`
@@ -104,7 +104,7 @@ PoC previously only ever sent `{"Applications": {}}`. Added:
 |---|---|
 | `Vendor/MinimuxerGateway/idevice/IdeviceGateway.swift` | `syncAppFactoryEntry(bundleId:)` (the device's own `installation_proxy` record), `plistNode(from:)` (Foundation → `plist_t`, distinguishing Bool from NSNumber by CF type), `factoryInfo(applications:)`; a new `applications:` parameter on `backupBackup` |
 | `Vendor/MinimuxerSources/MinimuxerApi.swift` | the same two layers: `appFactoryEntry(bundleId:)` + `backupBackup(…, applications:)` |
-| `Nugget/Core/HostManifests.swift` | `ensure(…, applications:)` — the same dictionary has to go into both `Info.plist` (what pymobiledevice3 hands the device) and the `FactoryInfo` message (the path minimuxer takes). Both, because which one the device reads has not been distinguished on a real device |
+| `Drift/Core/HostManifests.swift` | `ensure(…, applications:)` — the same dictionary has to go into both `Info.plist` (what pymobiledevice3 hands the device) and the `FactoryInfo` message (the path minimuxer takes). Both, because which one the device reads has not been distinguished on a real device |
 
 **The record is forwarded, not composed.** The reference's `_add_posterboard_container`
 hand-builds `Container` / `ApplicationSINF` / `iTunesMetadata` / `PlaceholderIcon` (the last
@@ -260,7 +260,7 @@ so a placeholder upstream adds fails the script instead of reaching a device as 
 line: a Swift multi-line literal strips the closing delimiter's indentation, and these lines
 begin with tabs). The assets (the three configconversion plists, the live-photo skeleton,
 the VideoCAML skeleton, `contents.plist`) are embedded base64 in
-`Nugget/Core/PosterBoardResources.swift` by
+`Drift/Core/PosterBoardResources.swift` by
 `scripts/gen-pb-resources-from-goldennugget.py` — **not** shipped as bundle resources,
 because this project is built by both Xcode and xtool from one source list, and a resource
 added to only one manifest would leave two bundles quietly disagreeing.
@@ -341,18 +341,18 @@ Home → **PosterBoard**:
 scripts/gen-pb-resources-from-goldennugget.py [--check]
 scripts/gen-pb-templates-from-goldennugget.py [--check]
 
-# The routine gates (sync-pbxproj-sources.py is mandatory after adding/removing files under Nugget/)
+# The routine gates (sync-pbxproj-sources.py is mandatory after adding/removing files under Drift/)
 scripts/typecheck.sh "" --first PosterBoard.swift
 scripts/sync-pbxproj-sources.py
 scripts/check-linked-symbols.py               # see §3.3: the gateway's C calls are a link-time contract
 python3 scripts/tweak-port-diff.py            # needs packaging; see docs/tweak-port.md §4.3
 
 # The PosterBoard identity harness (see §4 item 2) — no device, no SDK:
-#   cat Nugget/Core/PosterBoard.swift scripts/posterboard-identity-check.swift \
+#   cat Drift/Core/PosterBoard.swift scripts/posterboard-identity-check.swift \
 #     > /tmp/pbcheck/main.swift
 #   && swiftc -swift-version 5 /tmp/pbcheck/main.swift -o /tmp/pbcheck/check
 #   && /tmp/pbcheck/check
-# Run it against `git show HEAD:Nugget/Core/PosterBoard.swift` too when a change here
+# Run it against `git show HEAD:Drift/Core/PosterBoard.swift` too when a change here
 # claims to fix something: 7 of its assertions fail against the pre-fix file, which is
 # the only evidence that it can fail at all.
 ```
@@ -389,7 +389,7 @@ new files therefore needs `--first`; this port was checked by excluding
 - **Descriptor identity**: `posterboard-identity-check.swift` → 19 assertions over three
   fixtures (a bare third-party Collections descriptor, a Mercury one, one that already
   ships a sidecar). Verified in both directions: all pass on the current file, **7 fail**
-  on `git show HEAD:Nugget/Core/PosterBoard.swift` — the missing sidecar, the absent
+  on `git show HEAD:Drift/Core/PosterBoard.swift` — the missing sidecar, the absent
   `wallpaperRepresentingIdentifier`, its nested copy being clobbered with an integer, and
   the hidden `configurableOptions.plist` being dropped.
 - **Blob shape**: `blob-shape-check.swift` → 34918 device blobs, 0 unreadable `Mode`, 0

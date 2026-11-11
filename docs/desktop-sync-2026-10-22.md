@@ -45,7 +45,7 @@ profiles), 68 community/preset checks plus Python decoding Swift GN1 output,
 31 protective-filter checks, 31 template-safety and 16 template-backup checks,
 and the PosterBoard/eligibility injector harness. All five generators and
 Xcode source-list checks pass. `scripts/build-ipa.sh Release` produced
-`build/GoldenNuggetMobile.ipa` (unsigned) with Xcode 26.6 / iOS 26.5 SDK.
+`build/Drift.ipa` (unsigned) with Xcode 26.6 / iOS 26.5 SDK.
 
 Mobile model-policy follow-up: both Siri operations accept other iPhone models;
 2385 compile comparisons and 72 community/preset checks pass with this policy.
