@@ -1,61 +1,57 @@
 import Foundation
 import Darwin
-import Network
 
 /// PosterBoard wallpapers written from inside the app, through `worse_query`.
 ///
-/// ## Why a third route exists
+/// ## Why a separate channel exists
 ///
-/// AirLift writes the same descriptors, but only after opening an AirTraffic
-/// tunnel to a paired device. That needs a pairing record, LocalDevVPN, an
-/// unlocked phone and iOS 26.2+ (and it is refused from 27.2 beta 3 on). The
-/// protected-backup route is currently suspended. `worse_query` gives this
-/// process a sandbox extension for PosterBoard's own data container, so the
-/// descriptors can be copied in directly: no pairing, no tunnel, no backup —
-/// and the only thing left to do afterwards is a respring.
+/// The two tunnel channels need a pairing record, LocalDevVPN, an unlocked
+/// phone and a system in their range. `worse_query` gives this process a
+/// sandbox extension for PosterBoard's own data container, so descriptors can
+/// be copied in directly: no pairing, no tunnel, no backup. This channel owns
+/// its whole flow — container discovery, layout scan, transactional write,
+/// identifier rewrite and the receipt — and never calls the tunnel channels'
+/// write or effect code.
 ///
-/// ## What it costs
+/// ## How the write lands
 ///
-/// The signing profile must grant a usable App Group
-/// (`WorseQueryEscape.discoveredGroupIdentifier`, resolved at runtime from the
-/// embedded provisioning profile); without one the route refuses itself and the
-/// judgement falls back. It can add descriptors but not remove them, so a store
-/// reset still needs the restore route. Everything it writes goes to the same
-/// place AirLift writes to:
+/// Ported from the 3106 on-device installer's approach:
 ///
-///     <PosterBoard container>/Library/Application Support/
-///       PRBPosterExtensionDataStore/<structure version>/Extensions/
-///       <provider>/descriptors/<random UUID>
+///  * find PosterBoard's data container (runtime App Group discovery, the
+///    same rule 1.3.0 introduced);
+///  * scan the store's **real** numeric generation directories and prefer the
+///    one that already contains every provider this pack needs, with the
+///    newest generation as the fallback;
+///  * take the destination from the descriptor's own self-reported
+///    `extensionBundleIdentifier` — there is no remap table;
+///  * stage the folder beside its destination, verify file count and byte
+///    count, fsync, then atomically rename it into place;
+///  * rewrite the numeric identifier in its three places (the identifier
+///    sidecar, `wallpaperRepresentingIdentifier` in the contents userInfo,
+///    and `Wallpaper.plist`). Mercury keeps its own folder name and its
+///    identifiers, as 3106 measured.
+///
+/// It deliberately does **not** write preferences, `PendingDescriptorUpdates`
+/// or sqlite, exactly like the reference: the bet is "real directory +
+/// self-consistent identifiers → the system ingests it".
 ///
 /// ## How it takes effect
 ///
-/// The write itself never needs a pairing record. What happens *after* the write
-/// is decided by the device's state at that moment: when a saved RemotePairing
-/// record, the LocalDevVPN interface and Wi-Fi are all present, the tunnel can
-/// restart only the PosterBoard daemon (`PosterRefresh`) and the wallpaper
-/// appears without a respring. When any of the three is missing, or the refresh
-/// is not confirmed twice, the app stops at "written" and offers a manual
-/// respring button — it never triggers a respring on its own.
-///
-/// ## Why it shares AirLift's discovery code
-///
-/// A pack is not a fixed layout — bare `descriptors/`, a store snapshot, a
-/// root-level descriptor and video descriptors all occur. `PosterBoardAirlift`
-/// already walks those shapes, counts them from the archive for the progress
-/// bar, and randomizes the three identity fields on the way in. Doing it twice
-/// would mean two opinions about what a pack contains; the only difference here
-/// is that the copy is a local `FileManager` operation instead of an FFI one.
-/// What a finished in-process write did about making the wallpaper visible.
-///
-/// The write succeeds whether or not anything afterwards can run, so this is
-/// deliberately separate from the apply's success: a `.manualRespring` outcome is
-/// still a successful write that the user has to make visible.
+/// Nothing automatic. After the write this channel tells the user to open the
+/// app switcher and swipe PosterBoard closed; when the system relaunches
+/// PosterBoard it re-reads the store and the wallpaper appears. It never
+/// borrows the tunnel to restart PosterBoard and never resprings.
 enum PosterBoardEffectKind: String, Sendable {
     /// PosterBoard was restarted over the tunnel; the wallpaper is visible now.
     case noRespring
     /// The wallpaper is written but not visible yet. The completion prompt
     /// carries a manual respring button.
     case manualRespring
+    /// The local channel wrote the wallpaper; the user closes PosterBoard from
+    /// the app switcher to make the system re-read the store.
+    case closePosterBoard
+    /// The write was followed by a respring (注销直刷).
+    case respring
 }
 
 struct PosterBoardEffect: Equatable, Sendable {
@@ -65,6 +61,7 @@ struct PosterBoardEffect: Equatable, Sendable {
     /// Why, in the user's terms.
     let detail: String
 
+    /// Whether the completion prompt should offer the manual respring button.
     var needsManualRespring: Bool { kind == .manualRespring }
 
     /// The short text the apply history stores and the settings list shows.
@@ -72,13 +69,25 @@ struct PosterBoardEffect: Equatable, Sendable {
         switch kind {
         case .noRespring: return "免注销"
         case .manualRespring: return "写入后手动注销"
+        case .closePosterBoard: return "写入后关闭 PosterBoard"
+        case .respring: return "注销"
         }
     }
+}
+
+/// What one finished local write produced: the store read-back and the effect
+/// the user has to perform.
+struct PosterBoardLocalOutcome {
+    let verification: PosterStoreVerification
+    let effect: PosterBoardEffect
 }
 
 enum PosterBoardLocal {
     /// The bundle whose container holds the store.
     static let bundleID = "com.apple.PosterBoard"
+
+    /// Mercury descriptors keep their own folder name and identifiers.
+    static let mercuryExtensionID = "com.apple.MercuryPoster"
 
     /// Where app data containers live.
     ///
@@ -87,12 +96,8 @@ enum PosterBoardLocal {
     /// has to be the path the kernel will resolve.
     private static let applicationsRoot = "/private/var/mobile/Containers/Data/Application"
 
-    /// Cached container path.
-    ///
-    /// A cache, not a fact: the UUID changes on reinstall and on some updates.
-    /// `openContainer` re-verifies it against the container's own identifier
-    /// before trusting it, and every failed write clears it, so a stale path
-    /// costs one extra scan rather than writing into the wrong container.
+    /// Cached container path. A cache, not a fact: re-verified against the
+    /// container's own identifier before it is trusted, and cleared on failure.
     private static let containerKey = "PosterBoardLocalContainer"
 
     static var cachedContainer: String {
@@ -102,16 +107,7 @@ enum PosterBoardLocal {
 
     // MARK: - Apply
 
-    /// Inject the selected packs, then decide how they take effect.
-    ///
-    /// - Parameters:
-    ///   - selection: the page's selection. Packs are honoured; the video stage
-    ///     and a store reset are refused by the engine before this runs.
-    ///   - templates: PosterBoard templates, which ride the same descriptor
-    ///     copy as the packs.
-    ///   - deviceVersion: the system version the legacy-conversion gate should
-    ///     use. The judgement supplies the app's own version, because this route
-    ///     never reads the device over a tunnel.
+    /// Inject the selected packs, then hand the user the activation step.
     @discardableResult
     static func apply(
         selection: PosterBoardSelection,
@@ -119,107 +115,81 @@ enum PosterBoardLocal {
         deviceVersion: String,
         log: @escaping @Sendable (String) -> Void,
         progress: @escaping (Double) -> Void
-    ) async throws -> PosterBoardEffect {
-        // Unpacking and copying are blocking file work and a pack can be large,
-        // so they run off the caller (which is the main actor when the page's
-        // apply is tapped). Progress is marshalled back to the main queue
-        // because the engine publishes it as view state.
+    ) async throws -> PosterBoardLocalOutcome {
         let reported: (Double) -> Void = { value in
             DispatchQueue.main.async { progress(value) }
         }
-        let injected = try await offMainActor {
+        let write = try await offMainActor {
             try inject(selection: selection, templates: templates,
                        deviceVersion: deviceVersion, log: log, progress: reported)
         }
-
-        // The writes are the queue, so the bar is full before the effect step;
-        // a bar that sits at 100% through a refresh reads as finished.
         progress(99)
-        let effect = await determineEffect(log: log)
+        let verification = verify(write, log: log)
         progress(100)
-        log("Injected \(injected) descriptor(s) locally. Effect: \(effect.headline)")
-        return effect
+        let effect = PosterBoardEffect(
+            kind: .closePosterBoard,
+            headline: "刷入完成，壁纸已写入",
+            detail: "打开应用切换器，向上轻扫关闭 PosterBoard——系统重新拉起它时会重读商店，壁纸就生效了。")
+        log("Injected \(write.placed.count) descriptor(s) locally. Effect: \(effect.headline)")
+        return PosterBoardLocalOutcome(verification: verification, effect: effect)
     }
 
-    /// Decide, from the state *after* the write, how the wallpaper takes effect.
-    ///
-    /// Three things have to be true for the tunnel refresh: a saved
-    /// RemotePairing record, the LocalDevVPN interface, and Wi-Fi (the loopback
-    /// tunnel runs over it; cellular alone cannot carry it). When they are, the
-    /// refresh is attempted twice — the first attempt can lose a race with a
-    /// device that is still writing, and the second is the retry the checklist
-    /// asks for. If neither is confirmed the wallpaper is still written, so the
-    /// outcome is a prompt with a manual respring button, never an automatic
-    /// respring.
-    private static func determineEffect(log: @escaping @Sendable (String) -> Void) async -> PosterBoardEffect {
-        var missing: [String] = []
-        let record = (try? String(contentsOf: AppPaths.pairingFile, encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !PairingRecord.hasRemotePairingCredentials(record) {
-            missing.append("配对文件（含 Remote Pairing 凭据）")
+    /// Delete one descriptor this channel wrote, then read the store back to
+    /// confirm it is gone. Driven by the receipt list in Settings.
+    static func delete(receipt: PosterBoardLocalReceipt,
+                       log: @escaping @Sendable (String) -> Void) async throws {
+        try await offMainActor {
+            let opened = try openContainer(log: log)
+            defer { WorseQueryEscape.release(opened.handle) }
+            let container = opened.path
+            guard receipt.path.hasPrefix(container + "/"),
+                  receipt.path.contains(PosterBoard.storeDirectoryName) else {
+                throw DriftError("回执路径不在 PosterBoard 的商店目录里，拒绝删除。")
+            }
+            let manager = FileManager.default
+            guard manager.fileExists(atPath: receipt.path) else {
+                PosterBoardLocalReceipts.forget(id: receipt.id)
+                log("回执 \(receipt.id)：目录已经不在商店里，记录已清理。")
+                return
+            }
+            log("按回执删除：\(receipt.extensionID)/\(receipt.folderName)（代际 \(receipt.generation)）")
+            try manager.removeItem(atPath: receipt.path)
+            fsyncDirectory((receipt.path as NSString).deletingLastPathComponent)
+            if manager.fileExists(atPath: receipt.path) {
+                throw DriftError("删除后仍然能看到这个目录，没有确认删除。")
+            }
+            PosterBoardLocalReceipts.forget(id: receipt.id)
+            log("删除后核验：该描述符已不在商店里。")
         }
-        let tunnelUp = await MainActor.run { TunnelMonitor.shared.status != .down }
-        if !tunnelUp { missing.append("LocalDevVPN") }
-        if !(await wifiIsOn()) { missing.append("Wi-Fi") }
-
-        guard missing.isEmpty else {
-            let reason = missing.joined(separator: "、")
-            log("PosterBoard written; no automatic refresh because \(reason) is missing")
-            return PosterBoardEffect(
-                kind: .manualRespring,
-                headline: "壁纸已写入",
-                detail: "当前缺少\(reason)，所以没有自动刷新。壁纸已经在商店里，点「手动注销」"
-                    + "让 PosterBoard 读到它们。App 不会自动注销。")
-        }
-
-        log("Tunnel prerequisites complete — restarting only the PosterBoard daemon…")
-        var refresh = await PosterRefresh.attempt(pairingPath: AppPaths.pairingFile.path)
-        if !refresh.confirmed {
-            log("PosterBoard refresh not confirmed (\(refresh.status.explanation)) — retrying once")
-            refresh = await PosterRefresh.attempt(pairingPath: AppPaths.pairingFile.path)
-        }
-        if refresh.confirmed {
-            log("✅ \(refresh.status.explanation) — 免注销生效。")
-            return PosterBoardEffect(
-                kind: .noRespring,
-                headline: "刷入完成，免注销生效",
-                detail: "只重启了 PosterBoard，壁纸已经可见，其他 App 不受影响。")
-        }
-        log("⚠️ PosterBoard refresh not confirmed twice (\(refresh.status.explanation)); "
-            + "leaving the wallpaper written and offering a manual respring")
-        return PosterBoardEffect(
-            kind: .manualRespring,
-            headline: "壁纸已写入（免注销未确认）",
-            detail: "两次刷新都没有确认（\(refresh.status.explanation)）。壁纸已经在商店里，"
-                + "点「手动注销」让 PosterBoard 读到它们。App 不会自动注销。")
     }
 
-    /// Whether Wi-Fi is currently usable.
-    ///
-    /// `NWPathMonitor` reports its first path asynchronously after `start`, so
-    /// this waits for a settled path (bounded) instead of reading an
-    /// all-default snapshot. Uses a Wi-Fi-required monitor: a satisfied cellular
-    /// path is not enough for the loopback tunnel.
-    private static func wifiIsOn() async -> Bool {
-        let monitor = NWPathMonitor(requiredInterfaceType: .wifi)
-        monitor.start(queue: DispatchQueue(label: "com.sociart.drift.wifi-probe"))
-        defer { monitor.cancel() }
-        for _ in 0..<10 {
-            if monitor.currentPath.status == .satisfied { return true }
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
-        return false
+    // MARK: - Write
+
+    /// What one local write produced, for the read-back and the receipts.
+    struct LocalWrite {
+        let container: String
+        let storeVersion: Int
+        let placed: [Placed]
+        let providers: Set<String>
     }
 
-    /// The synchronous half: stage each source, then copy its descriptors into
-    /// PosterBoard's container. Returns how many were injected.
+    struct Placed {
+        let parent: String
+        let folderName: String
+        let extensionID: String
+        let numericID: Int
+        let pack: String
+        var path: String { parent + "/" + folderName }
+        var key: String { "\(extensionID)/\(folderName)" }
+    }
+
     private static func inject(
         selection: PosterBoardSelection,
         templates: [TemplateFile],
         deviceVersion: String,
         log: @escaping @Sendable (String) -> Void,
         progress: @escaping (Double) -> Void
-    ) throws -> Int {
+    ) throws -> LocalWrite {
         struct Source {
             let name: String
             let url: URL
@@ -244,19 +214,16 @@ enum PosterBoardLocal {
         }
         guard !sources.isEmpty else { throw DriftError("没有可注入的 PosterBoard 包或模板。") }
 
-        // The handle is held for the whole run. One query for the container
-        // beats one per descriptor, and every copy below needs the extension
-        // live; `defer` is what makes the release unconditional.
+        // One extension for the whole run: every copy below needs it live.
         let opened = try openContainer(log: log)
         defer { WorseQueryEscape.release(opened.handle) }
         let container = opened.path
         log("PosterBoard container (local): \(container)")
 
-        let structureVersion = structureVersion(in: container)
-        log("Store version directory: \(structureVersion)")
+        let root = container + PosterBoard.storeRoot
+        let generations = generationDirectories(in: root)
+        log("商店代际目录：\(generations.isEmpty ? "(无，按 \(PosterBoard.fallbackStructureVersion) 新建)" : generations.map(String.init).joined(separator: "、"))")
 
-        // Counted from the archives, like the AirLift route, so the bar has a
-        // denominator before the first pack is unpacked.
         let planned = sources.reduce(0) {
             $0 + PosterBoardAirlift.countDescriptors(inArchiveAt: $1.url)
         }
@@ -267,11 +234,11 @@ enum PosterBoardLocal {
         }
         progress(overall(done))
 
-        var injected = 0
+        var placed: [Placed] = []
+        var storeVersion = generations.first ?? PosterBoard.fallbackStructureVersion
+
         for (index, source) in sources.enumerated() {
             log("[\(index + 1)/\(sources.count)] \(source.name)")
-            // A `do` block scopes the `defer`: each pack's staging directory is
-            // removed when that pack is done, not when the whole run is.
             do {
                 let stage = PosterBoard.workDirectory
                     .appendingPathComponent("local-\(UUID().uuidString)", isDirectory: true)
@@ -283,37 +250,40 @@ enum PosterBoardLocal {
                     in: stage, defaultExtension: source.defaultExtension, log: log)
                 guard !descriptors.isEmpty else {
                     throw DriftError("在 \(source.name) 中没有找到壁纸描述文件。"
-                        + "对于交付容器文件的模板，需要走「恢复式」。"
+                        + "对于交付容器文件的模板，需要走「恢复刷」。"
                         + DriftRestoreGate.unavailableSuffix)
                 }
                 log("  \(descriptors.count) descriptor(s)")
 
+                // Prefer the generation that already holds every provider this
+                // pack needs; the newest one is the fallback.
+                let required = Set(descriptors.map(\.extensionID))
+                let generation = chooseGeneration(generations, required: required, root: root)
+                storeVersion = generation
+                log("  写入代际：\(generation)")
+
                 for (position, descriptor) in descriptors.enumerated() {
-                    let target = UUID().uuidString.uppercased()
                     let numericID = Int.random(in: PosterBoard.identifierRange)
-                    // Same reason as the AirLift route: a descriptor that keeps
-                    // the pack's own identifier collides with every other copy
-                    // of that pack already on the device. The directory name and
-                    // the plist values have to be rewritten together, or
-                    // PosterBoard indexes a wallpaper it cannot find.
-                    let currentExtension = descriptor.extensionID == PosterBoardPosterType.collections.extensionBundleID
-                        ? "com.apple.Posters.CollectionsPosterApp" : descriptor.extensionID
-                    let parent = container + PosterBoard.storeRoot + "/\(structureVersion)/Extensions/"
-                        + currentExtension + "/descriptors"
+                    let parent = root + "/\(generation)/Extensions/\(descriptor.extensionID)/descriptors"
+                    let folderName = targetFolderName(for: descriptor, in: parent)
                     do {
                         try PosterBoardAirlift.randomizeIdentifiers(
                             in: descriptor.url, numericID: numericID,
                             extensionID: descriptor.extensionID)
-                        try copy(descriptor.url, into: parent, named: target)
-                        injected += 1
+                        try install(folder: descriptor.url, parent: parent,
+                                    name: folderName, log: log)
+                        let entry = Placed(parent: parent, folderName: folderName,
+                                           extensionID: descriptor.extensionID,
+                                           numericID: numericID, pack: source.name)
+                        placed.append(entry)
+                        PosterBoardLocalReceipts.remember(entry)
                         done += 1
-                        log("  ✅ \(position + 1)/\(descriptors.count) → \(currentExtension)")
+                        log("  ✅ \(position + 1)/\(descriptors.count) → \(descriptor.extensionID)")
                         progress(overall(done))
                     } catch {
                         // Most likely a container UUID that changed under the
                         // run. Drop the cache so the next attempt rescans; the
-                        // failure itself is reported and the rest of the queue
-                        // still runs, exactly like the tunnel route.
+                        // failure is reported and the rest of the queue runs.
                         cachedContainer = ""
                         done += 1
                         progress(overall(done))
@@ -323,28 +293,177 @@ enum PosterBoardLocal {
             }
         }
 
-        guard injected > 0 else {
+        guard !placed.isEmpty else {
             throw DriftError("没有写入任何 PosterBoard 描述文件。请确认签名授予了可用的 App Group，"
                 + "并且设备系统在本机直刷的支持范围内；缓存已过期的话，下一次会重新查找容器。")
         }
-        return injected
+        let providers = Set(placed.map(\.extensionID))
+        return LocalWrite(container: container, storeVersion: storeVersion,
+                          placed: placed, providers: providers)
+    }
+
+    /// The store read-back for the local channel: the exact directories this
+    /// run renamed into place, checked on disk afterwards.
+    private static func verify(_ write: LocalWrite,
+                               log: @escaping @Sendable (String) -> Void) -> PosterStoreVerification {
+        let manager = FileManager.default
+        let expected = Set(write.placed.map(\.key))
+        var confirmed: Set<String> = []
+        for entry in write.placed where manager.fileExists(atPath: entry.path) {
+            confirmed.insert(entry.key)
+        }
+        log("写后核验（本机枚举）：在册 \(confirmed.count)/\(expected.count)。")
+        for missing in expected.subtracting(confirmed).sorted() {
+            log("写后核验：\(missing) 不在商店目录里——文件写了，但目录没有留下它。")
+        }
+        return PosterStoreVerification(
+            structureVersion: write.storeVersion,
+            structureVersionSource: "结构版本 \(write.storeVersion)：本机通道直接读取商店的实际代际目录",
+            providersSeen: write.providers,
+            expected: expected, confirmed: confirmed, enumeratedAfter: true)
+    }
+
+    // MARK: - Layout
+
+    /// The store's real numeric generation directories, newest first.
+    private static func generationDirectories(in root: String) -> [Int] {
+        (try? FileManager.default.contentsOfDirectory(atPath: root))?
+            .compactMap { Int($0) }
+            .filter { $0 > 0 }
+            .sorted(by: >) ?? []
+    }
+
+    /// The generation a pack should land in: the newest one that already holds
+    /// every provider the pack needs, else the newest at all, else a new
+    /// `fallbackStructureVersion` directory.
+    private static func chooseGeneration(_ generations: [Int],
+                                         required: Set<String>,
+                                         root: String) -> Int {
+        let manager = FileManager.default
+        for generation in generations {
+            let holdsAll = required.allSatisfy {
+                manager.fileExists(atPath: root + "/\(generation)/Extensions/\($0)")
+            }
+            if holdsAll { return generation }
+        }
+        return generations.first ?? PosterBoard.fallbackStructureVersion
+    }
+
+    /// Mercury keeps the folder name it shipped with; everything else gets a
+    /// fresh uppercase UUID, avoiding a collision with an existing folder.
+    private static func targetFolderName(for descriptor: PosterBoardAirlift.Descriptor,
+                                         in parent: String) -> String {
+        if descriptor.extensionID == mercuryExtensionID {
+            return descriptor.url.lastPathComponent
+        }
+        let manager = FileManager.default
+        var name = UUID().uuidString.uppercased()
+        while manager.fileExists(atPath: parent + "/" + name) {
+            name = UUID().uuidString.uppercased()
+        }
+        return name
+    }
+
+    // MARK: - Files
+
+    /// Stage one descriptor folder beside its destination, verify it, fsync it
+    /// and atomically rename it into place.
+    private static func install(folder: URL, parent: String, name: String,
+                                log: @escaping @Sendable (String) -> Void) throws {
+        let manager = FileManager.default
+        try manager.createDirectory(atPath: parent, withIntermediateDirectories: true)
+        let staging = parent + "/.drift-staging-\(UUID().uuidString)"
+        try? manager.removeItem(atPath: staging)
+        try manager.copyItem(at: folder, to: URL(fileURLWithPath: staging))
+        defer { try? manager.removeItem(atPath: staging) }
+
+        let staged = try treeStats(staging)
+        let original = try treeStats(folder.path)
+        guard staged.files == original.files, staged.bytes == original.bytes else {
+            throw DriftError("暂存校验不通过：文件数/字节数与源不一致，已放弃写入。")
+        }
+        try fsyncTree(staging)
+
+        let destination = parent + "/" + name
+        if manager.fileExists(atPath: destination) {
+            try manager.removeItem(atPath: destination)
+        }
+        let renamed = staging.withCString { source in
+            destination.withCString { target in rename(source, target) }
+        }
+        guard renamed == 0 else {
+            throw DriftError("原子改名失败：\(String(cString: strerror(errno)))")
+        }
+        fsyncDirectory(parent)
+        log("  落点：\(name)（\(staged.files) 个文件 / \(staged.bytes) 字节，原子改名 + fsync）")
+    }
+
+    /// File count and byte count of a file or directory tree.
+    private static func treeStats(_ path: String) throws -> (files: Int, bytes: Int) {
+        let manager = FileManager.default
+        var isDirectory: ObjCBool = false
+        guard manager.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            throw DriftError("找不到待写入的描述文件：\(path)")
+        }
+        if !isDirectory.boolValue {
+            let size = (try manager.attributesOfItem(atPath: path)[.size] as? Int) ?? 0
+            return (1, size)
+        }
+        var files = 0
+        var bytes = 0
+        let walker = manager.enumerator(atPath: path)
+        while let relative = walker?.nextObject() as? String {
+            let full = path + "/" + relative
+            var childIsDirectory: ObjCBool = false
+            guard manager.fileExists(atPath: full, isDirectory: &childIsDirectory),
+                  !childIsDirectory.boolValue else { continue }
+            files += 1
+            bytes += ((try? manager.attributesOfItem(atPath: full))?[.size] as? Int) ?? 0
+        }
+        return (files, bytes)
+    }
+
+    private static func fsyncTree(_ path: String) throws {
+        let manager = FileManager.default
+        var isDirectory: ObjCBool = false
+        guard manager.fileExists(atPath: path, isDirectory: &isDirectory) else { return }
+        if !isDirectory.boolValue {
+            fsyncFile(path)
+            return
+        }
+        let walker = manager.enumerator(atPath: path)
+        while let relative = walker?.nextObject() as? String {
+            let full = path + "/" + relative
+            var childIsDirectory: ObjCBool = false
+            if manager.fileExists(atPath: full, isDirectory: &childIsDirectory), !childIsDirectory.boolValue {
+                fsyncFile(full)
+            }
+        }
+        fsyncDirectory(path)
+    }
+
+    private static func fsyncFile(_ path: String) {
+        let descriptor = open(path, O_RDONLY)
+        guard descriptor >= 0 else { return }
+        fsync(descriptor)
+        close(descriptor)
+    }
+
+    /// fsync a directory so the rename itself is durable. Best-effort: some
+    /// filesystems reject `fsync` on a directory descriptor.
+    private static func fsyncDirectory(_ path: String) {
+        let descriptor = open(path, O_RDONLY)
+        guard descriptor >= 0 else { return }
+        fsync(descriptor)
+        close(descriptor)
     }
 
     // MARK: - Container
 
     /// Consume an extension for PosterBoard's container and return both.
-    ///
-    /// The cached path is verified against the container's own
-    /// `com.apple.containermanager.identifier` xattr before it is trusted — a
-    /// stale cache that now belongs to another app must not receive wallpaper
-    /// descriptors. A miss scans the application container directory once.
     private static func openContainer(log: @escaping @Sendable (String) -> Void) throws -> (path: String, handle: Int64) {
         let cached = cachedContainer
         if !cached.isEmpty {
-            // `createDirectory: true` skips worse_query's `lstat` of the target.
-            // The target is another app's container, which this process may not
-            // be allowed to stat yet — that permission is the thing the escape
-            // is about to obtain. The xattr read below is the real check.
             if let handle = try? WorseQueryEscape.consume(path: cached, createDirectory: true) {
                 if containerIdentifier(atPath: cached) == bundleID {
                     log("PosterBoard container: cached path verified")
@@ -358,27 +477,18 @@ enum PosterBoardLocal {
             }
         }
 
-        // One extension on the parent is enough to list the containers and read
-        // each child's identifier xattr; it is released before the container's
-        // own extension is taken. `createDirectory: true` applies here too: the
-        // Application directory exists, but this process cannot stat it from
-        // inside the sandbox.
         let found: String? = try WorseQueryEscape.withAccess(to: applicationsRoot, createDirectory: true) {
             let names = (try? FileManager.default.contentsOfDirectory(
                 atPath: applicationsRoot).sorted()) ?? []
             let listed = names.map { applicationsRoot + "/" + $0 }
             if let match = firstPosterBoardContainer(among: listed) { return match }
-
-            // The escape's own fallback for a directory that cannot be listed
-            // even with the parent extension: brute-force the inode numbers and
-            // try each path it returns.
             log("application container listing found no PosterBoard — falling back to pathleak")
             return firstPosterBoardContainer(
                 among: WorseQueryEscape.leakedChildren(of: applicationsRoot))
         }
         guard let path = found else {
             throw DriftError("找不到 PosterBoard 的容器。这个系统可能还没有壁纸商店的数据目录；"
-                + "先添加一张系统壁纸，或者改用 AirLift。")
+                + "先添加一张系统壁纸，或者改用隧道通道。")
         }
         let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
         cachedContainer = path
@@ -386,7 +496,6 @@ enum PosterBoardLocal {
         return (path, handle)
     }
 
-    /// The first candidate whose container identifier is PosterBoard's.
     private static func firstPosterBoardContainer(among candidates: [String]) -> String? {
         for candidate in candidates {
             guard isDirectory(candidate) else { continue }
@@ -395,8 +504,6 @@ enum PosterBoardLocal {
         return nil
     }
 
-    /// The container's bundle identifier, from the xattr containermanagerd
-    /// writes into every data container.
     private static func containerIdentifier(atPath path: String) -> String? {
         var buffer = [CChar](repeating: 0, count: 512)
         let length = buffer.withUnsafeMutableBytes { raw -> Int in
@@ -407,36 +514,6 @@ enum PosterBoardLocal {
         return String(cString: buffer)
     }
 
-    /// The store's structure version, read from the live directory.
-    ///
-    /// Unlike the AirLift route, this one can see the directory, so it does not
-    /// have to guess 61 and hope: the numeric folder with the highest number is
-    /// the one PosterBoard is using. A container whose store has never been
-    /// created falls back to the same constant the backup compiler uses.
-    private static func structureVersion(in container: String) -> Int {
-        let versions = (try? FileManager.default.contentsOfDirectory(
-            atPath: container + PosterBoard.storeRoot))?
-            .compactMap { Int($0) }
-            .filter { $0 > 0 } ?? []
-        return versions.max() ?? PosterBoard.fallbackStructureVersion
-    }
-
-    // MARK: - Files
-
-    /// Copy one staged descriptor folder to its destination.
-    ///
-    /// Destination parent directories are created if PosterBoard has not made
-    /// them yet (a fresh store, or the first descriptor for a provider).
-    private static func copy(_ folder: URL, into parent: String, named name: String) throws {
-        let manager = FileManager.default
-        try manager.createDirectory(atPath: parent, withIntermediateDirectories: true)
-        let destination = parent + "/" + name
-        if manager.fileExists(atPath: destination) {
-            try manager.removeItem(atPath: destination)
-        }
-        try manager.copyItem(at: folder, to: URL(fileURLWithPath: destination))
-    }
-
     private static func isDirectory(_ path: String) -> Bool {
         var flag: ObjCBool = false
         return FileManager.default.fileExists(atPath: path, isDirectory: &flag) && flag.boolValue
@@ -444,9 +521,6 @@ enum PosterBoardLocal {
 
     // MARK: - Threading
 
-    /// Run blocking file work off the caller, the same shape `Airlift` uses for
-    /// its FFI calls: a continuation over a global queue, rethrowing what the
-    /// body threw.
     private static func offMainActor<T>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {

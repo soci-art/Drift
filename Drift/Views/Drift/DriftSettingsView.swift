@@ -19,12 +19,15 @@ struct DriftSettingsView: View {
     @State private var sharePackage: SharePackageItem?
     @State private var recordsNote: String?
     @State private var showSealedNotice = false
+    @State private var receipts: [PosterBoardLocalReceipt] = PosterBoardLocalReceipts.load()
+    @State private var receiptToDelete: PosterBoardLocalReceipt?
 
     var body: some View {
         NavigationStack {
             List {
                 connectionSection
                 localRouteSection
+                localReceiptsSection
                 applySection
                 restoreSealedSection
                 historySection
@@ -56,6 +59,22 @@ struct DriftSettingsView: View {
             }
             .onAppear {
                 history = ApplyHistory.load()
+                receipts = PosterBoardLocalReceipts.load()
+            }
+            .confirmationDialog("删除这个描述符？", isPresented: Binding(
+                get: { receiptToDelete != nil },
+                set: { if !$0 { receiptToDelete = nil } }), titleVisibility: .visible
+            ) {
+                Button("删除", role: .destructive) {
+                    guard let receipt = receiptToDelete else { return }
+                    receiptToDelete = nil
+                    Task { await deleteReceipt(receipt) }
+                }
+                Button("取消", role: .cancel) { receiptToDelete = nil }
+            } message: {
+                if let receipt = receiptToDelete {
+                    Text("将从 PosterBoard 商店删除：\(receipt.summary)。删完会重新枚举核验它已不在册。")
+                }
             }
             .alert("恢复刷已封存", isPresented: $showSealedNotice) {
                 Button("知道了", role: .cancel) {}
@@ -71,8 +90,8 @@ struct DriftSettingsView: View {
     // MARK: - Connection
 
     private var connectionSection: some View {
-        Section("免注销直刷 · 隧道通道前提") {
-            Text("配对文件与隧道只是免注销直刷走隧道通道时的前提；走本机通道不需要它们。想走隧道通道时，再在这里配好。")
+        Section("隧道通道前提（免注销直刷 / 注销直刷）") {
+            Text("配对文件与隧道是两条隧道通道的前提；走本机直刷不需要它们。想走隧道通道时，再在这里配好。")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Label("配对文件", systemImage: "link")
@@ -128,13 +147,20 @@ struct DriftSettingsView: View {
     /// whether this system is in range, and which App Group the installed
     /// signing profile actually granted.
     private var localRouteSection: some View {
-        Section("本机通道状态") {
+        Section("本机直刷") {
             HStack {
                 Label("系统版本", systemImage: "iphone")
                 Spacer()
-                Text(WorseQueryEscape.isSupported(deviceVersion: WorseQueryEscape.processVersion)
-                     ? "iOS \(WorseQueryEscape.processVersion)（在范围内）"
+                Text(WorseQueryEscape.isSupported(deviceVersion: WorseQueryEscape.processVersion,
+                                                 buildVersion: WorseQueryEscape.processBuildVersion)
+                     ? "iOS \(WorseQueryEscape.processVersion)\(WorseQueryEscape.processBuildVersion.isEmpty ? "" : "（\(WorseQueryEscape.processBuildVersion)）")（在范围内）"
                      : "iOS \(WorseQueryEscape.processVersion)（不在范围内）")
+                    .foregroundStyle(.secondary)
+            }
+            HStack {
+                Label("生效方式", systemImage: "hand.tap")
+                Spacer()
+                Text("刷完上滑关闭 PosterBoard")
                     .foregroundStyle(.secondary)
             }
             HStack(alignment: .top) {
@@ -156,6 +182,49 @@ struct DriftSettingsView: View {
             }
             Text("组名在运行时从安装包内嵌的签名描述文件读取，不再写死——付费证书、开发者注册的组、SideStore / AltStore 改签都可以。")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// The local channel's receipt journal: every descriptor it wrote, with a
+    /// delete entry that removes exactly that folder and re-enumerates after.
+    private var localReceiptsSection: some View {
+        Section("本机直刷写入记录") {
+            if receipts.isEmpty {
+                Text("还没有用本机直刷写入过内容。")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                ForEach(receipts.reversed()) { receipt in
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(receipt.pack).font(.subheadline)
+                            Text(receipt.summary)
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(role: .destructive) {
+                            receiptToDelete = receipt
+                        } label: {
+                            Text("删除").font(.caption)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+            }
+            Text("每一条都是一次写入的回执。删除只删这一条写的描述符，删完重新枚举核验它已不在商店里。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func deleteReceipt(_ receipt: PosterBoardLocalReceipt) async {
+        do {
+            try await PosterBoardLocal.delete(receipt: receipt) { line in
+                DriftEngine.shared.log(line)
+            }
+            receipts = PosterBoardLocalReceipts.load()
+            recordsNote = "已删除：\(receipt.summary)"
+        } catch {
+            receipts = PosterBoardLocalReceipts.load()
+            session.errorText = error.localizedDescription
         }
     }
 
@@ -347,7 +416,7 @@ struct DriftSettingsView: View {
                 Text("Drift \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0")")
                     .foregroundStyle(.secondary)
             }
-            Text("独立应用，只保留刷壁纸功能。2.0.0 起设备写入核心与 CocoWall 共用同一套：源自 AirCard-iOS（Mak5er，MIT 许可）的隧道写入核心，加上 CocoWall 作者的免注销生效与商店枚举模块；本机写入通道与界面为 Drift 自有（AGPL-3.0）。")
+            Text("独立应用，只保留刷壁纸功能。设备写入核心源自 AirCard-iOS（Mak5er 著，MIT 许可证）的隧道写入核心（回环隧道、配对、同步写入、注入）；免注销生效、商店枚举与本机直刷通道、界面为 Drift 自有部分（AGPL-3.0）。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

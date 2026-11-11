@@ -27,14 +27,14 @@ struct DriftHomeView: View {
     private var manualPick: DriftMethodPick {
         DriftMethodPick.fromStored(manualPickRaw)
     }
-    /// The in-process route's premise: the app's own system only. It never
+    /// The local channel's premise: the app's own system only. It never
     /// looks at the device read, pairing or the tunnel.
     private var localVersion: String { WorseQueryEscape.processVersion }
+    private var localBuild: String { WorseQueryEscape.processBuildVersion }
     private var localReady: Bool {
-        WorseQueryEscape.isAvailable(deviceVersion: localVersion)
+        WorseQueryEscape.isAvailable(deviceVersion: localVersion, buildVersion: localBuild)
     }
     private var tunnelReady: Bool { tunnelMonitor.status == .ready }
-    private var manualLabel: String { manualPick.label }
     private var judgement: DriftModeJudgement {
         DriftJudge.judge(identity: identity, selection: selection, pick: manualPick,
                          tunnelReady: tunnelReady)
@@ -49,10 +49,10 @@ struct DriftHomeView: View {
     }
     private var headerSubtitle: String {
         if localReady {
-            return "本机通道可用（iOS \(localVersion)）：现在就能刷，不用配对，也不用开隧道。"
+            return "本机直刷可用（iOS \(localVersion)）：现在就能刷，不用配对，也不用开隧道。"
         }
         if !identity.version.isEmpty { return identity.describe }
-        return "本机通道不可用；要走隧道通道，请导入配对文件并打开 LocalDevVPN。"
+        return "本机直刷不可用；要走两条隧道通道，请导入配对文件并打开 LocalDevVPN。"
     }
 
     var body: some View {
@@ -125,15 +125,16 @@ struct DriftHomeView: View {
             // in-process route only needs the app's own version and a granted
             // App Group, so pairing and the tunnel must not sit in front of it.
             HStack(spacing: 8) {
-                DriftPill(text: localReady ? "本机通道可用" : "本机通道不可用",
+                DriftPill(text: localReady ? "本机直刷可用" : "本机直刷不可用",
                           tint: localReady ? .green : .orange)
-                DriftPill(text: "iOS \(localVersion)")
+                DriftPill(text: "iOS \(localVersion)\(localBuild.isEmpty ? "" : "（\(localBuild)）")")
             }
             Text(headerSubtitle)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             if !localReady {
-                Text(WorseQueryEscape.unavailableReason(deviceVersion: localVersion))
+                Text(WorseQueryEscape.unavailableReason(deviceVersion: localVersion,
+                                                        buildVersion: localBuild))
                     .font(.caption).foregroundStyle(.secondary)
             }
             HStack(spacing: 8) {
@@ -152,7 +153,7 @@ struct DriftHomeView: View {
             }
             if !session.paired {
                 Button { importingPairing = true } label: {
-                    Label("导入配对文件（只走隧道通道时才需要）", systemImage: "link.badge.plus")
+                    Label("导入配对文件（只走两条隧道通道时才需要）", systemImage: "link.badge.plus")
                 }
                 .buttonStyle(.glass)
             }
@@ -163,65 +164,27 @@ struct DriftHomeView: View {
 
     private var judgeCard: some View {
         let judged = judgement
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("本次刷入方式").font(.subheadline.weight(.semibold))
-                Spacer()
-                Menu {
-                    // A Picker inside the menu, not bare Buttons: the
-                    // picker is what draws the native checkmark on the
-                    // current pick. Since 2.0.0 the pick is a *method* —
-                    // the only two methods are 免注销直刷 and 恢复刷， and
-                    // the sealed one is not in this menu at all: it has
-                    // its own greyed row under the card, whose tap shows
-                    // the sealing notice. Which channel 免注销直刷 uses
-                    // is decided by version and premises, not picked.
-                    Picker("刷入方式", selection: $manualPickRaw) {
-                        Text("自动选择").tag(nil as String?)
-                        Text("免注销直刷").tag(DriftMethodPick.directFlash.rawValue as String?)
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("刷入方式").font(.subheadline.weight(.semibold))
+            VStack(spacing: 0) {
+                ForEach(DriftMethodPick.allCases) { pick in
+                    methodRow(pick, judged)
+                    if pick != DriftMethodPick.allCases.last {
+                        Divider().padding(.leading, 34)
                     }
-                } label: {
-                    // The control names the **pick**, not the outcome: it
-                    // used to render `judged.mode`, so with a hard limit
-                    // in force the button read 恢复式 no matter what was
-                    // tapped, and the menu looked dead (Grace, 2026-11-09).
-                    // The effective channel stays where it belongs — the
-                    // reason line below.
-                    Label(manualLabel, systemImage: "chevron.up.chevron.down")
-                        .font(.subheadline.weight(.medium))
                 }
             }
-            Text(judged.reason).font(.subheadline).foregroundStyle(.secondary)
-                .onChange(of: manualPickRaw) { statusLine = nil }
+            Text(judged.reason)
+                .font(.subheadline).foregroundStyle(.secondary)
             if !judged.expectedEffect.isEmpty && !judged.isBlocked {
                 Label("预计生效：\(judged.expectedEffect)", systemImage: "sparkles")
                     .font(.caption).foregroundStyle(.secondary)
+            } else if judged.isBlocked, let blocked = judged.blockedReason {
+                Text(blocked).font(.caption).foregroundStyle(.orange)
             }
-            // Per-mode reasons, so every route says why it is or is not usable
-            // instead of the card carrying one sentence for all four.
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(judged.options) { option in
-                    HStack(alignment: .top, spacing: 6) {
-                        Image(systemName: option.available ? "checkmark.circle.fill" : "xmark.circle")
-                            .font(.caption)
-                            .foregroundStyle(option.available ? Color.green : Color.secondary)
-                            .padding(.top, 1)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(option.mode.shortTitle)
-                                .font(.caption.weight(option.mode == judged.mode ? .semibold : .regular))
-                            Text(option.reason)
-                                .font(.caption2).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            .padding(.top, 2)
-            // The sealed method's entry (2.0.0): visible, greyed, never
-            // selectable — tapping it explains the seal instead of
-            // selecting anything. The full notice lives in Settings.
             if !DriftRestoreGate.isEnabled {
                 Button {
-                    statusLine = "恢复刷已封存：2026-11-10 一次这类刷入在重启后把设备恢复了出厂设置、数据全丢。查清并在备用机上验证「从设备拉到真备份」之前，恢复刷不开放；免注销直刷不受影响。"
+                    statusLine = DriftRestoreGate.notice
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "lock.fill").font(.caption)
@@ -236,6 +199,63 @@ struct DriftHomeView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
+    }
+
+    /// One of the four method rows: a radio, the fixed name and its one-line
+    /// description, and the channel's live status on the right.
+    private func methodRow(_ pick: DriftMethodPick, _ judged: DriftModeJudgement) -> some View {
+        let selected = manualPick == pick
+        let option = pick.channel.flatMap { channel in
+            judged.options.first { $0.mode == channel }
+        }
+        let available = pick == .auto ? !judged.isBlocked : (option?.available ?? false)
+        let status: String
+        if pick == .auto {
+            status = judged.isBlocked ? "不可用" : "→ \(judged.mode.shortTitle)"
+        } else {
+            status = available ? "可用" : "不可用"
+        }
+        return Button {
+            manualPickRaw = pick == .auto ? nil : pick.rawValue
+            statusLine = nil
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(pick.label).font(.subheadline.weight(.medium))
+                        if pick.isExperimental {
+                            Text("实验")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Color.orange.opacity(0.16),
+                                            in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    Text(pick.subtitle)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if pick != .auto, let option, !option.available {
+                        Text(option.reason)
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 6)
+                Text(status)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(available ? Color.green : Color.secondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.trailing)
+            }
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var packsCard: some View {
@@ -300,10 +320,10 @@ struct DriftHomeView: View {
                 }
                 .buttonStyle(.glass)
             }
-            if !session.paired && judgement.mode == .worseQuery {
-                NativeNote("免注销直刷走本机通道时在本机写入，不需要配对文件，也不用开隧道。写完按当时的配对/隧道/Wi-Fi 情况决定免注销还是只提示。")
+            if judgement.mode == .worseQuery {
+                NativeNote("本机直刷在本机写入，不需要配对文件，也不用开隧道。刷完打开应用切换器，上滑关闭 PosterBoard，系统重新拉起后壁纸生效。App 不会自动注销。")
             } else if !session.paired {
-                NativeNote("免注销直刷走隧道通道时需要先导入配对文件；走本机通道不需要，但签名要授予可用的 App Group。")
+                NativeNote("两条隧道通道都需要先导入配对文件；本机直刷不需要，但签名要授予可用的 App Group。")
             } else if selection.tendies.isEmpty && !imports.isEmpty {
                 NativeNote("在上面的列表里点圆圈勾选要刷的包。")
             }
@@ -416,7 +436,8 @@ struct DriftHomeView: View {
                 statusLine = checked.blockedReason
                 return
             }
-            let outcome = await session.run(selection: runSelection, mode: checked.mode, identity: identity)
+            let outcome = await session.run(selection: runSelection, mode: checked.mode,
+                                            pick: manualPick, identity: identity)
             statusLine = outcome.message
         }
     }
@@ -430,7 +451,8 @@ struct DriftHomeView: View {
         resetSelection.resetModes = selection.resetModes
         resetSelection.fullReset = selection.fullReset
         Task {
-            let outcome = await session.run(selection: resetSelection, mode: .backup, identity: identity)
+            let outcome = await session.run(selection: resetSelection, mode: .backup,
+                                            pick: manualPick, identity: identity)
             statusLine = outcome.message
             if outcome.ok {
                 selection.resetModes = []

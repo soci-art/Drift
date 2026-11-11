@@ -1,7 +1,7 @@
 import Foundation
 import Minimuxer
 
-/// Drift 2.0.0's engine facade — the replacement for `DriftEngine`.
+/// Drift's engine facade.
 ///
 /// What changed in the swap, and what deliberately did not:
 ///
@@ -27,7 +27,7 @@ import Minimuxer
 ///   is the single fresh identity read (`modeVersion`), where the old
 ///   engine threaded two reads of the same value.
 ///
-/// The facade's one entry point is `applyWallpapers(selection:deviceVersion:)`.
+/// The facade's one entry point is `applyWallpapers(selection:mode:deviceVersion:)`.
 /// Drift's only caller passes an empty tweak/status-bar/template selection
 /// by construction — there is no such surface in this app — so the facade
 /// takes the wallpaper selection alone.
@@ -206,19 +206,23 @@ final class DriftEngine {
 
     // MARK: - Run: apply a wallpaper selection
 
-    /// Apply one wallpaper selection through the mode the settings resolve
-    /// to. The session has already judged and stored the pick; resolution
-    /// here re-validates it against the device's actual version and build,
-    /// exactly as the old engine did.
+    /// Apply one wallpaper selection through the channel the judgement chose.
+    ///
+    /// The session decides the channel (auto order or an explicit pick) and
+    /// hands it in; the engine does not re-resolve a stored preference. Each
+    /// channel keeps its own write and effect flow, and a failure in one is
+    /// never retried on another.
     func applyWallpapers(selection: PosterBoardSelection,
+                         mode: PosterBoardApplyMode,
                          deviceVersion: String) async throws {
         try await loggedRun("apply") {
-            try await applyWallpapersRun(selection: selection,
+            try await applyWallpapersRun(selection: selection, mode: mode,
                                          deviceVersion: deviceVersion)
         }
     }
 
     private func applyWallpapersRun(selection: PosterBoardSelection,
+                                    mode: PosterBoardApplyMode,
                                     deviceVersion: String) async throws {
         AppLog.shared.memory.reset()
         clearCancel()
@@ -250,39 +254,35 @@ final class DriftEngine {
             throw DriftError("没有可应用的内容：PosterBoard 页没有选择任何内容。")
         }
 
-        // The apply mode picks the mechanism. The in-process route reads
-        // its version from the process, not from lockdown: the app *is*
-        // the device. (Preserved from the old engine.)
+        // The tunnel channels read the device's own identity; the local
+        // channel is the device, so it uses the process version and build.
         let modeIdentity = await DeviceIdentity.read()
         let modeVersion = modeIdentity.version.isEmpty
             ? (deviceVersion.isEmpty ? WorseQueryEscape.processVersion : deviceVersion)
             : modeIdentity.version
-        let mode = PosterBoardApplyModeSettings.resolved(
-            deviceVersion: modeVersion,
-            buildVersion: modeIdentity.buildVersion)
 
         switch mode {
         case .worseQuery:
-            // The in-process route: no tunnel to open, no pairing record to
-            // consult and no backup to take. It carries wallpapers only.
-            // This is a thin call into the frozen `PosterBoardLocal`; the
-            // check beside it is the old engine's, unchanged.
+            // The local channel: no tunnel to open, no pairing record to
+            // consult. It carries wallpapers only.
             try checkLocalCanApply(
                 posterBoard: selection,
                 templates: [],
                 hasOtherPayloads: false,
-                deviceVersion: modeVersion)
+                deviceVersion: WorseQueryEscape.processVersion,
+                buildVersion: WorseQueryEscape.processBuildVersion)
             log("PosterBoard: \(selection.describe) — on-device, no tunnel")
-            let effect = try await PosterBoardLocal.apply(
+            let outcome = try await PosterBoardLocal.apply(
                 selection: selection,
                 templates: [],
-                deviceVersion: modeVersion,
+                deviceVersion: WorseQueryEscape.processVersion,
                 log: { AppLog.write($0) },
                 progress: { overall in self.logProgress("posterboard local", overall) })
-            lastPosterBoardEffect = effect
+            lastPosterBoardEffect = outcome.effect
+            lastVerification = outcome.verification
             log("Apply succeeded: the wallpapers are in PosterBoard's container; "
-                + "effect — \(effect.headline). No pairing, no tunnel and no backup "
-                + "were needed for the write.")
+                + "effect — \(outcome.effect.headline). No pairing, no tunnel and no "
+                + "backup were needed for the write.")
             return
 
         case .direct, .airlift:
@@ -301,19 +301,26 @@ final class DriftEngine {
                 try checkDirectCanApply(selection: selection, templates: [],
                                         deviceVersion: modeVersion,
                                         buildVersion: modeIdentity.buildVersion)
-                try await applyPosterBoardOverDirect(selection: selection,
-                                                     templates: [],
-                                                     deviceVersion: modeVersion,
-                                                     buildVersion: modeIdentity.buildVersion)
+                let outcome = try await applyPosterBoardOverDirect(selection: selection,
+                                                                   templates: [],
+                                                                   deviceVersion: modeVersion,
+                                                                   buildVersion: modeIdentity.buildVersion)
+                lastVerification = outcome.verification
+                lastPosterBoardEffect = outcome.effect
             } else {
                 try checkAirliftCanApply(posterBoard: selection, templates: [],
                                          deviceVersion: modeVersion,
                                          buildVersion: modeIdentity.buildVersion)
                 log("PosterBoard: \(selection.describe) — over AirLift, no backup")
-                try await applyPosterBoardOverAirlift(selection: selection,
-                                                      templates: [],
-                                                      deviceVersion: modeVersion,
-                                                      buildVersion: modeIdentity.buildVersion)
+                let verification = try await applyPosterBoardOverAirlift(selection: selection,
+                                                                         templates: [],
+                                                                         deviceVersion: modeVersion,
+                                                                         buildVersion: modeIdentity.buildVersion)
+                lastVerification = verification
+                lastPosterBoardEffect = PosterBoardEffect(
+                    kind: .respring,
+                    headline: "刷入完成，设备将注销生效",
+                    detail: "描述符已经写入设备商店；注销后 PosterBoard 会重新读取商店。")
             }
             log("Apply succeeded: the wallpapers are in PosterBoard's container.")
             return
@@ -343,30 +350,29 @@ final class DriftEngine {
 
     // MARK: - Route checks and appliers (moved from the old engine, unchanged)
 
-    /// Refuse a selection the direct route cannot carry.
+    /// Refuse a selection the 免注销直刷 channel cannot carry.
     ///
-    /// Same limits as AirLift: the transaction installs descriptor folders,
+    /// Same limits as 注销直刷: the transaction installs descriptor folders,
     /// so a reset, a video stage, a container template or any non-wallpaper
     /// payload cannot travel it. Unlike AirLift it also has its own closed
     /// version range (26.0–27.1, plus 27.2 beta 1/2), checked here rather than
-    /// in the judge so a
-    /// manual pick cannot bypass it.
+    /// in the judge so a manual pick cannot bypass it.
     private func checkDirectCanApply(selection: PosterBoardSelection,
                                      templates: [TemplateFile],
                                      deviceVersion: String,
                                      buildVersion: String) throws {
         if templates.contains(where: \.isContainer) {
-            throw DriftError("直刷只安装模板描述文件。所选模板还带有容器文件；"
+            throw DriftError("免注销直刷只安装模板描述文件。所选模板还带有容器文件；"
                 + "请切换到「恢复刷」来应用全部内容。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         if selection.fullReset || !selection.resetModes.isEmpty {
-            throw DriftError("直刷无法重置 PosterBoard 库——它只会添加壁纸。"
+            throw DriftError("免注销直刷无法重置 PosterBoard 库——它只会添加壁纸。"
                 + "要重置，请把刷入方式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         if selection.video != nil {
-            throw DriftError("直刷无法应用 PosterBoard 视频：它的帧是为恢复准备的。"
+            throw DriftError("免注销直刷无法应用 PosterBoard 视频：它的帧是为恢复准备的。"
                 + "请把刷入方式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
@@ -377,8 +383,8 @@ final class DriftEngine {
                                                          buildVersion: buildVersion)
         guard reason.isEmpty else { throw DriftError(reason) }
         guard FileManager.default.fileExists(atPath: AppPaths.pairingFile.path) else {
-            throw DriftError("直刷需要一份配对记录，但还没有保存任何一份。"
-                + "请先在首页导入一份，本机通道可用时会自动改走本机通道。")
+            throw DriftError("免注销直刷需要一份配对记录，但还没有保存任何一份。"
+                + "请先在首页导入一份。")
         }
     }
 
@@ -386,12 +392,12 @@ final class DriftEngine {
     private func applyPosterBoardOverDirect(selection: PosterBoardSelection,
                                             templates: [TemplateFile] = [],
                                             deviceVersion: String,
-                                            buildVersion: String) async throws {
+                                            buildVersion: String) async throws -> PosterBoardDirectOutcome {
         let structureVersion = try PosterBoard.verifiedTunnelStructureVersion(
             deviceVersion: deviceVersion,
             buildVersion: buildVersion,
             log: { AppLog.write($0) })
-        lastVerification = try await PosterBoardDirect.apply(
+        return try await PosterBoardDirect.apply(
             selection: selection,
             templates: templates,
             structureVersion: structureVersion,
@@ -411,24 +417,24 @@ final class DriftEngine {
     private func checkAirliftCanApply(posterBoard: PosterBoardSelection,
                                      templates: [TemplateFile] = [], deviceVersion: String, buildVersion: String = "") throws {
         if templates.contains(where: \.isContainer) {
-            throw DriftError("AirLift 只安装模板描述文件。所选模板"
+            throw DriftError("注销直刷只安装模板描述文件。所选模板"
                 + "还带有容器文件；请切换到「恢复刷」来应用全部内容。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
-            throw DriftError("AirLift 无法重置 PosterBoard 库——它只会添加"
-                + "壁纸。要重置，请把应用模式切换到「恢复刷」。"
+            throw DriftError("注销直刷无法重置 PosterBoard 库——它只会添加"
+                + "壁纸。要重置，请把刷入方式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         if posterBoard.video != nil {
-            throw DriftError("AirLift 无法应用 PosterBoard 视频：它的帧是"
-                + "是为恢复准备的。请把应用模式切换到「恢复刷」。"
+            throw DriftError("注销直刷无法应用 PosterBoard 视频：它的帧是"
+                + "为恢复准备的。请把刷入方式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         let reason = Airlift.unsupportedReason(deviceVersion: deviceVersion, buildVersion: buildVersion)
         guard reason.isEmpty else { throw DriftError(reason) }
         guard FileManager.default.fileExists(atPath: AppPaths.pairingFile.path) else {
-            throw DriftError("AirLift 需要一份配对记录，但还没有保存任何一份。"
+            throw DriftError("注销直刷需要一份配对记录，但还没有保存任何一份。"
                 + "请先在首页导入一份。")
         }
     }
@@ -443,31 +449,33 @@ final class DriftEngine {
     private func checkLocalCanApply(posterBoard: PosterBoardSelection,
                                     templates: [TemplateFile],
                                     hasOtherPayloads: Bool,
-                                    deviceVersion: String) throws {
+                                    deviceVersion: String,
+                                    buildVersion: String = "") throws {
         if hasOtherPayloads {
-            throw DriftError("本机通道只能写入壁纸：所选内容里还有调整、跳过设置、"
+            throw DriftError("本机直刷只能写入壁纸：所选内容里还有调整、跳过设置、"
                 + "状态栏或其他模板文件，它们不会通过这条路径送达。请只保留壁纸，"
                 + "或改用其他刷入方式。")
         }
         if templates.contains(where: \.isContainer) {
-            throw DriftError("本机通道只安装模板描述文件。所选模板还带有容器文件；"
+            throw DriftError("本机直刷只安装模板描述文件。所选模板还带有容器文件；"
                 + "请改用「恢复刷」来应用全部内容。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
-            throw DriftError("本机通道无法重置 PosterBoard 库——它只会添加壁纸。"
+            throw DriftError("本机直刷无法重置 PosterBoard 库——它只会添加壁纸。"
                 + "要重置，请把刷入方式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         if posterBoard.video != nil {
-            throw DriftError("本机通道无法应用 PosterBoard 视频：它的帧是为恢复准备的。"
+            throw DriftError("本机直刷无法应用 PosterBoard 视频：它的帧是为恢复准备的。"
                 + "请把刷入方式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         if posterBoard.tendies.contains(where: \.isUnsafeContainer) {
             throw DriftError("包含商店数据库的壁纸包只能用恢复刷；恢复刷已封存，暂时刷不了。")
         }
-        let reason = WorseQueryEscape.unavailableReason(deviceVersion: deviceVersion)
+        let reason = WorseQueryEscape.unavailableReason(deviceVersion: deviceVersion,
+                                                        buildVersion: buildVersion)
         guard reason.isEmpty else { throw DriftError(reason) }
     }
 
@@ -475,12 +483,12 @@ final class DriftEngine {
     private func applyPosterBoardOverAirlift(selection: PosterBoardSelection,
                                              templates: [TemplateFile] = [],
                                              deviceVersion: String,
-                                             buildVersion: String) async throws {
+                                             buildVersion: String) async throws -> PosterStoreVerification {
         let structureVersion = try PosterBoard.verifiedTunnelStructureVersion(
             deviceVersion: deviceVersion,
             buildVersion: buildVersion,
             log: { AppLog.write($0) })
-        lastVerification = try await PosterBoardAirlift.apply(
+        return try await PosterBoardAirlift.apply(
             selection: selection,
             templates: templates,
             structureVersion: structureVersion,

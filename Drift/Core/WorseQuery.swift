@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import WorseQuery
 
 /// In-process access to the sandbox escape from
@@ -177,12 +178,27 @@ enum WorseQueryEscape {
             : "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
     }
 
-    /// Whether upstream supports the running system.
+    /// The running system's build (for example `24C5037i`).
     ///
-    /// Accepts 26.0 through 26.7.2, and 27.0 through 27.2. The upper bounds are
-    /// upstream's; a 26.7.3 or 27.3 device fails closed here rather than trying
-    /// an escape that was never verified there.
-    static func isSupported(deviceVersion: String) -> Bool {
+    /// `ProcessInfo` only exposes the version, and the one range extension
+    /// this build makes — 27.3 beta 1 — is identified by build, not by the
+    /// three-part version every 27.3 build shares.
+    static var processBuildVersion: String {
+        var size = 0
+        guard sysctlbyname("kern.osversion", nil, &size, nil, 0) == 0, size > 0 else { return "" }
+        var buffer = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("kern.osversion", &buffer, &size, nil, 0) == 0 else { return "" }
+        return String(cString: buffer).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Whether the running system is in the channel's range.
+    ///
+    /// Accepts 26.0 through 26.7.2, 27.0 through 27.2.1, and 27.3 beta 1
+    /// (`24C5037i`, marked experimental in the UI). The 27.2.1 and 27.3 beta 1
+    /// extensions were decided on 2026-11-11; the 27.3 one rests on Erosion's
+    /// public claim and has not been verified on a device here, so it is not
+    /// treated as a stable range. Everything else fails closed.
+    static func isSupported(deviceVersion: String, buildVersion: String = "") -> Bool {
         let parts = deviceVersion
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .split(separator: ".", omittingEmptySubsequences: false)
@@ -194,7 +210,13 @@ enum WorseQueryEscape {
         case 26:
             return minor < 7 || (minor == 7 && patch <= 2)
         case 27:
-            return minor <= 2
+            if minor < 2 { return true }
+            if minor == 2 { return patch <= 1 }
+            if minor == 3 {
+                return patch == 0 && buildVersion
+                    .trimmingCharacters(in: .whitespacesAndNewlines) == "24C5037i"
+            }
+            return false
         default:
             return false
         }
@@ -212,18 +234,20 @@ enum WorseQueryEscape {
     ///
     /// Both halves matter and both are cheap: the version bound, and the
     /// entitlement the escape cannot work without.
-    static func isAvailable(deviceVersion: String) -> Bool {
-        isSupported(deviceVersion: deviceVersion) && groupContainer != nil
+    static func isAvailable(deviceVersion: String, buildVersion: String = "") -> Bool {
+        isSupported(deviceVersion: deviceVersion, buildVersion: buildVersion)
+            && groupContainer != nil
     }
 
     /// Why the route is unavailable, or `""` when it is available.
     ///
     /// One wording for the judgement card, the engine's pre-run check and the
     /// menu item's disabled state, so the three cannot drift apart.
-    static func unavailableReason(deviceVersion: String) -> String {
-        if !isSupported(deviceVersion: deviceVersion) {
-            return "本机直刷只支持 iOS 26.0–26.7.2 和 27.0–27.2；"
-                + "这台设备报告的是 \(deviceVersion.isEmpty ? "未知系统" : "iOS \(deviceVersion)")。"
+    static func unavailableReason(deviceVersion: String, buildVersion: String = "") -> String {
+        if !isSupported(deviceVersion: deviceVersion, buildVersion: buildVersion) {
+            return "本机直刷只支持 iOS 26.0–26.7.2、27.0–27.2.1，以及 27.3 测试版 1（24C5037i，实验）；"
+                + "这台设备报告的是 \(deviceVersion.isEmpty ? "未知系统" : "iOS \(deviceVersion)")"
+                + (buildVersion.isEmpty ? "。" : "（\(buildVersion)）。")
         }
         if groupContainer == nil {
             return "本机直刷需要签名授予可用的 App Group，但这份签名没有可用的组。"
@@ -244,7 +268,7 @@ enum WorseQueryEscape {
     /// - Returns: a positive handle. Every successful call must be paired with
     ///   `release(_:)`.
     static func consume(path: String, createDirectory: Bool = false) throws -> Int64 {
-        if !isSupported(deviceVersion: processVersion) {
+        if !isSupported(deviceVersion: processVersion, buildVersion: processBuildVersion) {
             throw Failure.unsupportedSystem(processVersion)
         }
         guard groupContainer != nil else { throw Failure.groupUnavailable }

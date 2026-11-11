@@ -248,12 +248,12 @@ struct FirstRunView: View {
             art: { FirstRunWelcomeArt(active: page == 0) },
             title: "Drift",
             subtitle: LocalizedStringKey(localReady
-                ? "给这台 iPhone 刷入交互壁纸。本机通道已可用，可以直接完成设置。"
-                : "给这台 iPhone 刷入交互壁纸。本机通道不可用，先走完隧道与配对两个步骤。"))
+                ? "给这台 iPhone 刷入交互壁纸。本机直刷已可用，可以直接完成设置。"
+                : "给这台 iPhone 刷入交互壁纸。本机直刷不可用，先走完隧道与配对两个步骤。"))
         {
             VStack(alignment: .leading, spacing: 12) {
                 if localReady {
-                    NativeNote("本机通道可用（iOS \(WorseQueryEscape.processVersion)，签名授予了可用的 App Group）：直接点「完成设置」就能刷，下面的隧道与配对只是要走隧道通道时才需要。")
+                    NativeNote("本机直刷可用（iOS \(WorseQueryEscape.processVersion)，签名授予了可用的 App Group）：直接点「完成设置」就能刷，下面的隧道与配对只是要走两条隧道通道时才需要。")
                 }
                 stepCard(number: 1, title: "隧道", done: tunnel.isReady,
                          working: tunnel == .peerUnreachable, status: tunnel.shortText,
@@ -263,7 +263,7 @@ struct FirstRunView: View {
                          status: pairingReady ? "配对记录已就位" : "尚无配对记录",
                          destination: 2)
                 NativeNote(localReady
-                    ? "第 1、2 步可选：只有想走隧道通道时才需要；本机通道不用配对，也不用隧道。"
+                    ? "第 1、2 步可选：只有想走两条隧道通道时才需要；本机直刷不用配对，也不用隧道。"
                     : "第 2 步可以在电脑上用 iLoader 配对——生成配对文件后传到这台 iPhone 上导入。")
                 NativeNote("隧道状态实时检测：打开 App 之后再连上隧道，这一页会自动变绿，不用重开 App。")
             }
@@ -276,7 +276,7 @@ struct FirstRunView: View {
         SlideLayout(
             art: { FirstRunTunnelArt(ready: tunnel.isReady, active: page == 1) },
             title: "1 · 隧道",
-            subtitle: "装好 LocalDevVPN（或同类隧道 App），填入下面的值并保持开启——免注销直刷的隧道通道需要它；本机通道不需要。")
+            subtitle: "装好 LocalDevVPN（或同类隧道 App），填入下面的值并保持开启——两条隧道通道（免注销直刷 / 注销直刷）需要它；本机直刷不需要。")
         {
             VStack(alignment: .leading, spacing: 12) {
                 statusPill(done: tunnel.isReady, working: tunnel == .peerUnreachable,
@@ -378,7 +378,7 @@ struct FirstRunView: View {
         {
             VStack(alignment: .leading, spacing: 12) {
                 if localReady {
-                    NativeNote("本机通道可用：现在就能完成设置并刷壁纸，不需要配对或隧道。下面的两步可以以后在设置里补。")
+                    NativeNote("本机直刷可用：现在就能完成设置并刷壁纸，不需要配对或隧道。下面的两步可以以后在设置里补。")
                 }
                 stepCard(number: 1, title: "隧道（可选）", done: tunnel.isReady,
                          working: tunnel == .peerUnreachable, status: tunnel.shortText,
@@ -389,7 +389,7 @@ struct FirstRunView: View {
                          destination: 2)
                 NativeNote("点「完成设置」后打开壁纸页。")
                 if !canFinish {
-                    NativeNote("本机通道不可用，所以完成按钮要等隧道和配对都就绪。")
+                    NativeNote("本机直刷不可用，所以完成按钮要等隧道和配对都就绪。")
                 }
             }
         }
@@ -516,7 +516,8 @@ struct FirstRunView: View {
     /// when it is usable the guide must not put its two optional steps in front
     /// of Finish. Only a device that cannot use it walks the full flow.
     private var localReady: Bool {
-        WorseQueryEscape.isAvailable(deviceVersion: WorseQueryEscape.processVersion)
+        WorseQueryEscape.isAvailable(deviceVersion: WorseQueryEscape.processVersion,
+                                       buildVersion: WorseQueryEscape.processBuildVersion)
     }
 
     private var canFinish: Bool { localReady || (tunnel.isReady && pairingReady) }
@@ -529,7 +530,7 @@ struct FirstRunView: View {
     /// finishing setup here deliberately does NOT start a photo/video copy.
     private func finish() {
         firstRun.complete(reason: localReady
-            ? "本机通道已就绪；隧道和配对可选"
+            ? "本机直刷已就绪；隧道和配对可选"
             : "隧道和配对记录都已就绪")
         onClose?()
     }

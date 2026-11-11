@@ -335,10 +335,12 @@ final class DriftSession: ObservableObject {
 
     func cancelRun() { DriftEngine.shared.requestCancel() }
 
-    /// Run one wallpaper apply in an already-decided mode and record it.
-    /// Returns a one-line outcome for the page's status area, plus the actual
-    /// effect when the in-process route produced one.
+    /// Run one wallpaper apply in the channel the judgement chose and record
+    /// the four facts separately: the method the user picked, the channel the
+    /// run actually used, how it takes effect, and the store-verification
+    /// grade. None of those may stand in for another.
     func run(selection: PosterBoardSelection, mode: PosterBoardApplyMode,
+             pick: DriftMethodPick,
              identity: DeviceIdentity) async -> (ok: Bool, message: String, effect: PosterBoardEffect?) {
         // An abandoned run (its calls walked away from) does not block a
         // successor — `beginRun` inside the engine makes the final call.
@@ -354,32 +356,24 @@ final class DriftSession: ObservableObject {
             DriftEngine.shared.log("run refused: restore route is suspended (feedback #30)")
             return (false, DriftRestoreGate.notice, nil)
         }
-        PosterBoardApplyModeSettings.current = mode
         let isResetSelection = selection.fullReset || !selection.resetModes.isEmpty
-        let methodLabel = isResetSelection ? "恢复刷 · 重置" : "免注销直刷"
+        let selectedLabel = isResetSelection ? "恢复刷 · 重置" : pick.label
         running = true
         RunLog.shared.clear()
         defer { running = false }
         do {
-            // 2.0.0: the facade takes the wallpaper selection alone. The
-            // old call passed empty tweak / status-bar / template
-            // selections because the GoldenNugget engine built every
-            // feature into one pass; this app has no such surface, and
-            // the facade's transports are the wallpaper routes only.
             try await DriftEngine.shared.applyWallpapers(
                 selection: selection,
+                mode: mode,
                 deviceVersion: identity.version)
             let effect = DriftEngine.shared.lastPosterBoardEffect
             lastEffect = effect
-            // 2.0.0 history shape: the record names the user-facing
-            // method; the internal channel, the providers written and
-            // the store-verification grade ride along as their own fields.
             let verification = DriftEngine.shared.lastVerification
             let providers = verification.map {
                 Set($0.expected.map { String($0.split(separator: "/").first ?? "") })
                     .sorted().joined(separator: "、")
             }
-            ApplyHistory.record(mode: methodLabel,
+            ApplyHistory.record(mode: selectedLabel,
                                 success: true,
                                 device: identity.describe,
                                 model: identity.productType, ios: identity.version,
@@ -395,36 +389,36 @@ final class DriftSession: ObservableObject {
                 if let effect {
                     return (true, "\(effect.headline)。\(effect.detail)", effect)
                 }
-                return (true, "刷入完成，壁纸已写入", nil)
+                return (true, "刷入完成，壁纸已写入。打开应用切换器，向上轻扫关闭 PosterBoard，系统重新拉起后生效。", nil)
             case .direct:
                 if let verification, verification.allConfirmed {
-                    return (true, "刷入完成：已核验，\(verification.confirmed.count) 张描述符都在设备商店里，免注销生效", nil)
+                    return (true, "刷入完成：已核验，\(verification.confirmed.count) 张描述符都在设备商店里。\(effect?.detail ?? "") ", effect)
                 }
                 if let verification {
-                    return (true, "已写入、未确认显示：\(verification.summary)。文件已送达，但设备商店没有确认收录——先去壁纸库看一眼；没有的话把日志包发出来排查", nil)
+                    return (true, "已写入、未确认显示：\(verification.summary)。文件已送达，但设备商店没有确认收录——先去壁纸库看一眼；没有的话把日志包发出来排查", effect)
                 }
-                return (true, "刷入完成，壁纸已刷新，免注销生效", nil)
+                return (true, "刷入完成：\(effect?.detail ?? "免注销生效")", effect)
             case .airlift:
                 if let verification, verification.allConfirmed {
-                    return (true, "刷入完成：已核验，\(verification.confirmed.count) 张描述符都在设备商店里，设备将注销生效", nil)
+                    return (true, "刷入完成：已核验，\(verification.confirmed.count) 张描述符都在设备商店里，设备将注销生效。", effect)
                 }
                 if let verification {
-                    return (true, "已写入、未确认显示：\(verification.summary)。文件已送达，但设备商店没有确认收录——先去壁纸库看一眼；没有的话把日志包发出来排查", nil)
+                    return (true, "已写入、未确认显示：\(verification.summary)。文件已送达，但设备商店没有确认收录——先去壁纸库看一眼；没有的话把日志包发出来排查", effect)
                 }
-                return (true, "刷入完成，设备将注销生效", nil)
+                return (true, "刷入完成，设备将注销生效。", effect)
             case .backup:
                 return (true, "刷入完成，设备将重启生效", nil)
             }
         } catch {
             if let failure = error as? TransportFailure, failure.isCancellation {
                 DriftEngine.shared.log("run cancelled")
-                ApplyHistory.record(mode: methodLabel, success: false, error: "已取消",
+                ApplyHistory.record(mode: selectedLabel, success: false, error: "已取消",
                                     device: identity.describe,
                                     model: identity.productType, ios: identity.version)
                 return (false, "刷入已取消", nil)
             }
             DriftEngine.shared.log("posterboard apply failed: \(error.localizedDescription)")
-            ApplyHistory.record(mode: methodLabel, success: false, error: error.localizedDescription,
+            ApplyHistory.record(mode: selectedLabel, success: false, error: error.localizedDescription,
                                 device: identity.describe,
                                 model: identity.productType, ios: identity.version)
             return (false, error.localizedDescription, nil)
@@ -432,45 +426,70 @@ final class DriftSession: ObservableObject {
     }
 }
 
+
 // MARK: - Mode judgement
 
-/// Why one delivery mode is or is not usable right now.
+/// Why one channel is or is not usable right now.
 struct DriftModeAvailability: Identifiable, Equatable {
     let mode: PosterBoardApplyMode
     let available: Bool
     let reason: String
-    /// What finishing the run in this mode would do about making the wallpaper
-    /// visible — the card previews this before the user taps Apply.
+    /// How finishing in this channel makes the wallpaper visible.
     let effect: String
     var id: String { mode.rawValue }
 }
 
-/// The user's method pick — the only choice the UI offers since 2.0.0.
-///
-/// There are exactly two user-facing methods: 免注销直刷 (which internally
-/// picks a write channel by system version and premises) and 恢复刷 (sealed:
-/// visible, never selectable, its runs do not exist). Everything finer —
-/// the in-process channel, the two tunnel channels — is an internal detail
-/// of 免注销直刷 and never appears as a pick.
-enum DriftMethodPick: String {
+/// The user's method pick. Four methods, exactly as named: 自动选择 and the
+/// three channels. The sealed restore route is not a pick — it has its own
+/// greyed entry and never runs.
+enum DriftMethodPick: String, CaseIterable, Identifiable {
     case auto
-    case directFlash
-    case restore
+    case noRespring
+    case respring
+    case local
+
+    var id: String { rawValue }
 
     var label: String {
         switch self {
         case .auto: return "自动选择"
-        case .directFlash: return "免注销直刷"
-        case .restore: return "恢复刷"
+        case .noRespring: return "免注销直刷"
+        case .respring: return "注销直刷"
+        case .local: return "本机直刷"
         }
     }
 
-    /// Read a stored pick, mapping the pre-2.0.0 per-channel values onto
-    /// the method they belonged to.
+    /// The small line under the name in the method card. Deliberately free of
+    /// mechanism names (`worse_query`, `AirLift`).
+    var subtitle: String {
+        switch self {
+        case .auto: return "按前提自动挑选通道"
+        case .noRespring: return "隧道写入 · 刷完即生效，无需注销"
+        case .respring: return "隧道写入 · 注销后生效"
+        case .local: return "本机写入，免配对、免隧道"
+        }
+    }
+
+    /// The channel a manual pick forces; `.auto` decides at run time.
+    var channel: PosterBoardApplyMode? {
+        switch self {
+        case .auto: return nil
+        case .noRespring: return .direct
+        case .respring: return .airlift
+        case .local: return .worseQuery
+        }
+    }
+
+    /// 本机直刷 carries the 实验 badge until the stage gate passes.
+    var isExperimental: Bool { self == .local }
+
+    /// Read a stored pick. Every value written by 2.0.0 or 1.x means the same
+    /// thing now: let Drift choose. Only the three new raw values are picks.
     static func fromStored(_ raw: String?) -> DriftMethodPick {
         switch raw {
-        case "directFlash", "direct", "airlift", "worseQuery": return .directFlash
-        case "restore", "backup": return .restore
+        case "noRespring": return .noRespring
+        case "respring": return .respring
+        case "local": return .local
         default: return .auto
         }
     }
@@ -478,13 +497,15 @@ enum DriftMethodPick: String {
 
 /// Why a run will use the channel it uses, in one user-facing sentence.
 struct DriftModeJudgement {
-    /// The internal channel the run will use. Meaningless when blocked.
+    /// The pick the card is showing.
+    var pick: DriftMethodPick
+    /// The channel the run will use. Meaningless when blocked.
     var mode: PosterBoardApplyMode
     var reason: String
     /// Set when no run may start at all right now. `mode` is then a
     /// placeholder — callers must check `isBlocked` before running anything.
     var blockedReason: String?
-    /// One row per internal channel, with its own reason and expected effect.
+    /// One row per channel, with its own reason and expected effect.
     var options: [DriftModeAvailability] = []
     /// How the chosen channel is expected to take effect.
     var expectedEffect: String = ""
@@ -502,21 +523,21 @@ enum DriftJudge {
 
     /// The two premise classes, kept apart on purpose.
     ///
-    /// * **Local premise** — the app's own system version plus a granted App
-    ///   Group. Both are readable in-process, so this is decided without a
-    ///   pairing record, a tunnel or Wi-Fi.
+    /// * **Local premise** — the app's own system version and build plus a
+    ///   granted App Group. All readable in-process, so this is decided
+    ///   without a pairing record, a tunnel or Wi-Fi.
     /// * **Tunnel premise** — a saved pairing record, a connected tunnel and a
-    ///   real device identity (version *and* build). Both tunnel modes need all
-    ///   three; when one is missing they are unavailable and say which, and the
-    ///   app's own version is never substituted for the device's.
+    ///   real device identity (version *and* build). Both tunnel channels need
+    ///   all three; when one is missing they are unavailable and say which,
+    ///   and the app's own version is never substituted for the device's.
     private struct Premises {
         let appVersion: String
         let localReady: Bool
         let localWhy: String
         let directReady: Bool
         let directWhy: String
-        let airliftReady: Bool
-        let airliftWhy: String
+        let respringReady: Bool
+        let respringWhy: String
         let restoreReady: Bool
         let restoreWhy: String
 
@@ -524,7 +545,7 @@ enum DriftJudge {
             switch mode {
             case .backup: return restoreReady
             case .direct: return directReady
-            case .airlift: return airliftReady
+            case .airlift: return respringReady
             case .worseQuery: return localReady
             }
         }
@@ -533,22 +554,25 @@ enum DriftJudge {
             switch mode {
             case .backup: return restoreWhy
             case .direct: return directWhy
-            case .airlift: return airliftWhy
+            case .airlift: return respringWhy
             case .worseQuery: return localWhy
             }
         }
     }
 
     private static func premises(identity: DeviceIdentity, tunnelReady: Bool) -> Premises {
-        // The in-process route judges the app's *own* system, always. Its
-        // device read is irrelevant: the app is the device.
+        // The local channel judges the app's *own* system, always. Its device
+        // read is irrelevant: the app is the device.
         let appVersion = WorseQueryEscape.processVersion
-        let localReady = WorseQueryEscape.isAvailable(deviceVersion: appVersion)
-        let localWhy = WorseQueryEscape.unavailableReason(deviceVersion: appVersion)
+        let appBuild = WorseQueryEscape.processBuildVersion
+        let localReady = WorseQueryEscape.isAvailable(deviceVersion: appVersion,
+                                                      buildVersion: appBuild)
+        let localWhy = WorseQueryEscape.unavailableReason(deviceVersion: appVersion,
+                                                          buildVersion: appBuild)
 
         var tunnelMissing: String?
         if !PairingRecord.isInstalled {
-            tunnelMissing = "还没有配对文件（配对只是隧道通道的前提，本机通道不需要）"
+            tunnelMissing = "还没有配对文件（配对只是两条隧道通道的前提，本机直刷不需要）"
         } else if !tunnelReady {
             tunnelMissing = "隧道未连通（打开 LocalDevVPN 并连上 Wi-Fi）"
         } else if identity.version.isEmpty {
@@ -563,10 +587,10 @@ enum DriftJudge {
         let directWhy = tunnelMissing
             ?? PosterBoardDirect.unavailableReason(deviceVersion: identity.version,
                                                    buildVersion: identity.buildVersion)
-        let airliftReady = tunnelMissing == nil
+        let respringReady = tunnelMissing == nil
             && Airlift.isSupported(deviceVersion: identity.version,
                                    buildVersion: identity.buildVersion)
-        let airliftWhy = tunnelMissing
+        let respringWhy = tunnelMissing
             ?? Airlift.unsupportedReason(deviceVersion: identity.version,
                                          buildVersion: identity.buildVersion)
 
@@ -576,19 +600,19 @@ enum DriftJudge {
             localWhy: localWhy,
             directReady: directReady,
             directWhy: directWhy,
-            airliftReady: airliftReady,
-            airliftWhy: airliftWhy,
+            respringReady: respringReady,
+            respringWhy: respringWhy,
             restoreReady: DriftRestoreGate.isEnabled,
             restoreWhy: DriftRestoreGate.isEnabled ? "可用：刷完重启" : "已封存：暂时不可用")
     }
 
-    /// How a mode makes the wallpaper visible, in the user's terms.
+    /// How a channel makes the wallpaper visible, in the user's terms.
     static func expectedEffect(for mode: PosterBoardApplyMode) -> String {
         switch mode {
         case .worseQuery:
-            return "写完判定：配对、LocalDevVPN、Wi-Fi 齐全则免注销；否则只提示，可手动注销"
+            return "写完提示：打开应用切换器，上滑关闭 PosterBoard，系统重新拉起后生效"
         case .direct:
-            return "免注销（只重启 PosterBoard；未确认时回落注销）"
+            return "免注销：只重启 PosterBoard；刷新未确认时只提示，可手动注销"
         case .airlift:
             return "注销生效"
         case .backup:
@@ -596,19 +620,17 @@ enum DriftJudge {
         }
     }
 
-    /// The per-mode rows the judgement card prints.
+    /// The per-channel rows the judgement card prints.
     private static func optionRows(_ p: Premises, identity: DeviceIdentity) -> [DriftModeAvailability] {
-        let appVersion = p.appVersion
         let device = identity.version.isEmpty
             ? "设备系统版本未读到"
             : "设备 iOS \(identity.version)\(identity.buildVersion.isEmpty ? "" : "（\(identity.buildVersion)）")"
-        let group = WorseQueryEscape.discoveredGroupIdentifier ?? "已发现"
         return [
             DriftModeAvailability(
                 mode: .worseQuery,
                 available: p.localReady,
                 reason: p.localReady
-                    ? "可用：iOS \(appVersion)，签名授予的 App Group 可打开（\(group)）"
+                    ? "可用：iOS \(p.appVersion)，签名授予的 App Group 可打开"
                     : p.localWhy,
                 effect: expectedEffect(for: .worseQuery)),
             DriftModeAvailability(
@@ -620,24 +642,17 @@ enum DriftJudge {
                 effect: expectedEffect(for: .direct)),
             DriftModeAvailability(
                 mode: .airlift,
-                available: p.airliftReady,
-                reason: p.airliftReady
-                    ? "可用：\(device) 在 26.2–27.1 及 27.2 测试版 1/2 内"
-                    : p.airliftWhy,
+                available: p.respringReady,
+                reason: p.respringReady
+                    ? "可用：\(device) 在 26.0–27.1 及 27.2 测试版 1/2 内"
+                    : p.respringWhy,
                 effect: expectedEffect(for: .airlift)),
-            DriftModeAvailability(
-                mode: .backup,
-                available: p.restoreReady,
-                reason: p.restoreWhy,
-                effect: expectedEffect(for: .backup)),
         ]
     }
 
-    /// The automatic channel order inside 免注销直刷： the in-process
-    /// channel first (it asks the least of the user), then the two tunnel
-    /// channels. In the overlap zone any ready channel is acceptable — the
-    /// first ready one wins. Restore is not in this order: it is a
-    /// separate method, and while it is sealed it is never substituted.
+    /// The automatic channel order: the channel that asks least of the user
+    /// first. Restore is not in this order — it is a separate sealed entry and
+    /// is never substituted.
     private static func firstAvailable(_ p: Premises) -> PosterBoardApplyMode? {
         for mode in [PosterBoardApplyMode.worseQuery, .direct, .airlift]
         where p.isAvailable(mode) {
@@ -646,26 +661,38 @@ enum DriftJudge {
         return nil
     }
 
-    private static func channelReason(_ mode: PosterBoardApplyMode, manual: Bool) -> String {
-        let head = manual ? "已手动选择免注销直刷，走" : "免注销直刷走"
+    private static func autoReason(_ mode: PosterBoardApplyMode) -> String {
         switch mode {
         case .worseQuery:
-            return head + "本机通道：写入不用配对、不用隧道；生效方式写完再判定"
+            return "自动选择：走本机直刷——在 App 内直接写进商店容器，不用配对、不用隧道；刷完按提示关闭 PosterBoard 生效"
         case .direct:
-            return head + "隧道通道：走配对隧道写入，只重启 PosterBoard，不注销"
+            return "自动选择：走免注销直刷——隧道事务写入后只重启 PosterBoard，不注销"
         case .airlift:
-            return head + "隧道通道（注销生效）：刷完只注销不重启"
+            return "自动选择：走注销直刷——隧道写入后注销生效"
         case .backup:
             return "恢复刷，刷完会重启"
         }
     }
 
-    /// Decide the delivery channel for a selection.
+    private static func manualReason(_ mode: PosterBoardApplyMode) -> String {
+        switch mode {
+        case .worseQuery:
+            return "已手动选择本机直刷：在 App 内直接写进商店容器，不用配对、不用隧道；刷完按提示关闭 PosterBoard 生效"
+        case .direct:
+            return "已手动选择免注销直刷：隧道事务写入后只重启 PosterBoard，不注销"
+        case .airlift:
+            return "已手动选择注销直刷：隧道写入后注销生效"
+        case .backup:
+            return "恢复刷，刷完会重启"
+        }
+    }
+
+    /// Decide the channel for a selection.
     ///
-    /// The user's pick is a *method* （免注销直刷 / 恢复刷）, never a channel.
-    /// Hard limits come first (video, store reset, store-database packs —
-    /// all restore-only, hence blocked while 恢复刷 is sealed), then the
-    /// sealed-restore pick, then the channel order inside 免注销直刷.
+    /// Hard limits first (video, store reset, store-database packs — all
+    /// restore-only, hence blocked while 恢复刷 is sealed). Then: a manual pick
+    /// is used as-is and is *unavailable* — never substituted — when its own
+    /// premise fails; `.auto` takes the first ready channel in order.
     ///
     /// - Parameter tunnelReady: whether the loopback tunnel currently carries
     ///   traffic. The tunnel premise needs it, so the card must pass it on every
@@ -677,13 +704,12 @@ enum DriftJudge {
         let rows = optionRows(p, identity: identity)
 
         func judged(_ mode: PosterBoardApplyMode, _ reason: String) -> DriftModeJudgement {
-            DriftModeJudgement(mode: mode, reason: reason,
+            DriftModeJudgement(pick: pick, mode: mode, reason: reason,
                                options: rows, expectedEffect: expectedEffect(for: mode))
         }
         func blocked(_ reason: String, notice: String) -> DriftModeJudgement {
-            DriftModeJudgement(mode: .backup, reason: reason,
-                               blockedReason: notice,
-                               options: rows,
+            DriftModeJudgement(pick: pick, mode: .backup, reason: reason,
+                               blockedReason: notice, options: rows,
                                expectedEffect: expectedEffect(for: .backup))
         }
         /// Blocked because the selection can only travel the sealed method.
@@ -691,14 +717,8 @@ enum DriftJudge {
             blocked(reason, notice: DriftRestoreGate.notice)
         }
 
-        // The sealed method, picked explicitly: visible, never runs.
-        if pick == .restore {
-            return sealedBlocked("你选了恢复刷——恢复刷已封存，暂时刷不了。免注销直刷不受影响。")
-        }
-
         // Hard limits: these leave only the restore method, and while it is
-        // sealed the answer is "cannot flash now" rather than a route the
-        // user may not use.
+        // sealed the answer is "cannot flash now".
         if selection.video != nil {
             return p.restoreReady
                 ? judged(.backup, "视频壁纸只能用恢复刷，刷完会重启")
@@ -715,13 +735,21 @@ enum DriftJudge {
                 : sealedBlocked("包含商店数据库的壁纸包只能用恢复刷，但恢复刷已封存，现在刷不了")
         }
 
+        if let channel = pick.channel {
+            if p.isAvailable(channel) {
+                return judged(channel, manualReason(channel))
+            }
+            return blocked("你手动选了\(pick.label)：\(p.why(channel))。手动选定后不会自动改走别的通道。",
+                           notice: "\(pick.label)现在不可用：\(p.why(channel))。")
+        }
+
         if let channel = firstAvailable(p) {
-            return judged(channel, channelReason(channel, manual: pick == .directFlash))
+            return judged(channel, autoReason(channel))
         }
         let whys = [PosterBoardApplyMode.worseQuery, .direct, .airlift]
             .map { "\($0.shortTitle)：\(p.why($0))" }
             .joined(separator: "；")
-        return blocked("免注销直刷现在没有可用通道（\(whys)），恢复刷又已封存，现在刷不了",
-                       notice: "免注销直刷现在没有可用通道：\(whys)。")
+        return blocked("自动选择现在没有可用通道（\(whys)），恢复刷又已封存，现在刷不了",
+                       notice: "现在没有可用的通道：\(whys)。")
     }
 }

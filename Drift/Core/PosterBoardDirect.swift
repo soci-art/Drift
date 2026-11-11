@@ -29,8 +29,18 @@ import ZIPFoundation
 ///
 /// After the writes this asks the device to restart only the PosterBoard
 /// daemon (see `PosterRefresh`) so the wallpaper appears without a respring.
-/// If the refresh is not confirmed, it falls back to `NeoSpring` and says so —
-/// the wallpapers are already in the store either way.
+/// If the refresh is not confirmed, it stops there: the wallpaper is written,
+/// the user gets a manual-respring button, and this channel never falls back
+/// to 注销直刷 or triggers a respring on its own.
+///
+/// This is a single-cycle transaction in the same tunnel write module AirLift
+/// uses — the reload preferences ride inside that transaction. It is not a
+/// relative of the sealed restore route.
+struct PosterBoardDirectOutcome {
+    let verification: PosterStoreVerification
+    let effect: PosterBoardEffect
+}
+
 enum PosterBoardDirect {
     /// The bundle whose container holds the store.
     static let bundleID = "com.apple.PosterBoard"
@@ -98,7 +108,7 @@ enum PosterBoardDirect {
         pairingPath: String,
         log: @escaping @Sendable (String) -> Void,
         progress: @escaping (Double) -> Void
-    ) async throws -> PosterStoreVerification {
+    ) async throws -> PosterBoardDirectOutcome {
         // The engine checks this too; repeating it here means a caller cannot
         // start a transaction the route knows is closed for this build.
         guard isAvailable(deviceVersion: deviceVersion, buildVersion: buildVersion) else {
@@ -251,20 +261,24 @@ enum PosterBoardDirect {
         progress(99)
         log("Refreshing PosterBoard without a respring…")
         let refresh = await PosterRefresh.attempt(pairingPath: pairingPath)
+        let effect: PosterBoardEffect
         if refresh.confirmed {
             log("✅ \(refresh.status.explanation) — 免注销生效。")
-            progress(100)
+            effect = PosterBoardEffect(
+                kind: .noRespring,
+                headline: "刷入完成，免注销生效",
+                detail: "只重启了 PosterBoard，壁纸已经可见，其他 App 不受影响。")
         } else {
-            log("⚠️ 免注销刷新未确认（\(refresh.status.explanation)），改用注销。")
-            let triggered = await MainActor.run { NeoSpring.trigger() }
-            guard triggered else {
-                throw DriftError("壁纸已经写入，但自动刷新失败，而且没有可用的窗口来触发注销。"
-                    + "手动注销一次，PosterBoard 就会读到它们。")
-            }
-            progress(100)
+            log("⚠️ 免注销刷新未确认（\(refresh.status.explanation)），只提示，不自动注销。")
+            effect = PosterBoardEffect(
+                kind: .manualRespring,
+                headline: "壁纸已写入（免注销未确认）",
+                detail: "PosterBoard 刷新没有确认（\(refresh.status.explanation)）。壁纸已经在商店里，"
+                    + "点「手动注销」让 PosterBoard 读到它们。App 不会自动注销，也不会改走注销直刷。")
         }
+        progress(100)
         log("Installed \(injected) descriptor(s) over the pairing tunnel.")
-        return verification
+        return PosterBoardDirectOutcome(verification: verification, effect: effect)
     }
 
     /// The reload-preferences payload written into both target directories.
