@@ -82,11 +82,11 @@ enum Airlift {
     static func unsupportedReason(deviceVersion: String, buildVersion: String = "") -> String {
         if deviceVersion.isEmpty { return "还没有读到设备系统版本，暂时判断不了这个通道能不能用。" }
         if AirliftAvailability.isHidden(deviceVersion: deviceVersion, buildVersion: buildVersion) {
-            return "隧道写入（注销生效）在 iOS 27.2 测试版 3 起不可用；"
+            return "注销直刷在 iOS 27.2 测试版 3 起不可用；"
                 + "iOS 27.2 只支持已验证的测试版 1 / 2 构建。"
         }
         return isSupported(deviceVersion: deviceVersion, buildVersion: buildVersion) ? ""
-            : "隧道写入（注销生效）需要 iOS \(minimumVersion) 或更高版本——这台设备读到的是 "
+            : "注销直刷需要 iOS \(minimumVersion) 或更高版本——这台设备读到的是 "
             + (deviceVersion.isEmpty ? "没有版本号" : "iOS \(deviceVersion)") + "。"
     }
 

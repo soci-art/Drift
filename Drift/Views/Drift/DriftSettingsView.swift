@@ -79,7 +79,7 @@ struct DriftSettingsView: View {
             .alert("恢复刷已封存", isPresented: $showSealedNotice) {
                 Button("知道了", role: .cancel) {}
             } message: {
-                Text("2026-11-10，一次恢复刷入在设备重启后把手机恢复了出厂设置，数据全部丢失。查清原因、并在备用机上验证「从设备拉到真备份」这条路之前，恢复刷不开放：入口保留，但没有任何可执行的恢复代码。免注销直刷不受影响。")
+                Text(DriftRestoreGate.notice)
             }
             .sheet(item: $sharePackage) { item in
                 ActivityShareSheet(url: item.url)

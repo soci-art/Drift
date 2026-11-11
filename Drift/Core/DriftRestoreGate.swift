@@ -30,12 +30,12 @@ enum DriftRestoreGate {
     /// The one suspension notice every blocked entry point shows, so the
     /// wording cannot drift between pages. Plain and factual on purpose:
     /// it says the route is off, why, and what still works.
-    static let notice = "恢复式暂时停用：查明一次重启后设备被抹除的原因之前，恢复式刷入、重置和恢复备份都先停用。直刷不受影响。"
+    static let notice = "恢复刷已封存：2026-11-10 一次恢复刷入在设备重启后把手机恢复了出厂设置、数据全部丢失。查清原因并在备用机上验证「从设备拉到真备份」之前不开放：入口可见，但没有任何可执行的恢复代码。视频壁纸、重置商店与带数据库的容器包暂时都刷不了；三条直刷通道不受影响。"
 
     /// Appended to an error that points at the restore route while the gate is
     /// closed, so the sentence does not tell the user to switch to something
     /// they cannot use right now.
     static var unavailableSuffix: String {
-        isEnabled ? "" : "（恢复式目前暂时停用，现在刷不了。）"
+        isEnabled ? "" : "（恢复刷已封存，现在刷不了。）"
     }
 }

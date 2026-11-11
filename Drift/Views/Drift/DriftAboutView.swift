@@ -18,7 +18,7 @@ struct DriftAboutView: View {
                         // "restore is available" while the gate is closed.
                         if !DriftRestoreGate.isEnabled {
                             DriftFactRow(title: "恢复刷已封存",
-                                         text: "2026-11-10，一次恢复刷入在设备重启后把手机恢复了出厂设置，数据全部丢失。查清原因、并在备用机上验证「从设备拉到真备份」之前，恢复刷不开放：入口保留，但没有任何可执行的恢复代码。只能走恢复刷的内容（视频壁纸、重置商店、带数据库的容器包）暂时都刷不了；免注销直刷不受影响。")
+                                         text: DriftRestoreGate.notice)
                         }
                         rangeTable
                         DriftFactRow(title: "四种刷入方式",
@@ -30,7 +30,7 @@ struct DriftAboutView: View {
                         DriftFactRow(title: "旧格式转换",
                                      text: LegacyConversionCopy.why + LegacyConversionCopy.versions)
                         DriftFactRow(title: "隧道",
-                                     text: "借 LocalDevVPN（或同类隧道 App）建立：地址固定用默认值（本机 10.7.1.1、对端 10.7.0.1、端口 62078），在 LocalDevVPN 里填同样的值即可，需 Wi-Fi；隧道状态实时检测，App 打开之后再连上隧道也会自动识别并连接，不用重开 App。配对与隧道只是免注销直刷走隧道通道时的前提，走本机通道不需要。")
+                                     text: "借 LocalDevVPN（或同类隧道 App）建立：地址固定用默认值（本机 10.7.1.1、对端 10.7.0.1、端口 62078），在 LocalDevVPN 里填同样的值即可，需 Wi-Fi；隧道状态实时检测，App 打开之后再连上隧道也会自动识别并连接，不用重开 App。配对与隧道只是两条隧道通道的前提，走本机直刷不需要。")
                         DriftFactRow(title: "签名",
                                      text: "Apple ID 免费签和付费证书都能用，功能无差别——唯一例外是本机直刷，它需要签名授予可用的 App Group。App 会在运行时读取安装包签名里实际授予的组名单，用第一个能打开的组：付费证书的哈希组名、开发者后台注册的组、SideStore / AltStore 改签后的组都可以；免费 Apple ID 直签拿不到 App Group，此时其他方式不受影响。免费签 7 天过期、重装会丢 App 内数据（配对和已导入的包要重新导入）；付费证书有效期长、更稳定。本 App 没有自己的隧道扩展，用不上付费证书的 VPN 权限。")
                         DriftFactRow(title: "风险与边界",
