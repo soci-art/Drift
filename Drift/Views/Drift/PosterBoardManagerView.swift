@@ -180,4 +180,3 @@ private struct ManagerNotice: Identifiable {
     let message: String
     let offersRefresh: Bool
 }
-}
