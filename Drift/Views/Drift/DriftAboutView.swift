@@ -11,7 +11,6 @@ struct DriftAboutView: View {
                 DriftBackground()
                 ScrollView {
                     VStack(spacing: 14) {
-                        intro
                         // Feedback #30: the suspension is stated first,
                         // before any row that describes the restore route
                         // as a way to flash — nothing below may read as
@@ -34,7 +33,7 @@ struct DriftAboutView: View {
                         DriftFactRow(title: "签名",
                                      text: "Apple ID 免费签和付费证书都能用，功能无差别——唯一例外是本机直刷，它需要签名授予可用的 App Group。App 会在运行时读取安装包签名里实际授予的组名单，用第一个能打开的组：付费证书的哈希组名、开发者后台注册的组、SideStore / AltStore 改签后的组都可以；免费 Apple ID 直签拿不到 App Group，此时其他方式不受影响。免费签 7 天过期、重装会丢 App 内数据（配对和已导入的包要重新导入）；付费证书有效期长、更稳定。本 App 没有自己的隧道扩展，用不上付费证书的 VPN 权限。")
                         DriftFactRow(title: "风险与边界",
-                                     text: "刷入时请保持解锁、隧道开着、配对有效；中途断开可能留下刷一半的状态。出现位置选错不报错、只是不显示。带数据库的容器包可能弄乱壁纸索引，清乱了用「重置壁纸商店」。刷入和清理全程不从设备拉取备份：壁纸数据库用本地缓存的副本，没有缓存时从零新建，设备上原有的壁纸可能不再被列出；恢复刷封存后，设置里不再有任何恢复备份入口。一次最多刷 10 张。本 App 没有下载功能，壁纸包请自备。纯动画的包没有静态图，列表里用占位图显示。")
+                                     text: "刷入时请保持解锁、隧道开着、配对有效；中途断开可能留下刷一半的状态。出现位置选错不报错、只是不显示。带数据库的容器包可能弄乱壁纸索引。刷入和清理全程不从设备拉取备份：壁纸数据库用本地缓存的副本，没有缓存时从零新建，设备上原有的壁纸可能不再被列出；恢复刷封存后，设置里不再有任何恢复备份入口。一次最多刷 10 张。本 App 没有下载功能，壁纸包请自备。纯动画的包没有静态图，列表里用占位图显示。")
                         DriftFactRow(title: "基于",
                                      text: "Drift 是独立应用，只保留刷壁纸功能。设备写入核心源自 AirCard-iOS（Mak5er 著，MIT 许可证）的隧道写入核心（回环隧道、配对、同步写入、注入）；免注销生效、壁纸商店枚举、本机直刷通道与界面为 Drift 自有部分（AGPL-3.0）。")
                     }
@@ -44,17 +43,6 @@ struct DriftAboutView: View {
             .navigationTitle("说明")
             .navigationBarTitleDisplayMode(.large)
         }
-    }
-
-    private var intro: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Drift 只做一件事：把交互壁纸刷进这台设备。")
-                .font(.headline)
-            Text("导入 .tendies 壁纸包或一段视频，选好后刷入。不下载、不从设备拉取备份、不改系统其他设置。")
-                .font(.subheadline).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .driftCard()
     }
 
     private var rangeTable: some View {

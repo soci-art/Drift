@@ -73,7 +73,7 @@ struct DriftTutorialView: View {
                 Text("恢复刷已封存")
                     .font(.subheadline.weight(.semibold))
             }
-            Text(DriftRestoreGate.notice + "只能走恢复刷的内容——视频壁纸、重置壁纸商店、带数据库的容器包——这段时间都先放一放，等恢复刷重新开放再刷。")
+            Text(DriftRestoreGate.notice + "只能走恢复刷的内容——视频壁纸、带数据库的容器包——这段时间都先放一放，等恢复刷重新开放再刷。")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
