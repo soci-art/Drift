@@ -1,4 +1,4 @@
-**未签名 IPA**，需自签安装（付费 p12 证书 / AltStore / SideStore / Sideloadly 等）。最低系统 iOS 26.0。
+**未签名 IPA**，需自签安装（p12 证书 / AltStore / SideStore / Sideloadly 等）。最低系统 iOS 26.0。
 
 ## Drift 3.0.7
 
