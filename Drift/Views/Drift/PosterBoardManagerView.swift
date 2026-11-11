@@ -19,6 +19,30 @@ struct PosterBoardManagerView: View {
     @State private var deleting = false
     @State private var confirmDelete = false
     @State private var notice: ManagerNotice?
+    @State private var showActivationPrompt = false
+    @State private var activationKind: ActivationKind = .respring
+    @State private var activationMessage = ""
+
+    /// How a deletion is made to take effect, keyed to how the wallpaper was
+    /// flashed (Grace, #161): local → end PosterBoard; 免注销 → restart
+    /// PosterBoard; 注销 and anything unknown → respring.
+    enum ActivationKind {
+        case endPosterBoard, restartPosterBoard, respring
+        var needText: String {
+            switch self {
+            case .endPosterBoard: return "要让删除生效，请打开 PosterBoard，再从应用切换器把它上滑关掉。"
+            case .restartPosterBoard: return "要让删除生效，需要重启 PosterBoard。"
+            case .respring: return "要让删除生效，需要注销一次。"
+            }
+        }
+        var actionTitle: String {
+            switch self {
+            case .endPosterBoard: return "打开 PosterBoard"
+            case .restartPosterBoard: return "重启 PosterBoard"
+            case .respring: return "立即注销"
+            }
+        }
+    }
 
     private var identity: DeviceIdentity { identityMonitor.current }
 
@@ -103,6 +127,45 @@ struct PosterBoardManagerView: View {
             Alert(title: Text(item.title), message: Text(item.message),
                   dismissButton: .default(Text("知道了")))
         }
+        .confirmationDialog("删除完成", isPresented: $showActivationPrompt,
+                            titleVisibility: .visible) {
+            Button(activationKind.actionTitle) { runActivation() }
+            Button("稍后再说", role: .cancel) {}
+        } message: {
+            Text(activationMessage + "\n\n" + activationKind.needText)
+        }
+    }
+
+    /// Execute the prompted activation immediately on tap (#161).
+    private func runActivation() {
+        switch activationKind {
+        case .endPosterBoard:
+            let opened = PosterBoardLaunch.open()
+            notice = ManagerNotice(
+                title: opened ? "已打开 PosterBoard" : "请手动打开",
+                message: opened
+                    ? "请从应用切换器中关闭 PosterBoard，然后检查锁定屏幕壁纸选择器，删掉的壁纸就没了。"
+                    : "请打开锁定屏幕壁纸选择器来刷新 PosterBoard；如果删掉的壁纸还在，请从应用切换器关闭 PosterBoard 后再看。",
+                offersRefresh: false)
+        case .restartPosterBoard:
+            Task {
+                let result = await PosterRefresh.attempt(pairingPath: AppPaths.pairingFile.path)
+                notice = ManagerNotice(
+                    title: result.confirmed ? "已重启 PosterBoard" : "没重启成",
+                    message: result.status.explanation + (result.confirmed
+                        ? "。删掉的壁纸已经生效移除。"
+                        : "。可以连上隧道再试，或改用注销。"),
+                    offersRefresh: false)
+            }
+        case .respring:
+            let triggered = NeoSpring.trigger()
+            notice = ManagerNotice(
+                title: triggered ? "已触发注销" : "注销没触发成",
+                message: triggered
+                    ? "PosterBoard 重新启动后会读到删除结果。"
+                    : "现在没有可用的窗口触发注销，请手动从系统里注销一次。",
+                offersRefresh: false)
+        }
     }
 
     private var selectedEntries: [PosterBoardManagement.ManagedEntry] {
@@ -153,6 +216,7 @@ struct PosterBoardManagerView: View {
         defer { deleting = false }
         let targets = selectedEntries
         var messages: [String] = []
+        var succeeded: [PosterBoardManagement.ManagedEntry] = []
         for entry in targets {
             do {
                 let outcome = try await PosterBoardManagement.deleteManagedEntry(
@@ -161,15 +225,36 @@ struct PosterBoardManagerView: View {
                     DriftEngine.shared.log(line)
                 }
                 messages.append(outcome.message)
+                succeeded.append(entry)
             } catch {
                 session.errorText = error.localizedDescription
             }
         }
         selected.removeAll()
         await load()
-        if !messages.isEmpty {
-            notice = ManagerNotice(title: "删除完成", message: messages.joined(separator: "\n\n"),
-                                   offersRefresh: false)
+        if !succeeded.isEmpty {
+            // #161: prompt by how the deleted wallpapers were FLASHED (from
+            // their receipts), not by the route the deletion took. Unknown
+            // origin → respring (Grace's ruling); a mixed batch takes the
+            // strongest action present.
+            let receipts = PosterBoardLocalReceipts.load()
+            func flashedChannel(of entry: PosterBoardManagement.ManagedEntry)
+                -> PosterBoardReceiptChannel? {
+                let key = "\(entry.provider)/\(entry.uuid)/\(entry.generation)"
+                return receipts.first {
+                    "\($0.extensionID)/\($0.folderName)/\($0.generation)" == key
+                }?.resolvedChannel
+            }
+            let channels = succeeded.map { flashedChannel(of: $0) }
+            if channels.contains(.airlift) || channels.contains(nil) {
+                activationKind = .respring
+            } else if channels.contains(.direct) {
+                activationKind = .restartPosterBoard
+            } else {
+                activationKind = .endPosterBoard
+            }
+            activationMessage = messages.joined(separator: "\n\n")
+            showActivationPrompt = true
         }
     }
 }

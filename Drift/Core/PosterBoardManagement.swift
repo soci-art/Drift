@@ -325,7 +325,7 @@ enum PosterBoardManagement {
                                     verification: "已删除、未确认：提交复核不可用")
             }
             let message = confirmed
-                ? "已删除并核验不在册：\(entry.name) 的描述符已从设备商店移除。可以点「刷新 PosterBoard」让它重新读取商店，或手动注销。"
+                ? "已删除并核验不在册：\(entry.name) 的描述符已从设备商店移除。"
                 : "已删除、未确认：商店的提交复核没有完成，下次对账再确认。不要把它当成已确认删除。"
             return (confirmed, message, "隧道")
         }
@@ -334,16 +334,15 @@ enum PosterBoardManagement {
             try await PosterBoardLocal.deleteManagedDescriptor(
                 provider: entry.provider, uuid: entry.uuid,
                 generation: entry.generation, log: log)
-            let opened = await MainActor.run { PosterBoardLaunch.open() }
-            let hint = opened
-                ? "已打开 PosterBoard 以刷新集合，请从应用切换器中关闭它，然后检查锁定屏幕壁纸选择器。"
-                : "请打开锁定屏幕壁纸选择器来刷新 PosterBoard；如果壁纸未出现，请从应用切换器关闭 PosterBoard 后重试。"
+            // #161: no auto-open here any more. The management view prompts
+            // first — keyed to how the wallpaper was flashed — and only acts
+            // when the user taps.
             ApplyHistory.record(mode: "删除壁纸 · \(entry.name)",
                                 success: true,
                                 channel: "本机",
                                 provider: entry.provider,
                                 verification: "本机删除后：目录已不在商店")
-            return (true, "已删除并在本机核验：\(entry.name) 的描述符已不在商店里。\(hint)", "本机")
+            return (true, "已删除并在本机核验：\(entry.name) 的描述符已不在商店里。", "本机")
         }
 
         throw DriftError("删不了：隧道和本机两条路现在都走不通。")
