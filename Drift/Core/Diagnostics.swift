@@ -39,10 +39,11 @@ enum Diagnostics {
             ? "  隧道读到的设备: 未读到"
             : "  隧道读到的设备: iOS \(identity.version) (\(identity.buildVersion))")
         lines.append("  本机直刷发现的组: \(WorseQueryEscape.discoveredGroupIdentifier ?? "未发现可用组")")
+        let tunnelReady = await TunnelMonitor.shared.status == .ready
         let judged = DriftJudge.judge(identity: identity,
                                       selection: PosterBoardSelection(),
                                       pick: .auto,
-                                      tunnelReady: TunnelMonitor.shared.status == .ready)
+                                      tunnelReady: tunnelReady)
         lines.append("  方式判断（打开 App 这一刻）: \(judged.reason)")
         for option in judged.options {
             let state = option.available ? "可用" : (option.sealed ? "不可选（签名无可用组）" : "不可用")
