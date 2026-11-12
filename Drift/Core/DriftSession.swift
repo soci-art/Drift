@@ -528,14 +528,37 @@ final class DriftSession: ObservableObject {
                 return (false, "刷入已取消", nil)
             }
             DriftEngine.shared.log("posterboard apply failed: \(error.localizedDescription)")
+            let message = Self.flashFailureMessage(error: error, selection: selection)
             let iosVersion = (mode == .worseQuery) ? WorseQueryEscape.processVersion
                 : (identity.version.isEmpty ? WorseQueryEscape.processVersion : identity.version)
-            ApplyHistory.record(mode: selectedLabel, success: false, error: error.localizedDescription,
+            ApplyHistory.record(mode: selectedLabel, success: false, error: message,
                                 device: identity.describe,
                                 model: identity.productType, ios: iosVersion,
                                 packName: selection.tendies.map(\.name).joined(separator: "、"))
-            return (false, error.localizedDescription, nil)
+            return (false, message, nil)
         }
+    }
+
+    /// Collection #219 (Grace, 2026-11-12): when a channel finds no
+    /// descriptors at the top of the extracted pack, its error still
+    /// carries a fixed suffix steering the user to the sealed restore
+    /// route — wrong for the common case, which is a pack whose layout
+    /// is merely misplaced (feedback #217). Rewrite that one failure
+    /// here, where the packs are known: a pack the repair check flags
+    /// as structurally broken earns directions to「壁纸修复」; anything
+    /// else is stated plainly. The raw channel text stays in the log.
+    private static func flashFailureMessage(error: Error,
+                                            selection: PosterBoardSelection) -> String {
+        let raw = error.localizedDescription
+        guard raw.contains("没有找到壁纸描述文件") else { return raw }
+        if let broken = selection.tendies.first(where: {
+            !PackRepair.blockingIssues(of: $0).isEmpty
+        }) {
+            return "「\(broken.name)」的结构有问题，现在刷不了。"
+                + "去它的详细页点「壁纸修复」，修好后刷修复出来的新包。"
+        }
+        let name = selection.tendies.first?.name ?? "这个包"
+        return "在「\(name)」里没有找到壁纸内容，这个包刷不了。"
     }
 }
 

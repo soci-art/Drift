@@ -77,14 +77,9 @@ struct DriftHomeView: View {
             }
             .navigationTitle("Drift")
             .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { importingPairing = true } label: {
-                        Image(systemName: session.paired ? "link.badge.plus" : "link")
-                    }
-                    .accessibilityLabel("导入配对文件")
-                }
-            }
+            // Collection #223 (Grace, 2026-11-12): no toolbar pairing
+            // shortcut — it duplicated the status card's full-width
+            // 「导入配对文件」button directly below it.
             // UIKit pickers, not SwiftUI `fileImporter` — see
             // `DocumentPicker` for the tap-swallowing failure that moved
             // these. A pick or a cancel always lands back here.

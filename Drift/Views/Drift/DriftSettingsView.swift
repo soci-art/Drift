@@ -68,7 +68,7 @@ struct DriftSettingsView: View {
                 FirstRunView(onClose: { showGuide = false })
             }
             .sheet(isPresented: $showAnnouncement) {
-                AppAnnouncementView { showAnnouncement = false }
+                AppAnnouncementView(manualEntry: true) { showAnnouncement = false }
                     .presentationDetents([.large])
             }
             .alert("上传日志？", isPresented: $confirmUpload) {

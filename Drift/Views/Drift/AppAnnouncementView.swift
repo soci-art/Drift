@@ -3,9 +3,21 @@ import UIKit
 
 /// The in-app update announcement (#178), presented as a proper
 /// announcement page (#192): app icon, title, version and date in the
-/// header; one titled entry per change; a single 确定 button.
+/// header; the notes below; a single 确定 button.
+///
+/// Collection #222: the notes are the GitHub release notes of this
+/// build's version (see AppAnnouncement). The page renders the cached
+/// copy instantly and refreshes it in the background. Opened manually
+/// from Settings with nothing to show, it says so in one short line;
+/// the automatic presentation is preflighted by the root view and
+/// never lands on that state.
 struct AppAnnouncementView: View {
+    /// True when the user opened the page themselves (Settings).
+    var manualEntry = false
     let onDismiss: () -> Void
+
+    @State private var notes: AppAnnouncement.Notes? = AppAnnouncement.cachedNotes()
+    @State private var fetchSettled = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -16,7 +28,7 @@ struct AppAnnouncementView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(AppAnnouncement.title)
                         .font(.title3.weight(.bold))
-                    Text(AppAnnouncement.versionLine)
+                    Text(AppAnnouncement.versionLine(dateLine: notes?.dateLine))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -25,29 +37,27 @@ struct AppAnnouncementView: View {
 
             Divider()
 
-            VStack(spacing: 0) {
-                ForEach(AppAnnouncement.items, id: \.title) { item in
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: item.icon)
-                            .font(.body)
-                            .foregroundStyle(.tint)
-                            .frame(width: 38, height: 38)
-                            .background(Color.accentColor.opacity(0.12),
-                                        in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(item.title).font(.headline)
-                            Text(item.body)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+            Group {
+                if let notes {
+                    ScrollView {
+                        notesBody(notes.body)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .padding(.vertical, 13)
-                    if item.title != AppAnnouncement.items.last?.title {
-                        Divider()
+                } else if manualEntry && fetchSettled {
+                    Text("暂时取不到更新说明，检查网络后再试。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 16)
+                } else {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                        Spacer()
                     }
+                    .padding(.vertical, 24)
                 }
             }
+            .frame(maxHeight: 430)
 
             Spacer()
 
@@ -62,6 +72,65 @@ struct AppAnnouncementView: View {
             .buttonStyle(.borderedProminent)
         }
         .padding(24)
+        .task {
+            if let fresh = await AppAnnouncement.fetchNotes() {
+                notes = fresh
+            }
+            fetchSettled = true
+        }
+    }
+
+    // MARK: - Notes rendering
+
+    /// The release notes are light markdown (a title line, section
+    /// heads, dash bullets). Render them line by line in reader form
+    /// instead of showing raw markup characters.
+    private func notesBody(_ body: String) -> some View {
+        let lines = Self.readerLines(body)
+        return VStack(alignment: .leading, spacing: 7) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                switch line {
+                case .heading(let text):
+                    Text(text)
+                        .font(.headline)
+                        .padding(.top, 8)
+                case .bullet(let text):
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("•").foregroundStyle(.secondary)
+                        Text(text)
+                            .font(.subheadline)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                case .text(let text):
+                    Text(text)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.vertical, 12)
+    }
+
+    private enum ReaderLine {
+        case heading(String)
+        case bullet(String)
+        case text(String)
+    }
+
+    private static func readerLines(_ body: String) -> [ReaderLine] {
+        body.components(separatedBy: .newlines).compactMap { raw in
+            var line = raw.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line == "---" { return nil }
+            line = line.replacingOccurrences(of: "**", with: "")
+                .replacingOccurrences(of: "`", with: "")
+            if line.hasPrefix("## ") { return .heading(String(line.dropFirst(3))) }
+            if line.hasPrefix("# ") { return .heading(String(line.dropFirst(2))) }
+            if line.hasPrefix("- ") || line.hasPrefix("* ") {
+                return .bullet(String(line.dropFirst(2)))
+            }
+            return .text(line)
+        }
     }
 
     /// The real app icon from the bundle when it can be read; a plain

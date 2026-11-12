@@ -160,8 +160,20 @@ struct DriftRootView: View {
     private func runLaunchFlow() {
         guard firstRun.isComplete, !launchFlowDone else { return }
         launchFlowDone = true
-        if AppAnnouncement.shouldShow {
+        guard AppAnnouncement.shouldShow else { return }
+        // Collection #222: the announcement shows the release notes,
+        // which live on GitHub — present only once there is something
+        // to show (the cache, or a fetch that just landed). With
+        // neither, this launch presents nothing and the next one
+        // retries; `markSeen` stays sheet-driven, so nothing is lost.
+        if AppAnnouncement.cachedNotes() != nil {
             showAnnouncement = true
+        } else {
+            Task {
+                if await AppAnnouncement.fetchNotes() != nil {
+                    showAnnouncement = true
+                }
+            }
         }
     }
 
