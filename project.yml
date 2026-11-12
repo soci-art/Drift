@@ -130,7 +130,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
     CODE_SIGN_IDENTITY: Apple Development
     DEVELOPMENT_TEAM: ""
-    CURRENT_PROJECT_VERSION: 28
+    CURRENT_PROJECT_VERSION: 29
     # 3.0.0 is the four-method refactor: three independent channels (本机直刷 /
     # 免注销直刷 / 注销直刷) with their own write and effect flows, the
     # 3106-style transactional local installer with receipts, and the sealed

@@ -465,13 +465,26 @@ struct DriftHomeView: View {
         runSelection.fullReset = false
         Task {
             defer { session.flashCover = false }
-            // Re-check before touching anything: refresh the device identity
-            // when a tunnel is configured, then re-run the judgement on the
-            // state as it is now. The card's answer is not the run's answer if
-            // the device was updated or the tunnel dropped in between.
-            if session.paired { await session.refreshIdentity() }
-            let checked = DriftJudge.judge(identity: identity, selection: runSelection,
+            // Collection #228: judge once on the state already on
+            // screen. A run that resolves to the local channel goes
+            // straight in: the local channel judges the app's own
+            // system, so the tunnel identity read cannot change its
+            // answer — and when the tunnel is down that read retries
+            // for up to ~15 s, which was pure delay at the head of
+            // every local flash (the flash itself takes ~0.2 s).
+            var checked = DriftJudge.judge(identity: identity, selection: runSelection,
                                            pick: manualPick, tunnelReady: tunnelReady)
+            if checked.isBlocked || checked.mode != .worseQuery {
+                // Anything else still re-checks before touching
+                // anything: refresh the device identity when a tunnel
+                // is configured, then re-run the judgement on the
+                // state as it is now. The card's answer is not the
+                // run's answer if the device was updated or the tunnel
+                // dropped in between.
+                if session.paired { await session.refreshIdentity() }
+                checked = DriftJudge.judge(identity: identity, selection: runSelection,
+                                           pick: manualPick, tunnelReady: tunnelReady)
+            }
             if checked.isBlocked {
                 session.errorText = checked.blockedReason
                 return
