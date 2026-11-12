@@ -31,7 +31,9 @@ struct DriftVideoView: View {
                         filesCard
                         optionsCard
                         applyCard
-                        RunLogCard()
+                        // Collection #289 (Grace, 2026-11-13): no log
+                        // card on the video page either — same ruling
+                        // as the wallpaper page.
                     }
                     .padding(16)
                 }

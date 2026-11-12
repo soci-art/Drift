@@ -57,11 +57,22 @@ extension View {
     /// the legacy solid card surface below it — the same split
     /// `driftCard` makes, minus the padding (the caller pads its own
     /// contents; a slab frames a group, not a single card's text).
+    ///
+    /// Collection #290 (Grace, 2026-11-13): the glass is drawn in the
+    /// BACKGROUND, never on the container itself. With the glass on
+    /// the container, 3.0.14's Home bars answered only taps that
+    /// landed exactly on their text — the container's glass surface
+    /// swallowed every other touch inside the frame. A background
+    /// layer renders the same and sits outside the hit path entirely.
     @ViewBuilder
     func driftGlassSlab(cornerRadius: CGFloat = 26) -> some View {
         if #available(iOS 26.0, *) {
-            self.glassEffect(.regular,
-                             in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            self.background {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(.clear)
+                    .glassEffect(.regular,
+                                 in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            }
         } else {
             self
                 .background(Color(.secondarySystemBackground),
@@ -74,11 +85,18 @@ extension View {
     }
 
     /// A capsule of tinted liquid glass (collection #286) — the Home
-    /// bars' surface on iOS 26+; a solid tint capsule below it.
+    /// bars' surface on iOS 26+; a solid tint capsule below it. Also
+    /// background-drawn, for the #290 reason above; the label's own
+    /// content shape is the whole capsule, so the whole bar is the
+    /// tap target, not just its text.
     @ViewBuilder
     func driftGlassCapsule(tint: Color) -> some View {
         if #available(iOS 26.0, *) {
-            self.glassEffect(.regular.tint(tint), in: Capsule())
+            self.background {
+                Capsule().fill(.clear)
+                    .glassEffect(.regular.tint(tint), in: Capsule())
+            }
+            .contentShape(Capsule())
         } else {
             self.background(tint, in: Capsule())
         }

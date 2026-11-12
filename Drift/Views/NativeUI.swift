@@ -301,8 +301,15 @@ struct DriftStaticGlassButtonStyle: ButtonStyle {
             .padding(.horizontal, horizontal)
             .padding(.vertical, vertical)
             .foregroundStyle(prominent ? Color.white : Color.primary)
-            .glassEffect(prominent ? .regular.tint(tint) : .regular,
-                         in: Capsule())
+            // The glass is the label's background, not the label
+            // itself (#290, same lesson as the Home frame): glass on
+            // the view can swallow touches outside the drawn content,
+            // and a button must answer across its whole capsule.
+            .background {
+                Capsule().fill(.clear)
+                    .glassEffect(prominent ? .regular.tint(tint) : .regular,
+                                 in: Capsule())
+            }
             .contentShape(Capsule())
             .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.45)
     }

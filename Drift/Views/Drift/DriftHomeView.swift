@@ -67,7 +67,10 @@ struct DriftHomeView: View {
                         judgeCard
                         actionFrame
                         activationCard
-                        RunLogCard()
+                        // Collection #289 (Grace, 2026-11-13): no log
+                        // card on this page any more — the log is still
+                        // recorded in full (#272) and still lives in
+                        // Settings; it just isn't displayed here.
                     }
                     .padding(16)
                 }
