@@ -60,12 +60,12 @@ enum AppAnnouncement {
                      dateLine: UserDefaults.standard.string(forKey: cacheDateKey))
     }
 
-    /// Fetch this version's release notes: direct API first, then the
-    /// same API through the accelerator the update checker falls back
-    /// to. A success refreshes the cache.
+    /// Fetch this version's release notes: the API through the
+    /// accelerator first, then direct — the same order the update
+    /// checker uses since #225. A success refreshes the cache.
     static func fetchNotes() async -> Notes? {
         let api = "https://api.github.com/repos/soci-art/Drift/releases/tags/v\(version)"
-        for base in ["", AppUpdateChecker.mirrorPrefix] {
+        for base in [AppUpdateChecker.mirrorPrefix, ""] {
             if let notes = try? await fetchNotes(base: base, api: api) {
                 UserDefaults.standard.set(notes.body, forKey: cacheBodyKey)
                 if let date = notes.dateLine {

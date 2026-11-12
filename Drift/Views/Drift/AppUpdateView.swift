@@ -106,11 +106,28 @@ struct AppUpdateView: View {
     @ViewBuilder
     private func downloadButton(_ latest: AppUpdateChecker.ReleaseInfo) -> some View {
         switch checker.downloadPhase {
-        case .working(let fraction):
+        case .working(let fraction, let downloadedBytes, let totalBytes):
             VStack(alignment: .leading, spacing: 6) {
-                ProgressView(value: fraction)
-                Text("正在下载…\(Int(fraction * 100))%")
-                    .font(.caption).foregroundStyle(.secondary)
+                if let fraction {
+                    ProgressView(value: fraction)
+                } else {
+                    ProgressView()
+                }
+                // #226: the percentage rides on the byte counts, so
+                // the user sees movement even while the total is
+                // still unknown — a bare bar that sat at 0% for the
+                // whole download read as no progress at all.
+                if let fraction {
+                    Text("正在下载…\(Int(fraction * 100))%")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if totalBytes > 0 {
+                    Text("已下载 \(ByteCountFormatter.string(fromByteCount: downloadedBytes, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file))")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else if downloadedBytes > 0 {
+                    Text("已下载 \(ByteCountFormatter.string(fromByteCount: downloadedBytes, countStyle: .file))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
         case .done:
             Button {

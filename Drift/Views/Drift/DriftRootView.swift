@@ -28,6 +28,11 @@ struct DriftRootView: View {
         .environmentObject(session)
         .environmentObject(identityMonitor)
         .task {
+            // The deferred half of launch (#227): native installs and
+            // the tunnel verdict run here, after the first frame —
+            // see DriftLaunchTasks. Before bootstrap(), so vendor
+            // logging is on when the tunnel core starts.
+            DriftLaunchTasks.runAfterFirstFrame()
             session.bootstrap()
             startLiveDetection()
             runPermissionPass()
