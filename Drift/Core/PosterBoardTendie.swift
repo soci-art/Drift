@@ -386,13 +386,20 @@ enum PosterBoardImports {
             throw DriftError("无法把 \(source.lastPathComponent) 拷贝进应用："
                 + error.localizedDescription)
         }
+        let tendie: PosterBoardTendie
         do {
-            return try PosterBoardTendie(url: destination)
+            tendie = try PosterBoardTendie(url: destination)
         } catch {
             // Not a pack: leave nothing behind for the next launch to trip over.
             try? FileManager.default.removeItem(at: destination)
             throw error
         }
+        // #259 (Grace, 2026-11-12): a shared placeholder descriptor id
+        // is swapped for a fresh one right here, at import — the pack
+        // that joins the list is already clean. Best-effort: any
+        // failure keeps the pack exactly as imported.
+        PackIdentity.normalizeStoredPack(at: destination, siblings: load().map(\.url))
+        return (try? PosterBoardTendie(url: destination)) ?? tendie
     }
 
     /// The pack's bytes, unwrapped first if they arrive encoded.

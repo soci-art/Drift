@@ -28,7 +28,12 @@ struct DriftSettingsView: View {
     @State private var exportTarget: ApplyHistory.Record?
     @State private var exportBundle: RecordExport.Bundle?
     @State private var showExportChoices = false
-    @State private var recordExportNote: String?
+    /// The export outcome popup (#256): set the content, then flip
+    /// `showExportPopup`. Success after an upload carries no text at
+    /// all — the popup title「上传成功」is the whole message.
+    @State private var showExportPopup = false
+    @State private var exportPopupTitle = ""
+    @State private var exportPopupMessage: String?
     @State private var recordBusy = false
     @ObservedObject private var updateChecker = AppUpdateChecker.shared
     @State private var cacheBreakdown: AppCache.Breakdown?
@@ -131,9 +136,9 @@ struct DriftSettingsView: View {
             }
             // Grace (2026-11-12, on 3.0.11): the dialog shows ONLY the
             // title and the three choices — no bundle breakdown, no
-            // missing-items list, no retention note. An oversize bundle
-            // is handled inside uploadRecordExport with a plain note
-            // after the tap instead of a greyed-out button.
+            // missing-items list, no retention note. Outcomes arrive in
+            // the popup below (#256); an oversize bundle uploads without
+            // its wallpaper packs instead of refusing (#257).
             // On 3.0.11 (32) she flagged the system dialog's floating
             // bubble presentation itself, so this is now the app's own
             // bottom sheet (DriftActionSheet) like every other
@@ -148,7 +153,18 @@ struct DriftSettingsView: View {
                                 },
                                 DriftSheetAction("导出并上传") { uploadRecordExport() },
                               ])
+            .driftActionSheet(isPresented: $showExportPopup, title: exportPopupTitle,
+                              message: exportPopupMessage,
+                              actions: [DriftSheetAction("知道了") {}])
         }
+    }
+
+    /// Present an export outcome (#256): a popup at action time instead
+    /// of a standing line in the records section.
+    private func presentExportOutcome(title: String, message: String? = nil) {
+        exportPopupTitle = title
+        exportPopupMessage = message
+        showExportPopup = true
     }
 
     // MARK: - Announcement
@@ -422,10 +438,9 @@ struct DriftSettingsView: View {
                     Label("清空记录", systemImage: "trash")
                 }
             }
-            if let recordExportNote {
-                Text(recordExportNote)
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+            // #256 (Grace, 2026-11-12): no standing status line here any
+            // more — export outcomes arrive as a popup at action time.
+            // The explanatory footnote below stays, at her explicit word.
             Text("带「删除」的条目删的是设备上的壁纸；点「导出」可以把某次刷入的记录、那次的日志和壁纸包打包。")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -439,7 +454,6 @@ struct DriftSettingsView: View {
     private func startRecordExport(_ record: ApplyHistory.Record) {
         guard !recordBusy else { return }
         recordBusy = true
-        recordExportNote = nil
         Task {
             defer { recordBusy = false }
             do {
@@ -447,7 +461,8 @@ struct DriftSettingsView: View {
                 exportTarget = record
                 showExportChoices = true
             } catch {
-                recordExportNote = "打包失败：\(error.localizedDescription)"
+                presentExportOutcome(title: "出错了",
+                                     message: "打包失败：\(error.localizedDescription)")
             }
         }
     }
@@ -455,34 +470,50 @@ struct DriftSettingsView: View {
     private func saveRecordExport() {
         guard let bundle = exportBundle else { return }
         do {
-            let saved = try RecordExport.saveToFiles(bundle)
-            recordExportNote = "已存成文件：\(saved.lastPathComponent)"
+            _ = try RecordExport.saveToFiles(bundle)
+            presentExportOutcome(title: "已存成文件")
         } catch {
-            recordExportNote = "存文件失败：\(error.localizedDescription)"
+            presentExportOutcome(title: "出错了",
+                                 message: "存文件失败：\(error.localizedDescription)")
         }
     }
 
     private func uploadRecordExport() {
-        guard let bundle = exportBundle else { return }
+        guard let bundle = exportBundle, let record = exportTarget else { return }
         recordBusy = true
         Task {
             defer { recordBusy = false }
-            let saved: URL
+            // The full bundle always lands in Files first; what goes up
+            // may be a slimmer rebuild of it (#257).
             do {
-                saved = try RecordExport.saveToFiles(bundle)
+                _ = try RecordExport.saveToFiles(bundle)
             } catch {
-                recordExportNote = "存文件失败：\(error.localizedDescription)"
+                presentExportOutcome(title: "出错了",
+                                     message: "存文件失败：\(error.localizedDescription)")
                 return
             }
+            var uploadURL = bundle.url
             if bundle.tooBigToUpload {
-                recordExportNote = "这个包超过 24 MB，传不了；已存成文件：\(saved.lastPathComponent)"
-                return
+                // #257 (Grace, 2026-11-12): over the 24 MB door the pack
+                // stays behind — rebuild without the wallpaper packs and
+                // upload record + log only, the 缺失说明 inside saying
+                // exactly that. The full bundle is already saved above.
+                do {
+                    let slim = try RecordExport.build(for: record, includePacks: false)
+                    uploadURL = slim.url
+                } catch {
+                    presentExportOutcome(title: "出错了",
+                                         message: "文件已存好，但打包上传版失败：\(error.localizedDescription)")
+                    return
+                }
             }
             do {
-                try await LogUpload.uploadBig(package: saved)
-                recordExportNote = "已导出并上传：\(saved.lastPathComponent)（收件箱存 7 天）"
+                try await LogUpload.uploadBig(package: uploadURL)
+                // #256: the success popup is the title and nothing else.
+                presentExportOutcome(title: "上传成功")
             } catch {
-                recordExportNote = "文件已存好，但上传失败：\(error.localizedDescription)"
+                presentExportOutcome(title: "出错了",
+                                     message: "文件已存好，但上传失败：\(error.localizedDescription)")
             }
         }
     }

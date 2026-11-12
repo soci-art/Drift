@@ -25,8 +25,11 @@ enum RecordExport {
         /// Plain-language lines naming what the bundle could NOT include.
         let missing: [String]
 
-        /// The big-upload door caps at 24 MB (the inbox's own ceiling);
-        /// past it, 导出 still works and only 上传 is refused (#237).
+        /// The big-upload door caps at 24 MB (the inbox's own ceiling).
+        /// Past it the upload no longer refuses (#257, Grace 2026-11-12):
+        /// the bundle is rebuilt WITHOUT the wallpaper packs and the
+        /// log-only bundle goes up instead, its 缺失说明 saying the pack
+        /// stayed behind for size. 导出/分享 always keep the full bundle.
         var tooBigToUpload: Bool { bytes > LogUpload.bigMaxBytes }
 
         var sizeText: String {
@@ -37,7 +40,11 @@ enum RecordExport {
 
     /// Build the zip for one record. Throws only for real I/O failures;
     /// missing contents are reported in the bundle, not thrown.
-    static func build(for record: ApplyHistory.Record) throws -> Bundle {
+    /// `includePacks: false` builds the log-only variant the oversize
+    /// upload falls back to (#257): record + log slice, packs declared
+    /// in the 缺失说明 as left behind for size.
+    static func build(for record: ApplyHistory.Record,
+                      includePacks: Bool = true) throws -> Bundle {
         let fm = FileManager.default
         let name = "Drift记录-\(fileStamp(from: record.timestamp)).zip"
         let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -64,6 +71,10 @@ enum RecordExport {
         // 3 — the original pack file(s) that run flashed.
         if let files = record.packFiles, !files.isEmpty {
             for file in files {
+                if !includePacks {
+                    missing.append("原始壁纸包「\(file)」（包太大，这次没带，只传了记录和日志）")
+                    continue
+                }
                 let packURL = PosterBoardImports.directory
                     .appendingPathComponent(file)
                 if fm.fileExists(atPath: packURL.path) {

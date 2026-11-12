@@ -770,6 +770,7 @@ struct DriftPackDetail: View {
     @State private var previews: [UIImage] = []
     @State private var packHasLegacy = false
     @State private var repairAlert: RepairAlert?
+    @State private var showDeepRepair = false
 
     var body: some View {
         NavigationStack {
@@ -866,6 +867,25 @@ struct DriftPackDetail: View {
                             }
                             .driftGlassButton()
                         }
+                        // #258 (Grace, 2026-11-12): deep repair sits right
+                        // beside the structural repair — a black pill, so
+                        // the two read as neighbours, not twins. Its work
+                        // (device fit) is separate from the structural
+                        // repair's (layout); the sheet takes stock first.
+                        if PackDeepRepair.isDeepRepaired(current) {
+                            Label("已深度修复", systemImage: "checkmark.circle")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                        } else {
+                            Button {
+                                showDeepRepair = true
+                            } label: {
+                                Label("深度修复", systemImage: "wand.and.stars")
+                            }
+                            .buttonStyle(DeepRepairPillStyle())
+                        }
                     }
                 }
                 .padding(16)
@@ -920,6 +940,13 @@ struct DriftPackDetail: View {
                     return Alert(title: Text("壁纸修复"),
                                  message: Text("这个包没查到需要修的毛病，无需修复。"),
                                  dismissButton: .default(Text("知道了")))
+                }
+            }
+            .sheet(isPresented: $showDeepRepair) {
+                PackDeepRepairView(pack: current) { repaired in
+                    if !imports.contains(where: { $0.url == repaired.url }) {
+                        imports.append(repaired)
+                    }
                 }
             }
         }
