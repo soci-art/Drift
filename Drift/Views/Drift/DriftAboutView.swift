@@ -1,10 +1,18 @@
+import Photos
 import SwiftUI
+import UIKit
 
 /// The About page: what Drift does, which systems it covers, how each
 /// delivery route behaves, and every risk the feature list says must be
 /// written down rather than engineered around. Static text on purpose —
 /// it has to read the same offline, unpaired and mid-failure.
+///
+/// Collection #270 (Grace, 2026-11-13) cut the page down to the sealed
+/// restore row, the version table and the reward code (#271) — nothing
+/// else is left below the table.
 struct DriftAboutView: View {
+    @State private var showRewardLarge = false
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -20,29 +28,56 @@ struct DriftAboutView: View {
                                          text: DriftRestoreGate.notice)
                         }
                         rangeTable
-                        DriftFactRow(title: "四种刷入方式",
-                                     text: "自动选择：替你在三条通道里挑第一条可用的，并写明选了哪条。免注销直刷：隧道写入，只重启 PosterBoard，刷完即生效。注销直刷：隧道写入，注销后生效。本机直刷：在 App 内直接写入，不用配对、不用隧道，刷完上滑关闭 PosterBoard 生效。三条通道互相独立，一条不行不会自动改走另一条。")
-                        DriftFactRow(title: "要用到的条件",
-                                     text: "本机直刷看两样：系统版本在范围内、证书签名带能打开的组（免费 ID 签都给不了组）。隧道两条要配对、隧道连通、读到设备真实的系统版本；读不到就不可用，不拿 App 自己的版本冒充。")
-                        DriftFactRow(title: "核验",
-                                     text: "写完会再查一遍商店：在册才报「完成」；没查到只说「已写入、未确认显示」。本机直刷每次写入都留回执，可在设置里按回执删除。")
-                        DriftFactRow(title: "旧格式转换",
-                                     text: LegacyConversionCopy.why + LegacyConversionCopy.versions)
-                        DriftFactRow(title: "隧道",
-                                     text: "隧道借 LocalDevVPN 建立（本机 10.7.1.1、对端 10.7.0.1、端口 62078，需 Wi-Fi）。只有走隧道两条才需要配对和隧道，本机直刷不用。App 开着时连上隧道会自动识别，不用重开 App。")
-                        DriftFactRow(title: "签名",
-                                     text: "免费签和证书签都能装、都能用隧道两条；只有本机直刷挑签名，要证书签（见「要用到的条件」）。免费签 7 天过期，重装会丢 App 里存的东西，配对和包要重新来。本 App 没有自己的隧道扩展。")
-                        DriftFactRow(title: "注意事项",
-                                     text: "刷入时保持解锁、别断隧道；中断可能留下刷一半的状态。位置不对只会不显示，不会报错。一次最多刷 10 张。壁纸包请自备，本 App 没有下载功能。纯动画的包在列表里用占位图显示。")
-                        DriftFactRow(title: "基于",
-                                     text: "Drift 是独立应用。设备写入核心源自 AirCard-iOS（Mak5er，MIT 许可证）；免注销生效、商店枚举、本机直刷与界面为 Drift 自有部分（AGPL-3.0）。")
+                        // Collection #270 (Grace, 2026-11-13): the
+                        // eight fact rows that used to follow the table
+                        // are gone — the page ends with the table and
+                        // the reward code below. (The AirCard-iOS/MIT
+                        // attribution also lives in the repo-root
+                        // NOTICE and in Settings' About section, so
+                        // deleting the 「基于」 row loses nothing.)
+                        rewardCard
                     }
                     .padding(16)
                 }
             }
             .navigationTitle("说明")
             .navigationBarTitleDisplayMode(.large)
+            .sheet(isPresented: $showRewardLarge) {
+                RewardCodeView()
+            }
+            .onAppear { AppLog.op("打开说明页") }
         }
+    }
+
+    /// Collection #271 (Grace, 2026-11-13): her WeChat reward code,
+    /// after the version table — users asked to tip, so the code sits
+    /// at the very end of the page. Tapping opens it large: a code on
+    /// the user's own screen cannot be scanned by that same phone, so
+    /// the large view can save it to the photo library for WeChat to
+    /// recognise from the album.
+    private var rewardCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("赞赏码").font(.subheadline.weight(.semibold))
+            if let image = Self.rewardImage {
+                Button { showRewardLarge = true } label: {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+            Text("点开看大图，可以存到相册，再用微信扫一扫识别。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .driftCard()
+    }
+
+    static var rewardImage: UIImage? {
+        guard let url = Bundle.main.url(forResource: "RewardCode", withExtension: "jpg")
+        else { return nil }
+        return UIImage(contentsOfFile: url.path)
     }
 
     /// The coverage table (collection #237, Grace 2026-11-12: a real table
@@ -127,5 +162,63 @@ struct DriftAboutView: View {
         Text(usable ? "✓" : "—")
             .font(.subheadline.weight(.bold))
             .foregroundStyle(usable ? Color.green : Color.secondary.opacity(0.55))
+    }
+}
+
+/// The reward code, large (#271): the image as big as the screen
+/// allows, plus the one action that makes it usable — saving it to
+/// the photo library, so WeChat can recognise the code from the album
+/// (the phone cannot scan its own screen).
+private struct RewardCodeView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var savedNote: String?
+    @State private var showSaved = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 18) {
+                if let image = DriftAboutView.rewardImage {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                Button {
+                    saveToPhotos()
+                } label: {
+                    Label("存到相册", systemImage: "square.and.arrow.down")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.borderedProminent)
+                Text("存好后打开微信扫一扫，选相册里的这张图就能识别。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(20)
+            .navigationTitle("赞赏码")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+            .driftActionSheet(isPresented: $showSaved, title: savedNote ?? "",
+                              actions: [DriftSheetAction("知道了") {}])
+        }
+    }
+
+    private func saveToPhotos() {
+        guard let image = DriftAboutView.rewardImage else { return }
+        AppLog.op("说明页：把赞赏码存到相册")
+        PHPhotoLibrary.shared().performChanges {
+            PHAssetChangeRequest.creationRequestForAsset(from: image)
+        } completionHandler: { ok, _ in
+            DispatchQueue.main.async {
+                savedNote = ok ? "已存到相册" : "没存成，去系统设置里给 Drift 相册权限再试。"
+                showSaved = true
+            }
+        }
     }
 }

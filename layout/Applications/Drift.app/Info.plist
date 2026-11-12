@@ -80,6 +80,8 @@
 		<string>_remotepairing-pairable-host._tcp</string>
 		<string>_remotepairing-pairable-host._tcp.</string>
 	</array>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>把赞赏码图片存到相册，方便用微信扫一扫识别。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Drift publishes an iOS 27 wireless pairing service on the local network so this iPhone can pair with itself and generate its own pairing file without a computer.</string>
 	<key>UIApplicationSceneManifest</key>

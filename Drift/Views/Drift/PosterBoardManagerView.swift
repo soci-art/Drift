@@ -46,15 +46,10 @@ struct PosterBoardManagerView: View {
 
     var body: some View {
         List {
-            Section {
-                Text("这里列出商店里在册、且属于合集 / Mercury / 照片 provider 的描述符——不管是谁刷的、有没有回执。系统/功能型 provider 不在管理范围内。")
-                    .font(.caption).foregroundStyle(.secondary)
-                Text("删除走哪条路，看当时的条件：隧道通着走隧道删，隧道不通但本机能用走本机删。页面显示本次将走的路。")
-                    .font(.caption).foregroundStyle(.secondary)
-                Text("本次删除将走：\(routeLabel)")
-                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            }
-
+            // Collection #276 (Grace, 2026-11-13): no explainer section
+            // at the top any more — the page opens straight onto the
+            // list. (The deletion route is still computed exactly as
+            // before; it just isn't announced in a paragraph.)
             if loading {
                 Section { ProgressView() }
             } else if entries.isEmpty && loadError == nil {
@@ -86,9 +81,14 @@ struct PosterBoardManagerView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
-        .navigationTitle("壁纸管理")
+        // #280 (Grace, 2026-11-13): renamed — the page is 本机壁纸管理
+        // now, and its entry lives on Home under the flash button.
+        .navigationTitle("本机壁纸管理")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await load() }
+        .task {
+            AppLog.op("打开本机壁纸管理")
+            await load()
+        }
         .driftActionSheet(isPresented: $confirmDelete, title: "确认删除这些壁纸？",
                           message: selectedEntries.map { "· \($0.name)（\($0.provider) / \($0.uuid)）" }.joined(separator: "\n")
                             + "\n如果删的正是当前正在使用的壁纸，生效后系统会换回默认壁纸。",
@@ -169,6 +169,19 @@ struct PosterBoardManagerView: View {
                 }
             }
             Spacer()
+            // #275 (Grace, 2026-11-13): the category at the row's
+            // right edge — red for a system wallpaper, orange for a
+            // flashed one, nothing at all when the scan could not
+            // positively tell (photo wallpapers included). No extra
+            // small print; her words.
+            switch entry.origin {
+            case .system:
+                Text("系统壁纸").font(.caption.weight(.medium)).foregroundStyle(.red)
+            case .flashed:
+                Text("刷入壁纸").font(.caption.weight(.medium)).foregroundStyle(.orange)
+            case .unknown:
+                EmptyView()
+            }
         }
         .padding(.vertical, 2)
     }

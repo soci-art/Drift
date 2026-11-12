@@ -54,11 +54,18 @@ extension View {
 
 /// Page background: the colour wash on iOS 26+; the flat grouped
 /// background on the legacy systems (#242).
+///
+/// Collection #274 (Grace, 2026-11-13): in dark mode the page
+/// background is PURE BLACK — the blue-green gradient wash is gone.
+/// Cards keep whatever surface they already have; only the page
+/// behind them changes, on both the glass and legacy paths.
 struct DriftBackground: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        if DriftTheme.legacyUI {
+        if scheme == .dark {
+            Color.black.ignoresSafeArea()
+        } else if DriftTheme.legacyUI {
             Color(.systemGroupedBackground).ignoresSafeArea()
         } else {
             LinearGradient(colors: DriftTheme.washColors(scheme: scheme),

@@ -165,7 +165,18 @@ struct DriftRootView: View {
     private func runLaunchFlow() {
         guard firstRun.isComplete, !launchFlowDone else { return }
         launchFlowDone = true
-        guard AppAnnouncement.shouldShow else { return }
+        guard AppAnnouncement.shouldShow else {
+            // #264: the cached notes match what the user has seen, but
+            // the release notes may have been EDITED since — the seen
+            // key is content-based now, so check quietly and present
+            // when the fetched body is a different announcement.
+            Task {
+                guard await AppAnnouncement.fetchNotes() != nil,
+                      AppAnnouncement.shouldShow else { return }
+                showAnnouncement = true
+            }
+            return
+        }
         // Collection #222: the announcement shows the release notes,
         // which live on GitHub — present only once there is something
         // to show (the cache, or a fetch that just landed). With
@@ -192,19 +203,35 @@ struct DriftRootView: View {
             }
             return
         }
-        if url.pathExtension.lowercased() == "tendies" {
-            do {
-                let tendie = try PosterBoardImports.import(from: url)
-                inboxNote = "壁纸包「\(tendie.url.lastPathComponent)」已导入（\(tendie.descriptorCount) 张）。到「壁纸」页勾选后刷入。"
-                if !PackRepair.blockingIssues(of: tendie).isEmpty {
-                    session.noticeTitle = "有壁纸包需要修一下"
-                    session.noticeText = "「\(tendie.name)」的结构有点问题，现在刷可能会找不到壁纸。点开它的详细页，里面有「壁纸修复」可以修。"
+        if url.pathExtension.lowercased() == "tendies" || url.pathExtension.lowercased() == "zip" {
+            // #269: the import pipeline normalises the name, unpacks a
+            // bag zip and auto-repairs — it can take a moment, so it
+            // runs off the main actor and reports when it lands.
+            Task {
+                do {
+                    let packs = try await Task.detached {
+                        try PosterBoardImports.importPicked(from: url)
+                    }.value
+                    if let first = packs.first {
+                        inboxNote = packs.count > 1
+                            ? "已导入 \(packs.count) 个壁纸包。到「壁纸」页点「壁纸包」勾选后刷入。"
+                            : "壁纸包「\(first.url.lastPathComponent)」已导入（\(first.descriptorCount) 张）。到「壁纸」页点「壁纸包」勾选后刷入。"
+                    }
+                    let problems = packs.filter {
+                        !PackRepair.isRepaired($0) && !PackDeepRepair.isDeepRepaired($0)
+                            && !PackRepair.blockingIssues(of: $0).isEmpty
+                    }
+                    if !problems.isEmpty {
+                        session.noticeTitle = "有壁纸包需要修一下"
+                        session.noticeText = problems.map { "「\($0.name)」" }.joined(separator: "、")
+                            + "的结构有点问题，导入时自动修了一次没修好，现在刷可能会找不到壁纸。"
+                    }
+                } catch {
+                    session.errorText = error.localizedDescription
                 }
-            } catch {
-                session.errorText = error.localizedDescription
             }
             return
         }
-        session.errorText = "不认识这个文件：\(url.lastPathComponent)。Drift 只接收配对文件和 .tendies 壁纸包。"
+        session.errorText = "不认识这个文件：\(url.lastPathComponent)。Drift 只接收配对文件、.tendies 壁纸包和装着壁纸包的 zip。"
     }
 }

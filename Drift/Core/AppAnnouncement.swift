@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// The update announcement (collection #178). It shows exactly once
@@ -14,6 +15,14 @@ import Foundation
 /// successful fetch, and with neither cache nor network the launch
 /// flow simply does not present it (Settings' manual entry says so in
 /// words instead).
+///
+/// Collection #264 (Grace, 2026-11-12): "seen" is keyed to the CONTENT,
+/// not the build. The old key was the version+build string, so editing
+/// a release's notes after shipping never re-showed the announcement —
+/// the page kept serving the cached old text and the launch flow
+/// considered it read. The seen key is now the version plus a hash of
+/// the notes body: any edit to the release notes makes it a new
+/// announcement that pops once more.
 enum AppAnnouncement {
     static var version: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
@@ -28,12 +37,34 @@ enum AppAnnouncement {
 
     private static let seenKey = "DriftAnnouncementSeenID"
 
+    /// The identity the seen-check actually compares (#264): version +
+    /// a hash of the notes body. Editing the release notes changes the
+    /// hash, so the announcement counts as new even on the same build.
+    static func contentKey(for body: String) -> String {
+        let digest = SHA256.hash(data: Data(body.utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return "\(version)|\(hex.prefix(16))"
+    }
+
     static var shouldShow: Bool {
-        UserDefaults.standard.string(forKey: seenKey) != id
+        let seen = UserDefaults.standard.string(forKey: seenKey)
+        guard let cached = cachedNotes() else {
+            // Nothing cached: a pre-#264 seen value still suppresses the
+            // launch presentation until a fetch lands and the content
+            // key can be compared — the root view presents only when a
+            // fetch succeeds in that state, and by then the cache (and
+            // therefore the key) exists.
+            return seen != id
+        }
+        return seen != contentKey(for: cached.body)
     }
 
     static func markSeen() {
-        UserDefaults.standard.set(id, forKey: seenKey)
+        if let cached = cachedNotes() {
+            UserDefaults.standard.set(contentKey(for: cached.body), forKey: seenKey)
+        } else {
+            UserDefaults.standard.set(id, forKey: seenKey)
+        }
     }
 
     static let title = "Drift 更新公告"
@@ -71,9 +102,11 @@ enum AppAnnouncement {
                 if let date = notes.dateLine {
                     UserDefaults.standard.set(date, forKey: cacheDateKey)
                 }
+                AppLog.info("公告：取到 \(version) 的发行说明，内容标识 \(contentKey(for: notes.body))")
                 return notes
             }
         }
+        AppLog.warn("公告：\(version) 的发行说明没取到（加速和直连都不通）")
         return nil
     }
 

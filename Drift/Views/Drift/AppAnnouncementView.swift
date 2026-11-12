@@ -83,39 +83,56 @@ struct AppAnnouncementView: View {
     // MARK: - Notes rendering
 
     /// The release notes are light markdown (a title line, section
-    /// heads, dash bullets). Render them line by line in reader form
-    /// instead of showing raw markup characters.
+    /// heads, dash bullets). Render them in reader form instead of
+    /// showing raw markup characters.
+    ///
+    /// Collection #265 (Grace, 2026-11-12): the body is ONE `Text`
+    /// built by concatenating styled segments, not a stack of per-line
+    /// views. The per-line stack rendered the line that was still
+    /// below the scroll area's bottom edge early, squeezed to a
+    /// half-height strip; scrolling to it made it snap to full height.
+    /// A single text block has no per-line layout to squeeze — lines
+    /// are clipped by the scroll view's bottom edge like any text,
+    /// emerging from the very bottom as it scrolls, which is exactly
+    /// the behaviour she specified.
     private func notesBody(_ body: String) -> some View {
+        notesText(body)
+            .lineSpacing(5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 12)
+    }
+
+    private func notesText(_ body: String) -> Text {
         let lines = Self.readerLines(body)
-        return VStack(alignment: .leading, spacing: 7) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                switch line {
-                case .heading(let text):
-                    Text(text)
-                        .font(.headline)
-                        .padding(.top, 8)
-                case .bullet(let text):
-                    HStack(alignment: .top, spacing: 8) {
-                        Text("•").foregroundStyle(.secondary)
-                        Text(text)
-                            .font(.subheadline)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                case .text(let text):
-                    Text(text)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+        var result = Text("")
+        for (index, line) in lines.enumerated() {
+            if index > 0 {
+                // A heading gets a blank line before it; every other
+                // line follows directly.
+                result = result + Text(line.isHeading ? "\n\n" : "\n")
+            }
+            switch line {
+            case .heading(let text):
+                result = result + Text(text).font(.headline)
+            case .bullet(let text):
+                result = result + Text("•  ").foregroundColor(.secondary)
+                    + Text(text).font(.subheadline)
+            case .text(let text):
+                result = result + Text(text).font(.subheadline).foregroundColor(.secondary)
             }
         }
-        .padding(.vertical, 12)
+        return result
     }
 
     private enum ReaderLine {
         case heading(String)
         case bullet(String)
         case text(String)
+
+        var isHeading: Bool {
+            if case .heading = self { return true }
+            return false
+        }
     }
 
     private static func readerLines(_ body: String) -> [ReaderLine] {
@@ -124,8 +141,16 @@ struct AppAnnouncementView: View {
             if line.isEmpty || line == "---" { return nil }
             line = line.replacingOccurrences(of: "**", with: "")
                 .replacingOccurrences(of: "`", with: "")
-            if line.hasPrefix("## ") { return .heading(String(line.dropFirst(3))) }
-            if line.hasPrefix("# ") { return .heading(String(line.dropFirst(2))) }
+            // #265: sub-headings (###, ####) are headings too — the old
+            // parser only knew ## and #, so ### lines showed their raw
+            // hashes in the page.
+            if line.hasPrefix("#") {
+                let hashes = line.prefix(while: { $0 == "#" }).count
+                let rest = line.dropFirst(hashes)
+                if hashes <= 4, rest.hasPrefix(" ") {
+                    return .heading(String(rest.dropFirst()))
+                }
+            }
             if line.hasPrefix("- ") || line.hasPrefix("* ") {
                 return .bullet(String(line.dropFirst(2)))
             }

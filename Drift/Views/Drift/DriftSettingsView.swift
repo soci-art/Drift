@@ -43,7 +43,6 @@ struct DriftSettingsView: View {
     @State private var showAnnouncement = false
     @State private var uploading = false
     @State private var confirmUpload = false
-    @State private var uploadNote: String?
 
     var body: some View {
         NavigationStack {
@@ -90,6 +89,7 @@ struct DriftSettingsView: View {
                 adoptWirelessRecord(at: path)
             }
             .onAppear {
+                AppLog.op("打开设置页")
                 history = ApplyHistory.load()
                 receipts = PosterBoardLocalReceipts.load()
                 refreshNotificationStatus()
@@ -118,7 +118,7 @@ struct DriftSettingsView: View {
                                 }]
                               } ?? [])
             .driftActionSheet(isPresented: $confirmClearHistory, title: "清空全部刷入记录？",
-                              message: "记录清空后无法恢复。此操作只清记录，不会删除设备上已刷入的壁纸——要删壁纸请用「壁纸管理」。",
+                              message: "记录清空后无法恢复。此操作只清记录，不会删除设备上已刷入的壁纸——要删壁纸请用主页的「本机壁纸管理」。",
                               actions: [
                                 DriftSheetAction("清空记录", destructive: true) {
                                     ApplyHistory.clear()
@@ -422,11 +422,9 @@ struct DriftSettingsView: View {
     // same list; the two stores stay separate underneath.
     private var historySection: some View {
         Section("刷入记录") {
-            NavigationLink {
-                PosterBoardManagerView()
-            } label: {
-                Label("壁纸管理", systemImage: "square.stack.3d.up")
-            }
+            // #280 (Grace, 2026-11-13): no manager entry here any
+            // more — 本机壁纸管理 lives on Home now, under the flash
+            // button. This section is just the records.
             let rows = mergedRecords
             if rows.isEmpty {
                 Text("暂无记录").foregroundStyle(.secondary)
@@ -670,7 +668,10 @@ struct DriftSettingsView: View {
     // together, and the share sheet opens on the package.
 
     private var recordsSection: some View {
-        Section("记录") {
+        // #278 (Grace, 2026-11-13): the section is called 日志 now —
+        // everything in it is log-shaped, and it no longer reads like
+        // the 刷入记录 section above it.
+        Section("日志") {
             NavigationLink {
                 DriftLogView()
             } label: {
@@ -694,10 +695,10 @@ struct DriftSettingsView: View {
                 Text(recordsNote)
                     .font(.caption).foregroundStyle(.secondary)
             }
-            if let uploadNote {
-                Text(uploadNote)
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+            // #277/#279 (Grace, 2026-11-13): no upload or packaging
+            // outcome stands in this section as small print any more —
+            // they arrive as the bottom-sheet popup, like the record
+            // export outcomes (#256).
             Text("出问题时点这里打包，把整包发出去就行，不用再一个个找文件。也可以点「上传日志」直接传给开发者，不用自己转发。")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -705,23 +706,29 @@ struct DriftSettingsView: View {
 
     private func uploadLogs() async {
         uploading = true
-        uploadNote = nil
         defer { uploading = false }
+        let started = Date()
+        AppLog.op("设置：点上传日志")
         let package: URL
         do {
             package = try await LogPackage.build()
         } catch {
-            AppLog.write("records: upload FAILED at packaging — \(error.localizedDescription)")
-            uploadNote = "上传失败：日志打包没成"
+            AppLog.failure("上传日志：打包没成 — \(error.localizedDescription)")
+            // #277: the outcome is the popup, not a line in the section.
+            presentExportOutcome(title: "出错了", message: "上传失败：日志打包没成。")
             return
         }
         do {
             try await LogUpload.upload(package: package)
-            AppLog.write("records: uploaded log package \(package.lastPathComponent)")
-            uploadNote = "上传成功"
+            AppLog.op("上传日志：已传 \(package.lastPathComponent)")
+            AppLog.timing("上传日志", since: started)
+            // #277: success is the popup and nothing else, exactly
+            // like the record export's (#256).
+            presentExportOutcome(title: "上传成功")
         } catch {
-            AppLog.write("records: upload FAILED — \(error.localizedDescription)")
-            uploadNote = "上传失败：\(error.localizedDescription)"
+            AppLog.failure("上传日志：没传上去 — \(error.localizedDescription)")
+            presentExportOutcome(title: "出错了",
+                                 message: "上传失败：\(error.localizedDescription)")
         }
     }
 
@@ -729,14 +736,18 @@ struct DriftSettingsView: View {
         packaging = true
         recordsNote = nil
         defer { packaging = false }
+        AppLog.op("设置：点打包分享记录")
         do {
             let package = try await LogPackage.build()
-            AppLog.write("records: packaged diagnostics + logs into \(package.lastPathComponent)")
-            recordsNote = "已打包：\(package.lastPathComponent)，在弹出的分享里发出去就行。"
+            AppLog.op("打包分享记录：已打包 \(package.lastPathComponent)")
+            // #279 (Grace, 2026-11-13): no 「已打包：…」 line stands in
+            // the section afterwards — the share sheet opening IS the
+            // success signal. Failure still speaks, as a popup.
             sharePackage = SharePackageItem(url: package)
         } catch {
-            AppLog.write("records: packaging FAILED — \(error.localizedDescription)")
-            recordsNote = "打包失败：\(error.localizedDescription)"
+            AppLog.failure("打包分享记录：打包失败 — \(error.localizedDescription)")
+            presentExportOutcome(title: "出错了",
+                                 message: "打包失败：\(error.localizedDescription)")
         }
     }
 

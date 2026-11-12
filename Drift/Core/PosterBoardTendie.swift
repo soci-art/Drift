@@ -366,40 +366,172 @@ enum PosterBoardImports {
                                                 conformingTo: .data)
     }
 
-    /// Copy a picked file into the container and describe it.
+    /// Import one picked file and return every pack that joined the
+    /// list because of it.
     ///
-    /// Copies rather than references: the picker's URL is security-scoped and
-    /// its access ends with the callback, so a pack kept by reference would be
-    /// unreadable on the next apply.
-    static func `import`(from source: URL) throws -> PosterBoardTendie {
+    /// Copies rather than references: the picker's URL is security-scoped
+    /// and its access ends with the callback, so a pack kept by reference
+    /// would be unreadable on the next apply.
+    ///
+    /// Collection #269 (Grace, 2026-11-13): users kept arriving with the
+    /// right wallpaper wearing the wrong name, or one layer of zip too
+    /// many. The rules now:
+    ///   * the stored name always ends in `.tendies`, whatever the pick
+    ///     was called — the content is validated, not the suffix;
+    ///   * a zip that IS a pack (its contents are the wallpaper) imports
+    ///     like any pack; a zip that is a BAG (`.tendies` files inside,
+    ///     possibly in a folder) imports each pack it carries;
+    ///   * rar / 7z cannot be opened here at all and are refused with
+    ///     words that say what to do instead — never a silent failure;
+    ///   * a pack with structural problems is repaired right here, the
+    ///     way tapping 「壁纸修复」 would — nobody has to know there was
+    ///     anything to fix.
+    static func importPicked(from source: URL) throws -> [PosterBoardTendie] {
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
 
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let destination = uniqueDestination(for: source.lastPathComponent)
-        try? FileManager.default.removeItem(at: destination)
-        do {
-            try unwrappedPackData(from: source).write(to: destination, options: .atomic)
-        } catch let error as DriftError {
-            throw error
-        } catch {
-            throw DriftError("无法把 \(source.lastPathComponent) 拷贝进应用："
-                + error.localizedDescription)
+        if let format = archiveFormat(of: source) {
+            throw DriftError("这个文件是 \(format) 压缩包，Drift 打不开这种格式。"
+                + "请先把它解压开，再导入里面的 .tendies 文件；或者直接导入 .tendies，不要隔着这一层压缩。")
         }
-        let tendie: PosterBoardTendie
+        let data = try unwrappedPackData(from: source)
+        if let format = archiveFormat(ofData: data) {
+            throw DriftError("这个文件是 \(format) 压缩包，Drift 打不开这种格式。"
+                + "请先把它解压开，再导入里面的 .tendies 文件；或者直接导入 .tendies，不要隔着这一层压缩。")
+        }
+
+        let started = Date()
+        AppLog.op("导入：收到 \(source.lastPathComponent)（\(data.count) 字节）")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        // The file itself is a pack, whatever it was called.
+        let packName = normalizedName(for: source.lastPathComponent)
+        var packError: Error?
         do {
-            tendie = try PosterBoardTendie(url: destination)
+            let tendie = try storePack(data: data, named: packName)
+            let result = finishImport(tendie)
+            AppLog.timing("导入 \(packName)", since: started)
+            return result
         } catch {
-            // Not a pack: leave nothing behind for the next launch to trip over.
+            packError = error
+        }
+
+        // A bag: pull every .tendies out of it and import each one.
+        let inners = innerPacks(in: data)
+        if !inners.isEmpty {
+            var result: [PosterBoardTendie] = []
+            for inner in inners {
+                do {
+                    let tendie = try storePack(data: inner.data,
+                                                named: normalizedName(for: inner.name))
+                    result.append(contentsOf: finishImport(tendie))
+                } catch {
+                    AppLog.warn("导入：压缩包里的 \(inner.name) 不是能用的壁纸包，跳过")
+                }
+            }
+            if !result.isEmpty {
+                AppLog.op("导入：从 \(source.lastPathComponent) 里取出 \(result.count) 个壁纸包")
+                AppLog.timing("导入压缩包 \(source.lastPathComponent)", since: started)
+                return result
+            }
+        }
+
+        // Neither a pack nor a bag of packs: the validator's own words.
+        throw packError ?? DriftError("这个文件不是能用的壁纸包。")
+    }
+
+    /// rar / 7z by file name — the two formats this app cannot open.
+    private static func archiveFormat(of source: URL) -> String? {
+        switch source.pathExtension.lowercased() {
+        case "rar": return "RAR"
+        case "7z": return "7Z"
+        default: return nil
+        }
+    }
+
+    /// The same check by magic bytes, for archives wearing a wrong name.
+    private static func archiveFormat(ofData data: Data) -> String? {
+        if data.starts(with: [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]) { return "7Z" }
+        if data.starts(with: [0x52, 0x61, 0x72, 0x21]) { return "RAR" }
+        return nil
+    }
+
+    /// The stored name: the pick's own name with its suffix corrected
+    /// to `.tendies` (#269). Content is validated separately — this is
+    /// only about what the pack is called in the list.
+    private static func normalizedName(for fileName: String) -> String {
+        let base = (fileName as NSString).deletingPathExtension
+        return (base.isEmpty ? "壁纸包" : base) + ".tendies"
+    }
+
+    /// Write one pack's bytes under `name` and validate them. A failed
+    /// validation removes the file again — nothing half-imported is
+    /// left behind for the next launch to trip over.
+    private static func storePack(data: Data, named name: String) throws -> PosterBoardTendie {
+        let destination = uniqueDestination(for: name)
+        do {
+            try data.write(to: destination, options: .atomic)
+        } catch {
+            throw DriftError("无法把 \(name) 拷贝进应用：" + error.localizedDescription)
+        }
+        do {
+            return try PosterBoardTendie(url: destination)
+        } catch {
             try? FileManager.default.removeItem(at: destination)
             throw error
         }
+    }
+
+    /// Every `.tendies` inside a zip's data, wherever in the folder
+    /// tree they sit. Empty when the data is not a readable zip or the
+    /// zip carries no packs.
+    private static func innerPacks(in data: Data) -> [(name: String, data: Data)] {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("drift-bag-\(UUID().uuidString).zip")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        guard (try? data.write(to: tmp)) != nil,
+              let archive = try? Archive(url: tmp, accessMode: .read) else { return [] }
+        var found: [(name: String, data: Data)] = []
+        for entry in archive where entry.type == .file
+            && entry.path.lowercased().hasSuffix(".tendies") {
+            var bytes = Data()
+            do {
+                _ = try archive.extract(entry) { bytes.append($0) }
+            } catch { continue }
+            if bytes.starts(with: [0x50, 0x4B]) {
+                found.append((name: (entry.path as NSString).lastPathComponent, data: bytes))
+            }
+        }
+        return found
+    }
+
+    /// The steps every stored pack goes through before it joins the
+    /// list, returning the pack plus anything the steps produced.
+    private static func finishImport(_ tendie: PosterBoardTendie) -> [PosterBoardTendie] {
         // #259 (Grace, 2026-11-12): a shared placeholder descriptor id
         // is swapped for a fresh one right here, at import — the pack
         // that joins the list is already clean. Best-effort: any
         // failure keeps the pack exactly as imported.
-        PackIdentity.normalizeStoredPack(at: destination, siblings: load().map(\.url))
-        return (try? PosterBoardTendie(url: destination)) ?? tendie
+        PackIdentity.normalizeStoredPack(at: tendie.url, siblings: load().map(\.url))
+        let clean = (try? PosterBoardTendie(url: tendie.url)) ?? tendie
+        var result = [clean]
+        // #269: structural problems are repaired at import too, the
+        // same repair the detail flow offered by hand. Best-effort —
+        // a failed repair keeps the pack and the log says so; the
+        // caller still checks for blocking issues afterwards.
+        if !PackRepair.inspect(clean).isEmpty {
+            let version = DeviceIdentityMonitor.shared.current.version.isEmpty
+                ? WorseQueryEscape.processVersion
+                : DeviceIdentityMonitor.shared.current.version
+            if let repaired = try? PackRepair.repair(clean, deviceVersion: version,
+                                                     progress: { _ in }) {
+                AppLog.op("导入：\(clean.name) 查到结构问题，已自动修复出 \(repaired.name)")
+                result.append(repaired)
+            } else {
+                AppLog.warn("导入：\(clean.name) 查到结构问题，这次自动修复没成功")
+            }
+        }
+        return result
     }
 
     /// The pack's bytes, unwrapped first if they arrive encoded.

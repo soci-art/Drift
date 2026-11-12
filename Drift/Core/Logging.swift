@@ -18,7 +18,11 @@ protocol LogSink: AnyObject, Sendable {
 /// A failed run has to be diagnosable from a file.
 final class RotatingFileSink: LogSink, @unchecked Sendable {
     /// Byte cap; the sink is rotated by dropping the older half once exceeded.
-    static let defaultLimit: UInt64 = 2 * 1024 * 1024
+    /// Raised 2 MB → 10 MB in collection #272 (Grace, 2026-11-13): the log
+    /// now records every user operation and the app's running state on top
+    /// of the flash engine's lines, and the old cap rotated real evidence
+    /// away within days.
+    static let defaultLimit: UInt64 = 10 * 1024 * 1024
 
     private let url: URL
     private let limit: UInt64
@@ -149,6 +153,42 @@ final class AppLog: @unchecked Sendable {
 extension AppLog {
     /// Convenience for the many call sites that only want to emit a line.
     static func write(_ line: String) { shared.log(line) }
+}
+
+/// Collection #272 (Grace, 2026-11-13): the log is the whole app's
+/// memory, not just the flash engine's. Her rule, verbatim in spirit:
+/// collect everything that could later explain a stall or a fault —
+/// every user operation, the running state around it, and all three
+/// levels (information / warning / error), with timing marks on the
+/// operations that can be slow so the slow step is visible by name.
+/// These helpers are the one vocabulary for that: `op` for something
+/// the user did, the levelled trio for state, `timing` for elapsed
+/// marks. Lines land in the same file and memory sinks as everything
+/// else, so the Settings log upload carries them all, and a record's
+/// export carries its own run's segment (the slice is cut from the
+/// same stream when the record is written).
+extension AppLog {
+    /// A user operation: importing, deleting, repairing, switching a
+    /// setting, opening a page — the deliberate actions.
+    static func op(_ message: String) { shared.log("[操作] \(message)") }
+
+    /// Running state worth knowing when reading a failure later.
+    static func info(_ message: String) { shared.log("[信息] \(message)") }
+
+    /// Something degraded but survivable (a fetch that fell back, a
+    /// premise that is missing).
+    static func warn(_ message: String) { shared.log("[警告] \(message)") }
+
+    /// An operation failed. Named `failure` because `Error` is taken
+    /// by the standard library and `error` reads as a value.
+    static func failure(_ message: String) { shared.log("[错误] \(message)") }
+
+    /// An elapsed-time mark for a step that can be slow, so a stall
+    /// report names the step instead of just being long.
+    static func timing(_ label: String, since start: Date) {
+        let ms = Int(Date().timeIntervalSince(start) * 1000)
+        shared.log("[耗时] \(label)：\(ms) ms")
+    }
 }
 
 /// Old releases wrote complete pairing dictionaries into diagnostic files.
