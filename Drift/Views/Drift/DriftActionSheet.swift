@@ -48,19 +48,22 @@ struct DriftActionSheetView: View {
                 .multilineTextAlignment(.center)
                 .padding(.top, 6)
             if let message, !message.isEmpty {
-                ScrollView {
-                    Text(message)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
-                }
-                .frame(maxHeight: 150)
+                // Plain text, not a scroll view: a scroll view
+                // stretches to fill the sheet and shoves the buttons
+                // to the bottom, which is exactly the inconsistency
+                // Grace flagged in #250.
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
             }
-            // Uniform skeleton (Grace's option A, build 36): every
-            // dialog is title / message / gap / actions / cancel in
-            // a sheet of one fixed height, so they all look alike.
-            Spacer()
+            // Layout locked by Grace (2026-11-12, build 37, from
+            // her screenshot of the export dialog): title, message,
+            // actions and cancel stacked at the TOP in one group;
+            // whatever height is left over stays empty at the
+            // bottom. No spacer in the middle, buttons never pinned
+            // to the bottom.
             ForEach(actions) { action in
                 Button {
                     dismiss()
