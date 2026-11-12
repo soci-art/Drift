@@ -68,20 +68,32 @@ rm -rf build/Payload build/Drift.ipa
 mkdir -p build/Payload
 cp -R "$APP_PATH" build/Payload/Drift.app
 
-# Keep the loose icon PNGs actool leaves at the bundle root.
+# Write the loose icon PNGs at the bundle root (#204).
 #
-# The icon is an Icon Composer stack inside Assets.xcassets, and actool compiles
-# it into Assets.car — but it *also* writes the primary icon out as loose PNGs
-# (AppIcon60x60@2x.png, AppIcon76x76@2x~ipad.png).
+# They are NOT already there, and never were: project.yml sets
+# ASSETCATALOG_COMPILER_STANDALONE_ICON_BEHAVIOR to "none", so actool compiles
+# the Icon Composer stack into Assets.car only and emits no loose files.
+# Deleting the old `rm -f AppIcon*.png` (build 26) therefore changed nothing —
+# the 3.0.9 (24) and 3.0.9 (26) IPAs have identical file lists, verified
+# 2026-11-12.  So generate the PNGs here, from the catalog's 1024 light
+# artwork, at the sizes the pre-catalog convention used.
 #
-# Collection #204 (Grace, 2026-11-12) reverses the earlier drop: SideStore /
-# AltStore only ever look for loose AppIcon*.png at the .app root and never
-# read Assets.car, so without them Drift shows a blank icon there.  The cost
-# is known and accepted: the loose files carry the LIGHT artwork only, and a
+# Why they matter (collection #204, Grace, 2026-11-12): SideStore / AltStore
+# only ever look for loose AppIcon*.png at the .app root and never read
+# Assets.car, so without them Drift shows a blank icon there.  The cost is
+# known and accepted: the loose files carry the LIGHT artwork only, and a
 # loose icon at the bundle root wins over the catalog's rendition, so the
-# Home Screen shows the light icon even in dark mode.  (Up to 3.0.9 (24) the
-# rm below deleted them for exactly that reason; do not re-add it without
-# re-opening #204.)
+# Home Screen shows the light icon even in dark mode.  Do not drop this step
+# without re-opening #204.
+ICON_SRC="layout/Applications/Drift.app/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png"
+if [ ! -f "$ICON_SRC" ]; then
+  echo "error: icon source not found at $ICON_SRC (#204 loose icons)" >&2
+  exit 1
+fi
+sips -z 180 180 "$ICON_SRC" --out "build/Payload/Drift.app/AppIcon60x60@3x.png" >/dev/null
+sips -z 120 120 "$ICON_SRC" --out "build/Payload/Drift.app/AppIcon60x60@2x.png" >/dev/null
+sips -z 152 152 "$ICON_SRC" --out "build/Payload/Drift.app/AppIcon76x76@2x~ipad.png" >/dev/null
+ls -l build/Payload/Drift.app/AppIcon*.png
 
 # Strip symbol tables out of the *copy* we are about to package, not out of
 # DerivedData — the unstripped product stays available for debugging.  This
