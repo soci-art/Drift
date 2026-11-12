@@ -13,7 +13,7 @@ import ZIPFoundation
 ///
 ///  * **Buys** — no full protective backup (the expensive part of the other mode),
 ///    and a respring is enough to make the wallpapers appear.
-///  * **Costs** — iOS 26.2+, an unlocked device, and a store reset cannot be
+///  * **Costs** — iOS 17.0+, an unlocked device, and a store reset cannot be
 ///    expressed: this path can add a descriptor, not remove one.
 ///
 /// AirLift is the default; protective backup also supports store resets.
@@ -30,7 +30,15 @@ enum PosterBoardAirlift {
 
     static var cachedContainer: String {
         get { UserDefaults.standard.string(forKey: containerKey) ?? "" }
-        set { UserDefaults.standard.set(newValue, forKey: containerKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: containerKey)
+            // Seed the local channel's cache from a path the tunnel just
+            // resolved. Zero extra work, and it turns a first local run from
+            // a full pathleak scan into one or two probes.
+            guard !newValue.isEmpty, PosterBoardLocal.cachedContainer.isEmpty else { return }
+            PosterBoardLocal.cachedContainer = newValue.hasSuffix("/")
+                ? String(newValue.dropLast()) : newValue
+        }
     }
 
     /// PosterBoard's data container, looked up over the tunnel.

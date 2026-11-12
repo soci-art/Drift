@@ -35,7 +35,7 @@ OUT="$ROOT/build/assets"
 SHIM="$ROOT/tools/assetkit-cli/.build/release/assetkit-cli"
 
 # Keep in sync with project.yml / pbxproj / xtool.yml deploymentTarget.
-DEPLOYMENT_TARGET="26.0"
+DEPLOYMENT_TARGET="17.0"
 
 if [[ ! -d "$CATALOG" ]]; then
     echo "compile-assets: no catalog at $CATALOG" >&2

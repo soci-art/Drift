@@ -98,7 +98,7 @@ if [[ -n "$stale" ]]; then
 fi
 
 # `-target` must match the deployment target this project actually builds with
-# (Package.swift, project.yml and Info.plist all say 26.0).  An older one turns
+# (Package.swift, project.yml and Info.plist all say 17.0).  An older one turns
 # every newer API into a *false* "only available in iOS 17.0 or newer" error --
 # which is what ios16.0 did to `onChange(of:initial:_:)` in
 # GoldenNuggetView.swift.  (Comments go above the command, never between its
@@ -106,7 +106,7 @@ fi
 xargs < /tmp/typecheck-sources.txt xcrun swiftc -typecheck \
   -disable-sandbox \
   -sdk "$SDK" \
-  -target arm64-apple-ios26.0 \
+  -target arm64-apple-ios17.0 \
   -swift-version 5 \
   -I "$PRODUCTS" \
   -I Vendor/IDevice.xcframework/ios-arm64/Headers \

@@ -74,7 +74,7 @@ struct NativePrimaryButton: View {
             }
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.glassProminent)
+        .driftGlassProminentButton()
         .controlSize(.large)
         .disabled(running || disabled)
     }
@@ -199,6 +199,29 @@ extension View {
     /// Put a "Done" above the keyboard — required for `.numberPad` /
     /// `.decimalPad` fields, which have no Return key of their own.
     func nativeKeyboardDone() -> some View { modifier(NativeKeyboardDone()) }
+
+    /// The platform's Liquid Glass button style on iOS 26, with a bordered
+    /// fallback below it. One entry point for every call site, so the app can
+    /// build and run at a 17.0 deployment target without scattering
+    /// `#available` checks through the views.
+    @ViewBuilder
+    func driftGlassButton() -> some View {
+        if #available(iOS 26.0, *) {
+            self.buttonStyle(.glass)
+        } else {
+            self.buttonStyle(.bordered)
+        }
+    }
+
+    /// The prominent variant of `driftGlassButton()`.
+    @ViewBuilder
+    func driftGlassProminentButton() -> some View {
+        if #available(iOS 26.0, *) {
+            self.buttonStyle(.glassProminent)
+        } else {
+            self.buttonStyle(.borderedProminent)
+        }
+    }
 }
 
 /// A "Done" button in a toolbar above the keyboard, resigning through UIKit so

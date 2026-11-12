@@ -67,6 +67,8 @@ enum LogUpload {
             }
         case 413:
             throw DriftError("日志包太大了（超过 20 MB）")
+        case 429:
+            throw DriftError("上传太频繁了，过一会儿再试")
         default:
             throw DriftError("服务器出问题了")
         }

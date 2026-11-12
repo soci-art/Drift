@@ -27,13 +27,11 @@ import AirliftFFI
 ///
 /// ## Availability
 ///
-/// iOS 26.2 and newer — the same floor the rest of the app works at, from
-/// GoldenNugget's `is_supported_by_fork` (`Version(version) > Version("26.1")`,
-/// src/devicemanagement/constants.py:20). It used to be 27, inherited from where
-/// this library was vendored from: AirCard-iOS is an iOS 27 app, so the number
-/// that came with it described *that app*, not the escape. The vendored Rust
-/// carries no version check of its own — nothing in `exploit.rs` or `idevice`
-/// ever looks at `ProductVersion`.
+/// iOS 17.0 and newer — the floor the same-origin product ships at, decided
+/// 2026-11-11. The vendored Rust carries no version check of its own, so this
+/// application-layer bound is the only one: nothing in `exploit.rs` or `idevice`
+/// ever looks at `ProductVersion`. It used to be 26.2 (GoldenNugget's
+/// `is_supported_by_fork`); that history no longer describes this app's range.
 ///
 /// The linkage is unconditional, so a device that never opens these pages pays
 /// for the code and nothing else (the linker pulls only the objects whose
@@ -43,20 +41,12 @@ enum Airlift {
 
     /// The oldest iOS the escape is attempted on, as a version string.
     ///
-    /// Spelled the way the UI says it: 26.2 is the first version that clears
-    /// GoldenNugget's own bound.
-    static let minimumVersion = "26.2"
+    /// 17.0 is the floor the same-origin product ships at (2026-11-11).
+    static let minimumVersion = "17.0"
 
-    /// The bound as GoldenNugget states it: `is_supported_by_fork` accepts
-    /// `version > Version("26.1")` (src/devicemanagement/constants.py:20), and
-    /// 26.2 is what that resolves to for the versions Apple ships.
-    ///
-    /// Compared rather than `minimumVersion`, because the two are not the same
-    /// rule: a 26.1.1 clears `> 26.1` and Apple has shipped such point
-    /// releases, so comparing against 26.2 would refuse a device the rest of
-    /// this app supports. `26.2 or newer` in the message stays true regardless
-    /// — it is only ever shown for a device at or below 26.1.
-    private static let referenceFloor = "26.1"
+    /// The inclusive comparison floor. Kept as its own constant because the
+    /// rule is `>=` rather than `>`: 17.0 itself must pass.
+    private static let referenceFloor = "17.0"
 
     /// Whether the exploit may be attempted, for a device reporting `deviceVersion`.
     ///
@@ -75,7 +65,7 @@ enum Airlift {
         // `nil` from the comparison is an unorderable version string, which is
         // the same "unknown" case the empty one is refused as.
         guard let cmp = TweakVersion.compare(deviceVersion, referenceFloor) else { return false }
-        return cmp > 0
+        return cmp >= 0
     }
 
     /// The reason to refuse, for the UI.
@@ -210,9 +200,8 @@ enum Airlift {
                                  preferenceTargetA: String,
                                  preferenceTargetB: String) async throws {
         // No AirLift version gate here: the transaction is the older
-        // AirTraffic/Books pipeline, and the direct mode runs it on systems
-        // (26.0–26.1) that are below the AirLift escape's floor. The caller
-        // has already judged whether the direct route is supported.
+        // AirTraffic/Books pipeline, and the direct route judges its own
+        // range. The caller has already judged whether it is supported.
         try await offMainActor {
             var outError: UnsafeMutablePointer<CChar>?
             let rc = al_exploit_flash_transaction(

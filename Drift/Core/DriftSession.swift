@@ -32,6 +32,11 @@ final class DriftSession: ObservableObject {
     /// other callers, and both clear it when the work ends.
     @Published var flashCover = false
 
+    /// A one-line stage hint shown under the flashing cover. The local
+    /// channel's first container search can take a while, and the cover is
+    /// the only place the user can see where the run is.
+    @Published var flashStage: String?
+
     /// Which full-screen cover is up, when it is not the flashing one
     /// (collection round 2026-11-12, Grace): restarting PosterBoard and
     /// repairing a pack get the same treatment as flashing — a blocking
@@ -421,7 +426,8 @@ final class DriftSession: ObservableObject {
             return (false, "已有一轮刷入正在进行", nil)
         }
         flashCover = true
-        defer { flashCover = false }
+        flashStage = (mode == .worseQuery) ? "正在定位壁纸商店，第一次会慢一些" : nil
+        defer { flashCover = false; flashStage = nil }
         lastEffect = nil
         // Feedback #30: the funnel refuses a restore run while the gate
         // is closed, even if a caller forgot to consult it — judgement,
@@ -757,14 +763,14 @@ enum DriftJudge {
                 mode: .direct,
                 available: p.directReady,
                 reason: p.directReady
-                    ? "可用：\(device) 在 26.2–27.1 及 27.2 测试版 1/2 内"
+                    ? "可用：\(device) 在 17.0–27.1 及 27.2 测试版 1/2 内"
                     : p.directWhy,
                 effect: expectedEffect(for: .direct)),
             DriftModeAvailability(
                 mode: .airlift,
                 available: p.respringReady,
                 reason: p.respringReady
-                    ? "可用：\(device) 在 26.2–27.1 及 27.2 测试版 1/2 内"
+                    ? "可用：\(device) 在 17.0–27.1 及 27.2 测试版 1/2 内"
                     : p.respringWhy,
                 effect: expectedEffect(for: .airlift)),
         ]

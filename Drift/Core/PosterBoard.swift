@@ -94,7 +94,7 @@ enum PosterBoard {
     /// refuse the rest instead of silently writing into a directory the system
     /// may not read:
     ///
-    ///   * verified: iOS 26.0 – 27.1, and 27.2 beta 1 / beta 2 (the same
+    ///   * verified: iOS 17.0 – 27.1, and 27.2 beta 1 / beta 2 (the same
     ///     builds `AirliftAvailability` names), all use structure 61;
     ///   * refused: anything else, including a 27.2 build we cannot identify.
     ///
@@ -106,7 +106,7 @@ enum PosterBoard {
                                                buildVersion: String,
                                                log: (String) -> Void) throws -> Int {
         let build = buildVersion.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let floor = compareVersion(deviceVersion, "26.0"), floor >= 0,
+        guard let floor = compareVersion(deviceVersion, "17.0"), floor >= 0,
               let ceiling = compareVersion(deviceVersion, "27.2") else {
             let message = "隧道写入需要读到设备系统版本与构建号，现在读不到"
                 + "（\(deviceVersion.isEmpty ? "系统版本未知" : "iOS \(deviceVersion)")），"

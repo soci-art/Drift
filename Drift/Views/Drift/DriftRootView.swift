@@ -106,6 +106,11 @@ struct DriftRootView: View {
                         Text("请勿熄屏或退出 App")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+                        if let stage = session.flashStage {
+                            Text(stage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                         if let progress = session.coverProgress {
                             ProgressView(value: progress)
                                 .progressViewStyle(.linear)

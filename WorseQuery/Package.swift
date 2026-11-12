@@ -13,8 +13,9 @@ let package = Package(
     name: "WorseQuery",
     platforms: [
         // The escape targets iOS 26.0 – 26.7.2 and 27.x up to 27.2; the app's
-        // own floor is 26.0, so the library states the same floor.
-        .iOS("26.0"),
+        // own floor is 17.0, and the bridge must link into that app. The
+        // channel's own version gate stays in the bridge code.
+        .iOS("17.0"),
     ],
     products: [
         .library(

@@ -355,7 +355,7 @@ final class DriftEngine {
     /// Same limits as 注销直刷: the transaction installs descriptor folders,
     /// so a reset, a video stage, a container template or any non-wallpaper
     /// payload cannot travel it. Unlike AirLift it also has its own closed
-    /// version range (26.0–27.1, plus 27.2 beta 1/2), checked here rather than
+    /// version range (17.0–27.1, plus 27.2 beta 1/2), checked here rather than
     /// in the judge so a manual pick cannot bypass it.
     private func checkDirectCanApply(selection: PosterBoardSelection,
                                      templates: [TemplateFile],

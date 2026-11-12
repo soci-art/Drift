@@ -61,9 +61,9 @@ enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
         case .backup:
             return "通过恢复刷写入壁纸。适用于所有受支持的设备，最后会重启设备。恢复刷已封存，暂时不可用。"
         case .direct:
-            return "通过配对隧道直写 PosterBoard 的容器，再只重启 PosterBoard 守护进程——不注销、不重启。支持 iOS 26.0–27.1 及 27.2 测试版 1/2；需要配对、隧道、LocalDevVPN，且设备保持解锁。刷新未确认时只提示，可手动注销。"
+            return "通过配对隧道直写 PosterBoard 的容器，再只重启 PosterBoard 守护进程——不注销、不重启。支持 iOS 17.0–27.1 及 27.2 测试版 1/2；需要配对、隧道、LocalDevVPN，且设备保持解锁。刷新未确认时只提示，可手动注销。"
         case .airlift:
-            return "通过配对隧道逐张写入 PosterBoard 的容器——写完统一注销生效。支持 iOS 26.0–27.1 及 27.2 测试版 1/2；需要配对、隧道、LocalDevVPN，且设备保持解锁。"
+            return "通过配对隧道逐张写入 PosterBoard 的容器——写完统一注销生效。支持 iOS 17.0–27.1 及 27.2 测试版 1/2；需要配对、隧道、LocalDevVPN，且设备保持解锁。"
         case .worseQuery:
             return "在本机直接写进 PosterBoard 的容器——不用配对文件、不用隧道。刷完提示你上滑关闭 PosterBoard，系统重新拉起时生效；需要 iOS 26.0–26.7.2、27.0–27.2、27.2.1，或 27.3 测试版 1（实验），且是证书签名（带能用的 App Group）。"
         }

@@ -99,9 +99,9 @@ struct DriftVideoView: View {
             }
             HStack(spacing: 10) {
                 Button { importingVideo = true } label: { Label("选视频", systemImage: "film") }
-                    .buttonStyle(.glass)
+                    .driftGlassButton()
                 Button { importingFrame = true } label: { Label("选定格帧", systemImage: "photo") }
-                    .buttonStyle(.glass)
+                    .driftGlassButton()
                 if selection.video != nil {
                     Button(role: .destructive) {
                         PosterBoard.clearFiles(in: PosterBoard.videoDirectory)
@@ -110,7 +110,7 @@ struct DriftVideoView: View {
                         selection.thumbnail = nil
                         videoPreview = nil
                     } label: { Image(systemName: "trash") }
-                    .buttonStyle(.glass)
+                    .driftGlassButton()
                 }
             }
         }
@@ -147,7 +147,7 @@ struct DriftVideoView: View {
                 runVideo()
             }
             if session.running {
-                Button("取消") { session.cancelRun() }.buttonStyle(.glass)
+                Button("取消") { session.cancelRun() }.driftGlassButton()
             }
             if let statusLine {
                 Text(statusLine).font(.subheadline).foregroundStyle(.secondary)

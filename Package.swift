@@ -6,13 +6,13 @@ let root = Context.packageDirectory
 let package = Package(
     name: "Drift",
     platforms: [
-        // iOS 26, matching xtool.yml's `deploymentTarget` and Info.plist's
+        // iOS 17, matching xtool.yml's `deploymentTarget` and Info.plist's
         // MinimumOSVersion.  It used to say .v16 while those two said 26: the
         // app then shipped a binary whose LC_BUILD_VERSION claimed
         // minos=16.0/sdk=16.0 next to an Info.plist that refuses to install
         // below 26, and compiled against the 26.5 SDK anyway.  One number,
         // stated once per file that has to repeat it.
-        .iOS("26.0"),
+        .iOS("17.0"),
     ],
     products: [
         // xtool picks the single automatic (static) library product as the app.

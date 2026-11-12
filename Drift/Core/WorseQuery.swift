@@ -126,7 +126,7 @@ enum WorseQueryEscape {
         var errorDescription: String? {
             switch self {
             case .unsupportedSystem(let version):
-                return "本机直刷只支持 iOS 26.0–26.7.2 和 27.0–27.2；"
+                return "本机直刷只支持 iOS 26.0–26.7.2、27.0–27.2.1，以及 27.3 测试版 1（24C5037i，实验）；"
                     + "这台设备报告的是 \(version.isEmpty ? "未知系统" : "iOS \(version)")。"
             case .groupUnavailable:
                 return "当前签名没有授予可用的 App Group，本机直刷用不了。"
@@ -251,7 +251,7 @@ enum WorseQueryEscape {
         }
         if groupContainer == nil {
             return "本机直刷需要签名授予可用的 App Group，但这份签名没有可用的组。"
-                + "App 会读取安装包里签名授予的组名单并逐个试开；付费证书、SideStore / AltStore 改签都可以。"
+                + "App 会读取安装包里签名授予的组名单并逐个试开；只有证书签名能用，免费 ID 签、SideStore / AltStore 改签都不行。"
         }
         return ""
     }

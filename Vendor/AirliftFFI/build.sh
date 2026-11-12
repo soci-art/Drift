@@ -34,7 +34,7 @@ export SDKROOT
 # conflict: -mmacosx-version-min is rejected against -miphoneos-version-min.
 export CC_aarch64_apple_ios=clang
 export AR_aarch64_apple_ios=llvm-ar
-export IPHONEOS_DEPLOYMENT_TARGET=18.0
+export IPHONEOS_DEPLOYMENT_TARGET=17.0
 
 # No CARGO_TARGET_*_LINKER: the vendored plist_ffi builds no dylib (see its
 # Cargo.toml), so nothing here needs a Mach-O linker, which open-source lld

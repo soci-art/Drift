@@ -159,7 +159,7 @@ struct DriftHomeView: View {
                 Button { importingPairing = true } label: {
                     Label("导入配对文件（只走两条隧道通道时才需要）", systemImage: "link.badge.plus")
                 }
-                .buttonStyle(.glass)
+                .driftGlassButton()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -320,7 +320,7 @@ struct DriftHomeView: View {
             }
             if session.running {
                 Button("取消") { session.cancelRun() }
-                    .buttonStyle(.glass)
+                    .driftGlassButton()
             }
             if let statusLine {
                 Text(statusLine).font(.subheadline).foregroundStyle(.secondary)
@@ -339,7 +339,7 @@ struct DriftHomeView: View {
                 } label: {
                     Label("手动注销", systemImage: "arrow.clockwise.circle")
                 }
-                .buttonStyle(.glass)
+                .driftGlassButton()
             }
             if judgement.mode == .worseQuery {
                 NativeNote("本机直刷在本机写入，不需要配对文件，也不用开隧道。刷完先打开 PosterBoard 刷新集合，再从应用切换器上滑关闭它，系统重新拉起后壁纸生效。App 不会自动注销。")
@@ -381,7 +381,7 @@ struct DriftHomeView: View {
                     .font(.headline)
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.glass)
+            .driftGlassButton()
             .controlSize(.large)
             .disabled(session.running)
             .alert("确认注销？", isPresented: $confirmRespring) {
@@ -813,7 +813,7 @@ struct DriftPackDetail: View {
                         } label: {
                             Label("删除这个包", systemImage: "trash")
                         }
-                        .buttonStyle(.glass)
+                        .driftGlassButton()
                         if PackRepair.isRepaired(current) {
                             Label("已修复", systemImage: "checkmark.circle")
                                 .font(.subheadline.weight(.medium))
@@ -826,7 +826,7 @@ struct DriftPackDetail: View {
                             } label: {
                                 Label("壁纸修复", systemImage: "wrench.and.screwdriver")
                             }
-                            .buttonStyle(.glass)
+                            .driftGlassButton()
                         }
                     }
                 }

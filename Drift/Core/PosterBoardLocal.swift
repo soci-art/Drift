@@ -550,68 +550,92 @@ enum PosterBoardLocal {
 
     // MARK: - Container
 
+    /// How many candidate probes may be in flight at once. The probes are
+    /// independent (one containermanagerd query + one kernel grant each), but
+    /// concurrent grants have no prior evidence on these devices; 6 is the
+    /// conservative middle of the 4–8 range and one constant so a device that
+    /// refuses them can fall back by changing only this number.
+    private static let probeConcurrency = 6
+
+    private static func millis(since start: DispatchTime) -> Double {
+        Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
+    }
+
     /// Consume an extension for PosterBoard's container and return both.
+    ///
+    /// Order is chosen for the common cold-start case: a cached path, then the
+    /// exact paths already known from the tunnel or old receipts, then a
+    /// pathleak scan, and only then the root extension (an optional
+    /// accelerator, never a gate). Locating must not depend on an extension for
+    /// the applications root: on a real 27.2 device the kernel refuses it with
+    /// -6, and the old order let that refusal kill the run before pathleak was
+    /// reached (feedback #77–81).
     private static func openContainer(log: @escaping @Sendable (String) -> Void) throws -> (path: String, handle: Int64) {
         log("本机通道 App Group：\(WorseQueryEscape.discoveredGroupIdentifier ?? "没有可用的组")")
-        // Locating the container must not depend on an extension for the
-        // applications root itself. On a real 27.2 device the kernel refuses
-        // that extension with -6 because the root is not any one container,
-        // and the old order made that refusal kill the whole run before the
-        // pathleak route was ever reached (feedback #77–81).
+        let locateStart = DispatchTime.now()
+        log("正在定位壁纸商店，第一次会慢一些")
+
+        // 0. The cache is a precise address and the identity check is the
+        // authority. A consume failure is often transient, so the cache is
+        // kept; it is cleared only when consume succeeds and the content is
+        // not PosterBoard.
         let cached = cachedContainer
         if !cached.isEmpty {
-            log("consume 容器缓存：\(cached)（createDirectory: true）")
+            log("consume 容器缓存：\(cached)（createDirectory: false，探测）")
             do {
-                let handle = try WorseQueryEscape.consume(path: cached, createDirectory: true)
-                log("consume 成功：handle \(handle)")
+                let handle = try WorseQueryEscape.consume(path: cached, createDirectory: false)
                 if isPosterBoardContainer(atPath: cached) {
-                    log("PosterBoard container: cached path verified")
+                    log(String(format: "PosterBoard container: cached path verified（总定位 %.0f ms）",
+                               millis(since: locateStart)))
                     return (cached, handle)
                 }
                 WorseQueryEscape.release(handle)
-                log("缓存路径不再属于 PosterBoard（商店目录不存在或不是目录）——重新扫描")
+                log("缓存 consume 成功但内容核对不是 PosterBoard——清掉缓存换路")
+                cachedContainer = ""
             } catch {
-                log("consume 缓存失败：\(cached) → \(error.localizedDescription)；清掉缓存后重新扫描")
+                log("consume 缓存失败：\(cached) → \(error.localizedDescription)；保留缓存，下次仍先试它（内容核对兜底）")
             }
-            cachedContainer = ""
         }
 
-        // 1. pathleak first. It walks inodes and names the children of the
-        // applications root without asking for an extension on the root.
-        let leaked = WorseQueryEscape.leakedChildren(of: applicationsRoot)
-        log("pathleak：在 \(applicationsRoot) 下枚举到 \(leaked.count) 个路径")
-        if let path = tryConsumePosterBoard(among: leaked, log: log) {
-            let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
-            cachedContainer = path
-            log("PosterBoard container resolved by pathleak: \(path)（handle \(handle)）")
-            return (path, handle)
-        }
-
-        // 1b. Paths already known exactly: the tunnel's cached container and
-        // the containers in old receipts. These need no enumeration at all.
+        // 1. Exact paths already known: the tunnel's cached container and the
+        // containers in old receipts. One or two probes instead of a scan.
         var known: [String] = []
         let tunnel = PosterBoardAirlift.cachedContainer
         if !tunnel.isEmpty {
             known.append(tunnel.hasSuffix("/") ? String(tunnel.dropLast()) : tunnel)
         }
         for receipt in PosterBoardLocalReceipts.load() {
-            if let container = PosterBoardManagement.containerPath(from: receipt.parent),
-               !known.contains(container.hasSuffix("/") ? String(container.dropLast()) : container) {
-                known.append(container.hasSuffix("/") ? String(container.dropLast()) : container)
-            }
+            guard let container = PosterBoardManagement.containerPath(from: receipt.parent) else { continue }
+            let trimmed = container.hasSuffix("/") ? String(container.dropLast()) : container
+            if !known.contains(trimmed) { known.append(trimmed) }
         }
         if !known.isEmpty {
             log("已知容器路径：\(known.count) 个（隧道缓存 / 旧回执）")
-            if let path = tryConsumePosterBoard(among: known, log: log) {
+            if let path = tryConsumePosterBoard(among: known, label: "已知路径", log: log) {
                 let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
                 cachedContainer = path
-                log("PosterBoard container resolved from a known path: \(path)（handle \(handle)）")
+                log(String(format: "PosterBoard container resolved from a known path: %@（handle %lld，总定位 %.0f ms）",
+                           path, handle, millis(since: locateStart)))
                 return (path, handle)
             }
             log("已知容器路径核对失败：商店目录不存在或不是目录（已知路径本应正确，此行诊断价值最高）")
         }
 
-        // 2. The root extension is an optional accelerator, never a gate.
+        // 2. pathleak: walks inodes and names the children of the applications
+        // root without asking for an extension on the root.
+        let leakStart = DispatchTime.now()
+        let leaked = WorseQueryEscape.leakedChildren(of: applicationsRoot)
+        log(String(format: "pathleak：在 %@ 下枚举到 %d 个路径（枚举耗时 %.0f ms）",
+                   applicationsRoot, leaked.count, millis(since: leakStart)))
+        if let path = tryConsumePosterBoard(among: leaked, label: "pathleak", log: log) {
+            let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
+            cachedContainer = path
+            log(String(format: "PosterBoard container resolved by pathleak: %@（handle %lld，总定位 %.0f ms）",
+                       path, handle, millis(since: locateStart)))
+            return (path, handle)
+        }
+
+        // 3. The root extension is an optional accelerator, never a gate.
         // Getting -6 here is expected on the systems this fix targets; the
         // pathleak route above is the one that has to work.
         var rootFailure = ""
@@ -626,7 +650,8 @@ enum PosterBoardLocal {
             if let path = firstPosterBoardContainer(among: listed) {
                 let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
                 cachedContainer = path
-                log("PosterBoard container resolved by root listing: \(path)（handle \(handle)）")
+                log(String(format: "PosterBoard container resolved by root listing: %@（handle %lld，总定位 %.0f ms）",
+                           path, handle, millis(since: locateStart)))
                 return (path, handle)
             }
         } catch {
@@ -634,38 +659,105 @@ enum PosterBoardLocal {
             log("根目录扩展不可用（\(rootFailure)）——pathleak 结果仍可继续使用")
         }
 
+        log(String(format: "容器定位失败：总耗时 %.0f ms", millis(since: locateStart)))
         throw DriftError("找不到 PosterBoard 的容器：pathleak 没有枚举到可用的应用容器"
             + (rootFailure.isEmpty ? "。" : "，根目录扩展也被拒绝（\(rootFailure)）。")
             + "这个系统可能还没有壁纸商店的数据目录；先添加一张系统壁纸，或者改用隧道通道。")
     }
 
-    /// Try each pathleak candidate as a container: consume it, read its
-    /// container-manager identifier, and keep the one that is PosterBoard.
-    /// A candidate the kernel will not extend is skipped, not fatal.
+    /// Try each candidate as a container with a bounded parallel scan. A probe
+    /// consumes without creating anything, checks the store directory by
+    /// content (the only acceptance rule), then releases; the first pass wins
+    /// and the rest are cancelled. A candidate the kernel will not extend is
+    /// skipped, not fatal.
     private static func tryConsumePosterBoard(among candidates: [String],
+                                              label: String,
                                               log: @escaping @Sendable (String) -> Void) -> String? {
-        var refused = 0
-        var consumed = 0
-        var identified = 0
+        let started = DispatchTime.now()
+        var unique: [String] = []
+        var seen = Set<String>()
         for candidate in candidates where isDirectory(candidate) {
-            do {
-                let handle = try WorseQueryEscape.consume(path: candidate, createDirectory: true)
-                consumed += 1
-                let ok = isPosterBoardContainer(atPath: candidate)
-                WorseQueryEscape.release(handle)
-                if ok {
-                    identified += 1
-                    return candidate
+            if seen.insert(candidate).inserted { unique.append(candidate) }
+        }
+
+        let lock = NSLock()
+        var found: String?
+        var cancelled = false
+        var consumed = 0
+        var refused = 0
+        var identified = 0
+        var probed = 0
+        let semaphore = DispatchSemaphore(value: probeConcurrency)
+        let group = DispatchGroup()
+        let queue = DispatchQueue(label: "drift.posterboard.probe",
+                                  qos: .userInitiated, attributes: .concurrent)
+
+        for candidate in unique {
+            semaphore.wait()
+            lock.lock()
+            let stop = cancelled
+            lock.unlock()
+            if stop {
+                semaphore.signal()
+                continue
+            }
+            group.enter()
+            queue.async {
+                defer {
+                    semaphore.signal()
+                    group.leave()
                 }
-            } catch {
-                refused += 1
+                lock.lock()
+                let stopNow = cancelled
+                if !stopNow { probed += 1 }
+                lock.unlock()
+                if stopNow { return }
+                do {
+                    let handle = try WorseQueryEscape.consume(path: candidate, createDirectory: false)
+                    lock.lock(); consumed += 1; lock.unlock()
+                    let ok = isPosterBoardContainer(atPath: candidate)
+                    WorseQueryEscape.release(handle)
+                    if ok {
+                        lock.lock()
+                        identified += 1
+                        if found == nil {
+                            found = candidate
+                            cancelled = true
+                        }
+                        lock.unlock()
+                    }
+                } catch {
+                    lock.lock(); refused += 1; lock.unlock()
+                }
             }
         }
-        log("pathleak：候选 \(candidates.count) 个，consume 成功 \(consumed) 个，身份核对通过 \(identified) 个，扩展被拒 \(refused) 个")
+        group.wait()
+
+        let elapsed = millis(since: started)
+        let average = probed > 0 ? elapsed / Double(probed) : 0
+        log(String(format: "%@：候选 %d 个，探测 %d 次（并发 %d），consume 成功 %d 个，身份核对通过 %d 个，扩展被拒 %d 个；平均 %.1f ms/次，探测耗时 %.0f ms",
+                   label, unique.count, probed, probeConcurrency, consumed, identified, refused,
+                   average, elapsed))
         if refused > 0 {
-            log("pathleak：\(refused) 个候选容器扩展被拒绝，继续尝试其余路径")
+            log("\(label)：\(refused) 个候选容器扩展被拒绝，继续尝试其余路径")
         }
-        return nil
+        // Every probe was refused: that is the one pattern concurrency itself
+        // could cause (containermanagerd throttling), so retry once serially.
+        // A normal scan that simply found nothing does not take this path.
+        if found == nil, !unique.isEmpty, refused == probed {
+            log("\(label)：并发探测全部被拒，退回串行重试一次")
+            for candidate in unique {
+                do {
+                    let handle = try WorseQueryEscape.consume(path: candidate, createDirectory: false)
+                    let ok = isPosterBoardContainer(atPath: candidate)
+                    WorseQueryEscape.release(handle)
+                    if ok { return candidate }
+                } catch {
+                    continue
+                }
+            }
+        }
+        return found
     }
 
     private static func firstPosterBoardContainer(among candidates: [String]) -> String? {
