@@ -222,6 +222,26 @@ extension View {
             self.buttonStyle(.borderedProminent)
         }
     }
+
+    /// Report whether a scroll view is parked at its end.
+    ///
+    /// `onScrollGeometryChange` is iOS 18; the app still installs on iOS 17.
+    /// Below 18 this is a no-op, which leaves the log's follow-tail state at
+    /// its default (true) — the reader simply does not get the automatic
+    /// "parked away from the end" switch on that one version.
+    @ViewBuilder
+    func driftOnScrollAtEnd(_ action: @escaping (Bool) -> Void) -> some View {
+        if #available(iOS 18.0, *) {
+            self.onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y + geometry.containerSize.height
+                    >= geometry.contentSize.height - 24
+            } action: { _, atEnd in
+                action(atEnd)
+            }
+        } else {
+            self
+        }
+    }
 }
 
 /// A "Done" button in a toolbar above the keyboard, resigning through UIKit so

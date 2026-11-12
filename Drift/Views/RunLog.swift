@@ -181,13 +181,10 @@ struct RunLogCard: View {
                 guard !followsTail else { return }
                 proxy.scrollTo(Self.tail, anchor: .bottom)
             }
-            .onScrollGeometryChange(for: Bool.self) { geometry in
-                // A row's slack: `contentSize` is the laid-out height, so the last
-                // row is fully visible a few points before the geometry says
+            .driftOnScrollAtEnd { atEnd in
+                // A row's slack is handled in the compat helper: the last row
+                // is fully visible a few points before the geometry says
                 // "at the end".
-                geometry.contentOffset.y + geometry.containerSize.height
-                    >= geometry.contentSize.height - 24
-            } action: { atEnd, _ in
                 if followsTail, !atEnd { followsTail = false }
                 else if !followsTail, atEnd { followsTail = true }
             }
