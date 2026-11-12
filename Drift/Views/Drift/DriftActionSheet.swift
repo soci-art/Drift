@@ -2,28 +2,26 @@ import SwiftUI
 
 // DriftActionSheet.swift
 // ─────────────────────────────────────────────────────────────────────────
-// The app's own confirmation popup for "pick one / confirm this"
-// dialogs (Grace, 2026-11-12, builds 33–35). History: the system
-// confirmationDialog / action-style alerts present on her system as
-// a translucent floating bubble with an anchor arrow, pale pill
-// buttons and no visible cancel — unacceptable. A first attempt as
-// a solid bottom sheet (build 33/34) fixed the look but its height
-// was formula-guessed, so short dialogs floated their buttons at
-// the bottom over a big empty gap, each one different (#250).
+// The app's own bottom action sheet for "pick one / confirm this"
+// dialogs, replacing the system confirmationDialog and the
+// action-style alerts (Grace, 2026-11-12, on 3.0.11 (32)): on her
+// system those present as a translucent floating bubble with an
+// anchor arrow, greyed-out-looking pill buttons and no visible
+// cancel button — the same complaint she had already raised about
+// the log-upload and wallpaper-delete dialogs, which are system
+// alerts with the same look.
 //
-// Final shape, chosen by Grace from mockups (option B): a centered
-// popup card drawn entirely by the app — dim backdrop, solid card,
-// title, optional short message, one full-width solid button per
+// This sheet is deliberately boring and identical on every OS
+// version: it rises from the bottom, has a solid background, a
+// title, an optional short message, one full-width solid button per
 // action (red text for destructive ones) and an always-visible
-// 「取消」 button. The card is exactly as tall as its content, and
-// because nothing here comes from the system, it looks identical
-// on iOS 17, 18 and 26+. Tapping the backdrop cancels. Tapping an
-// action dismisses the popup first and runs the handler a beat
-// later, so a handler that presents another sheet (e.g. the share
-// sheet after exporting a record) does not collide.
+// 「取消」 button. Tapping an action dismisses the sheet first and
+// runs the handler a beat later, so a handler that presents another
+// sheet (e.g. the share sheet after exporting a record) does not
+// collide with the dismissal.
 // ─────────────────────────────────────────────────────────────────────────
 
-/// One tappable row in the popup.
+/// One tappable row in a `DriftActionSheet`.
 struct DriftSheetAction: Identifiable {
     let id = UUID()
     let title: String
@@ -37,17 +35,18 @@ struct DriftSheetAction: Identifiable {
     }
 }
 
-struct DriftPopupCardView: View {
+struct DriftActionSheetView: View {
     let title: String
     var message: String?
     let actions: [DriftSheetAction]
-    let dismiss: () -> Void
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(spacing: 10) {
             Text(title)
                 .font(.headline)
                 .multilineTextAlignment(.center)
+                .padding(.top, 6)
             if let message, !message.isEmpty {
                 ScrollView {
                     Text(message)
@@ -58,11 +57,15 @@ struct DriftPopupCardView: View {
                 }
                 .frame(maxHeight: 150)
             }
+            // Uniform skeleton (Grace's option A, build 36): every
+            // dialog is title / message / gap / actions / cancel in
+            // a sheet of one fixed height, so they all look alike.
+            Spacer()
             ForEach(actions) { action in
                 Button {
                     dismiss()
                     Task {
-                        try? await Task.sleep(nanoseconds: 350_000_000)
+                        try? await Task.sleep(nanoseconds: 400_000_000)
                         action.handler()
                     }
                 } label: {
@@ -72,7 +75,7 @@ struct DriftPopupCardView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: 50)
                         .background(Color(.secondarySystemBackground),
-                                    in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -82,58 +85,36 @@ struct DriftPopupCardView: View {
                 Text("取消")
                     .font(.body.weight(.semibold))
                     .frame(maxWidth: .infinity)
-                    .frame(height: 48)
+                    .frame(height: 50)
             }
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 20)
-        .padding(.top, 24)
-        .padding(.bottom, 10)
-        .frame(maxWidth: 340)
-        .background(Color(.systemBackground),
-                    in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .shadow(color: .black.opacity(0.2), radius: 24, x: 0, y: 10)
-    }
-}
-
-struct DriftPopupModifier: ViewModifier {
-    @Binding var isPresented: Bool
-    let title: String
-    var message: String?
-    let actions: [DriftSheetAction]
-
-    func body(content: Content) -> some View {
-        content
-            .overlay {
-                if isPresented {
-                    ZStack {
-                        Color.black.opacity(0.35)
-                            .ignoresSafeArea()
-                            .onTapGesture { isPresented = false }
-                            .transition(.opacity)
-                        DriftPopupCardView(title: title, message: message,
-                                           actions: actions) {
-                            isPresented = false
-                        }
-                        .padding(.horizontal, 36)
-                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                    }
-                    .ignoresSafeArea()
-                    .animation(.easeOut(duration: 0.2), value: isPresented)
-                }
-            }
+        .padding(.bottom, 12)
     }
 }
 
 extension View {
-    /// Present the app's own centered confirmation popup
-    /// (`DriftPopupCardView`) over a dimmed backdrop. The card's
-    /// height hugs its content; the look is identical on every OS
-    /// version because the app draws all of it.
+    /// Present `DriftActionSheetView` as a solid bottom sheet.
+    /// Every dialog gets the same fixed height and the same
+    /// skeleton — title, message, gap, actions, cancel — so they
+    /// all look alike (Grace's option A, build 36; a centered
+    /// popup, option B, shipped in build 35 and was rejected on
+    /// device, so this sheet shape is the settled one).
     func driftActionSheet(isPresented: Binding<Bool>, title: String,
                           message: String? = nil,
                           actions: [DriftSheetAction]) -> some View {
-        modifier(DriftPopupModifier(isPresented: isPresented, title: title,
-                                    message: message, actions: actions))
+        // One fixed height for every dialog (option A): uniformity
+        // over hugging the content. 400 fits the tallest case (a
+        // capped long message, or three actions) with room to spare.
+        let height: CGFloat = 400
+        return sheet(isPresented: isPresented) {
+            DriftActionSheetView(title: title, message: message, actions: actions)
+                .presentationDetents([.height(height)])
+                // Grace (2026-11-12, on build 33): no drag-indicator
+                // bar at the top of these sheets — remove it everywhere.
+                .presentationDragIndicator(.hidden)
+                .presentationBackground(Color(.systemBackground))
+        }
     }
 }
