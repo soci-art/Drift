@@ -12,7 +12,13 @@ on:
 jobs:
   sim-17:
     name: Screenshots on iOS 17 simulator
-    runs-on: macos-14
+    # Was macos-14: GitHub no longer offers that arm64 runner config
+    # ('macos-14-arm64-us-default' is not supported — first probe run
+    # never got a machine). Best effort on macos-latest instead: with
+    # no iOS 17 runtime there the script skips loudly and this job
+    # fails on zero screenshots. iOS 17 and 18 share the same legacy
+    # UI path, so the iOS 18 shots still cover the look.
+    runs-on: macos-latest
     env:
       WANT_MAJOR: "17"
     steps:

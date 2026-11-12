@@ -16,6 +16,14 @@ settings:
     INFOPLIST_FILE: layout/Applications/Drift.app/Info.plist
     PRODUCT_BUNDLE_IDENTIFIER: com.sociart.drift.preview
 
+# xcodebuild with -derivedDataPath requires -scheme (first probe run
+# failed on exactly this), so the preview spec declares one.
+schemes:
+  DriftUIPreview:
+    build:
+      targets:
+        DriftUIPreview: all
+
 targets:
   DriftUIPreview:
     type: application

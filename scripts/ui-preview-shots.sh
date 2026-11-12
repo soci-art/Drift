@@ -14,9 +14,11 @@ mkdir -p "$SHOTS"
 
 xcodegen generate --spec project-preview.yml
 
+# -scheme, not -target: with -derivedDataPath, xcodebuild refuses to
+# run without -scheme/-testProductsPath/-xctestrun (first probe run).
 xcodebuild build \
   -project DriftPreview.xcodeproj \
-  -target DriftUIPreview \
+  -scheme DriftUIPreview \
   -sdk iphonesimulator \
   -configuration Debug \
   -derivedDataPath build/preview-dd \
