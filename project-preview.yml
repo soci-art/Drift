@@ -1,0 +1,40 @@
+# DriftUIPreview — a SEPARATE XcodeGen spec for the route-1 UI check
+# (Grace, 2026-11-12). It exists apart from project.yml on purpose: the
+# shipped pipeline (project.yml + sync-pbxproj-sources.py) never sees
+# this target, so the preview can break without ever touching a
+# release build. Generate with:
+#   xcodegen generate --spec project-preview.yml
+# which produces DriftPreview.xcodeproj next to Drift.xcodeproj.
+name: DriftPreview
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    GENERATE_INFOPLIST_FILE: NO
+    INFOPLIST_FILE: layout/Applications/Drift.app/Info.plist
+    PRODUCT_BUNDLE_IDENTIFIER: com.sociart.drift.preview
+
+targets:
+  DriftUIPreview:
+    type: application
+    platform: iOS
+    # Drift's real display files only — theme, tutorial, About — plus
+    # the probe shell. No engine, no FFI: those have no simulator
+    # slices, which is the whole reason this target exists.
+    sources:
+      - path: Preview
+      - path: Drift/Views/NativeUI.swift
+      - path: Drift/Views/Drift/DriftTheme.swift
+      - path: Drift/Views/Drift/DriftTutorialView.swift
+      - path: Drift/Views/Drift/DriftTutorialChannelView.swift
+      - path: Drift/Views/Drift/LoopingVideoView.swift
+      - path: Drift/Views/Drift/DriftAboutView.swift
+      - path: Drift/Core/DriftRestoreGate.swift
+      - path: layout/Applications/Drift.app/PosterCloseGesture.mp4
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: DriftUIPreview
+        CODE_SIGN_ENTITLEMENTS: ""

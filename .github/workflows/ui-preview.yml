@@ -1,0 +1,73 @@
+name: UI Preview Screenshots
+
+# Route-1 UI check (Grace, 2026-11-12): build the DriftUIPreview shell
+# (project-preview.yml — Drift's display files only) and screenshot the
+# tutorial pages, the About page and the theme surfaces on iOS 17 / 18 /
+# 26 simulators, so the pre–Liquid Glass systems' own UI (#242) can be
+# looked at before a build ships. Manual dispatch only; never runs on
+# push, and its project spec is separate from the shipped pipeline.
+on:
+  workflow_dispatch:
+
+jobs:
+  sim-17:
+    name: Screenshots on iOS 17 simulator
+    runs-on: macos-14
+    env:
+      WANT_MAJOR: "17"
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install XcodeGen
+        env:
+          XCODEGEN_VERSION: 2.46.0
+        run: |
+          set -euo pipefail
+          DEST="$RUNNER_TEMP/xcodegen"
+          rm -rf "$DEST"; mkdir -p "$DEST"
+          if ! curl -fsSL --max-time 90 --retry 2 --retry-delay 5 --retry-all-errors -o "$RUNNER_TEMP/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"; then
+            curl -fsSL --max-time 120 -o "$RUNNER_TEMP/xcodegen.zip" \
+              "https://muse.ai/files/1368012179736313/1689682835907867/vqyshyzj09aj4471ec9f6h46/xcodegen-2.46.0.zip"
+          fi
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$DEST"
+          echo "$DEST/xcodegen/bin" >> "$GITHUB_PATH"
+      - name: Build preview app and take screenshots
+        run: bash scripts/ui-preview-shots.sh
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ui-preview-ios17
+          path: build/preview-shots/
+          if-no-files-found: error
+
+  sim-18-26:
+    name: Screenshots on iOS 18 and 26 simulators
+    runs-on: macos-latest
+    env:
+      WANT_MAJOR: "18 26"
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install XcodeGen
+        env:
+          XCODEGEN_VERSION: 2.46.0
+        run: |
+          set -euo pipefail
+          DEST="$RUNNER_TEMP/xcodegen"
+          rm -rf "$DEST"; mkdir -p "$DEST"
+          if ! curl -fsSL --max-time 90 --retry 2 --retry-delay 5 --retry-all-errors -o "$RUNNER_TEMP/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"; then
+            curl -fsSL --max-time 120 -o "$RUNNER_TEMP/xcodegen.zip" \
+              "https://muse.ai/files/1368012179736313/1689682835907867/vqyshyzj09aj4471ec9f6h46/xcodegen-2.46.0.zip"
+          fi
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$DEST"
+          echo "$DEST/xcodegen/bin" >> "$GITHUB_PATH"
+      - name: Build preview app and take screenshots
+        run: bash scripts/ui-preview-shots.sh
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ui-preview-ios18-26
+          path: build/preview-shots/
+          if-no-files-found: error
