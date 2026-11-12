@@ -52,9 +52,10 @@ struct NativeSafetyNote: View {
 
 /// A full-width prominent action, with an inline spinner while running.
 ///
-/// Uses the platform's Liquid Glass prominent button style — the system draws
-/// the metal, the press feedback and the disabled state, so there is no gradient
-/// to keep in step with the OS.
+/// Uses the app's Liquid Glass prominent treatment
+/// (`driftGlassProminentButton` — the system glass look without the
+/// press swell, #285), so there is no gradient to keep in step with
+/// the OS.
 struct NativePrimaryButton: View {
     let title: String
     var systemImage: String?
@@ -95,9 +96,8 @@ struct NativeDangerButton: View {
             }
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .driftGlassProminentButton(tint: .red)
         .controlSize(.large)
-        .tint(.red)
         .disabled(disabled)
     }
 }
@@ -200,14 +200,24 @@ extension View {
     /// `.decimalPad` fields, which have no Return key of their own.
     func nativeKeyboardDone() -> some View { modifier(NativeKeyboardDone()) }
 
-    /// The platform's Liquid Glass button style on iOS 26, with a bordered
+    /// The app's Liquid Glass button look on iOS 26, with a bordered
     /// fallback below it. One entry point for every call site, so the app can
     /// build and run at a 17.0 deployment target without scattering
     /// `#available` checks through the views.
+    ///
+    /// Collection #285 (Grace, 2026-11-13): NOT the system's `.glass`
+    /// style — that style swells the button up while a finger rests on
+    /// it, so merely sliding a finger across a button to scroll the
+    /// page made it grow, which she called out on a recording as a
+    /// visual disturbance ("都不要再出现放大这个现象"). The look is
+    /// kept, drawn by `DriftStaticGlassButtonStyle` below; the growth
+    /// is gone, for every button in the app, because every glass
+    /// button in the app comes through these two helpers.
     @ViewBuilder
     func driftGlassButton() -> some View {
         if #available(iOS 26.0, *) {
-            self.buttonStyle(.glass)
+            self.buttonStyle(DriftStaticGlassButtonStyle(prominent: false,
+                                                         tint: .accentColor))
         } else {
             self.buttonStyle(.bordered)
         }
@@ -215,11 +225,12 @@ extension View {
 
     /// The prominent variant of `driftGlassButton()`.
     @ViewBuilder
-    func driftGlassProminentButton() -> some View {
+    func driftGlassProminentButton(tint: Color = .accentColor) -> some View {
         if #available(iOS 26.0, *) {
-            self.buttonStyle(.glassProminent)
+            self.buttonStyle(DriftStaticGlassButtonStyle(prominent: true,
+                                                         tint: tint))
         } else {
-            self.buttonStyle(.borderedProminent)
+            self.buttonStyle(.borderedProminent).tint(tint)
         }
     }
 
@@ -259,5 +270,40 @@ struct NativeKeyboardDone: ViewModifier {
     private static func resignFirstResponder() {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
                                         to: nil, from: nil, for: nil)
+    }
+}
+
+/// The Liquid Glass button look WITHOUT the system's swell (#285):
+/// the same tinted glass capsule the `.glass` / `.glassProminent`
+/// styles draw, but the label is never scaled — a finger resting on
+/// the button, or sliding across it on the way to scrolling the page,
+/// changes nothing about its size. The only press feedback is a
+/// slight dim, the way the pre-glass bordered styles behaved.
+/// Padding follows the button's control size, like the system styles.
+@available(iOS 26.0, *)
+struct DriftStaticGlassButtonStyle: ButtonStyle {
+    let prominent: Bool
+    let tint: Color
+
+    @Environment(\.controlSize) private var controlSize
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        let horizontal: CGFloat
+        let vertical: CGFloat
+        switch controlSize {
+        case .large: horizontal = 20; vertical = 12
+        case .small: horizontal = 10; vertical = 5
+        case .mini: horizontal = 8; vertical = 4
+        default: horizontal = 16; vertical = 8
+        }
+        return configuration.label
+            .padding(.horizontal, horizontal)
+            .padding(.vertical, vertical)
+            .foregroundStyle(prominent ? Color.white : Color.primary)
+            .glassEffect(prominent ? .regular.tint(tint) : .regular,
+                         in: Capsule())
+            .contentShape(Capsule())
+            .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.45)
     }
 }

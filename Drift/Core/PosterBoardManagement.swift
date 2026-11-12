@@ -199,28 +199,17 @@ enum PosterBoardManagement {
 
     // MARK: - Enumeration-based management (store is the source of truth)
 
-    /// What a scan could positively establish about who wrote a
-    /// descriptor (collection #275, Grace, 2026-11-13). `unknown` is a
-    /// real answer and renders as NO label: a flashed wallpaper must
-    /// never be mislabelled as a system one, so 系统壁纸 is earned
-    /// only by a contents listing holding nothing but the known
-    /// configuration files (a system descriptor points at built-in
-    /// assets and carries no media of its own), and 刷入壁纸 only by
-    /// a positive trace of a flashed pack (its own `.wallpaper`
-    /// package, or any content beyond the config set).
-    enum ManagedOrigin: Hashable {
-        case system
-        case flashed
-        case unknown
-
-        var logLabel: String {
-            switch self {
-            case .system: return "系统"
-            case .flashed: return "刷入"
-            case .unknown: return "未定"
-            }
-        }
-    }
+    // Collection #288 (Grace, 2026-11-13): the manager makes NO
+    // judgement about who wrote a descriptor. The #275 experiment —
+    // labelling entries 系统壁纸 / 刷入壁纸 — was tried in 3.0.13
+    // and failed on her real store: on the local channel the contents
+    // of every entry came back unreadable, so only the package name
+    // was left to judge by, and it mislabelled five stock system
+    // wallpapers (Clownfish, the iOS 17 default, Space Black, Stripe
+    // Green, Multicolored — their "package name" is Apple's own asset
+    // identifier) as flashed. Her call: no labels, no classification,
+    // the page just lists what is in the store. The classification
+    // machinery that briefly lived here is gone on purpose.
 
     struct ManagedEntry: Identifiable, Hashable {
         let id: String
@@ -230,52 +219,6 @@ enum PosterBoardManagement {
         let packageName: String
         let generation: Int
         let containerPath: String
-        let origin: ManagedOrigin
-    }
-
-    /// The complete contents of a system-written descriptor, from the
-    /// captured store samples: four configuration files and nothing
-    /// else — no media, no package.
-    private static let configOnlyNames: Set<String> = [
-        "com.apple.posterkit.provider.contents.galleryoptions",
-        ".com.apple.posterkit.provider.contents.configurableoptions.plist",
-        "com.apple.posterkit.provider.contents.userinfo",
-        ".com.apple.posterkit.provider.containerurl.posterdescriptorgalleryoptions.plist",
-    ]
-
-    /// Classify one entry from what the scan actually established.
-    /// Photo wallpapers are neither system nor flashed and stay
-    /// unlabelled, as do entries whose contents could not be read.
-    private static func classify(provider: String, packageName: String,
-                                 contents: [String]?) -> ManagedOrigin {
-        if provider == "com.apple.PhotosUIPrivate.PhotosPosterProvider" {
-            return .unknown
-        }
-        if !packageName.isEmpty { return .flashed }
-        guard let contents, !contents.isEmpty else { return .unknown }
-        return contents.allSatisfy { configOnlyNames.contains($0.lowercased()) }
-            ? .system : .flashed
-    }
-
-    /// The file names inside one local descriptor's version contents
-    /// folders, or nil when they cannot be listed from here. The scan
-    /// logs which of the two happened for every entry (#272/#275) —
-    /// that log is how the classification rule gets verified against
-    /// real stores.
-    private static func contentsListing(descriptorPath: String) -> [String]? {
-        let versionsDir = descriptorPath + "/versions"
-        guard let versions = try? FileManager.default
-            .contentsOfDirectory(atPath: versionsDir) else { return nil }
-        var names: [String] = []
-        var readAny = false
-        for version in versions {
-            if let entries = try? FileManager.default.contentsOfDirectory(
-                atPath: versionsDir + "/\(version)/contents") {
-                readAny = true
-                names.append(contentsOf: entries)
-            }
-        }
-        return readAny ? names : nil
     }
 
     /// Load the descriptors currently in the store, choosing the source by
@@ -310,23 +253,14 @@ enum PosterBoardManagement {
                         let key = "\(item.extension)/\(item.uuid)/\(generation)"
                         if seen.contains(key) { continue }
                         seen.insert(key)
-                        let name = (item.name?.isEmpty == false) ? (item.name ?? item.uuid) : (item.packageName?.isEmpty == false ? item.packageName! : String(item.uuid.prefix(8)))
-                        let packageName = item.packageName ?? ""
-                        // The tunnel listing carries no contents, so
-                        // classification here goes by the package name
-                        // alone — the conservative half of #275.
-                        let origin = classify(provider: item.extension,
-                                              packageName: packageName, contents: nil)
-                        log("管理扫描[隧道]：\(item.extension) / \(name) / 包名 \(packageName.isEmpty ? "（无）" : packageName) / 内容未读 / 判定 \(origin.logLabel)")
                         entries.append(ManagedEntry(
                             id: key,
                             provider: item.extension,
                             uuid: item.uuid,
-                            name: name,
-                            packageName: packageName,
+                            name: (item.name?.isEmpty == false) ? (item.name ?? item.uuid) : (item.packageName?.isEmpty == false ? item.packageName! : String(item.uuid.prefix(8))),
+                            packageName: item.packageName ?? "",
                             generation: generation,
-                            containerPath: container,
-                            origin: origin))
+                            containerPath: container))
                     }
                 } catch {
                     continue
@@ -341,33 +275,15 @@ enum PosterBoardManagement {
         if localAvailable {
             do {
                 let (container, items) = try await PosterBoardLocal.enumerateLocalStore(log: log)
-                let entries = items.map { item -> ManagedEntry in
-                    // #275/#272: try to read the descriptor's own
-                    // contents — what they hold (or that they cannot
-                    // be read at all) is logged per entry, because
-                    // that log is the evidence the labelling rule is
-                    // verified against on real phones.
-                    let contents = contentsListing(descriptorPath: item.path)
-                    let origin = classify(provider: item.provider,
-                                          packageName: item.packageName,
-                                          contents: contents)
-                    if let contents {
-                        let extras = contents.filter {
-                            !configOnlyNames.contains($0.lowercased())
-                        }
-                        log("管理扫描[本机]：\(item.provider) / \(item.name) / 包名 \(item.packageName.isEmpty ? "（无）" : item.packageName) / 内容 \(contents.count) 项\(extras.isEmpty ? "" : "，配置外：\(extras.joined(separator: ","))") / 判定 \(origin.logLabel)")
-                    } else {
-                        log("管理扫描[本机]：\(item.provider) / \(item.name) / 包名 \(item.packageName.isEmpty ? "（无）" : item.packageName) / 内容读不到 / 判定 \(origin.logLabel)")
-                    }
-                    return ManagedEntry(
+                let entries = items.map { item in
+                    ManagedEntry(
                         id: "\(item.provider)/\(item.uuid)/\(item.generation)",
                         provider: item.provider,
                         uuid: item.uuid,
                         name: item.name,
                         packageName: item.packageName,
                         generation: item.generation,
-                        containerPath: container,
-                        origin: origin)
+                        containerPath: container)
                 }
                 return (entries, "本机", nil)
             } catch {

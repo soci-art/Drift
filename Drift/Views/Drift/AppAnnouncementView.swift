@@ -69,7 +69,7 @@ struct AppAnnouncementView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
             }
-            .buttonStyle(.borderedProminent)
+            .driftGlassProminentButton()
         }
         .padding(24)
         .task {

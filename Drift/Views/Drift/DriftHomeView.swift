@@ -65,9 +65,7 @@ struct DriftHomeView: View {
                             updateHintCard(latest)
                         }
                         judgeCard
-                        packsBar
-                        applyCard
-                        managerBar
+                        actionFrame
                         activationCard
                         RunLogCard()
                     }
@@ -318,7 +316,8 @@ struct DriftHomeView: View {
     }
 
     /// The shared shape of Home's two long bars (#266/#280): the
-    /// usable-state blue, white centred content, no chevron.
+    /// usable-state blue, white centred content, no chevron. Since
+    /// #286 the blue is a tinted liquid-glass capsule, not a flat fill.
     private func homeBarLabel(icon: String, title: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
@@ -328,10 +327,32 @@ struct DriftHomeView: View {
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 15)
-        .background(Color.accentColor, in: Capsule())
+        .driftGlassCapsule(tint: .accentColor)
     }
 
-    private var applyCard: some View {
+    /// Collection #286 (Grace, 2026-11-13): the packs bar, the flash
+    /// section and the manager bar live inside ONE liquid-glass frame,
+    /// all three the same width. Before, the two bars ran full-bleed
+    /// while the flash section sat inside its own card, so the three
+    /// read as mismatched lengths (her screenshot: both blue bars
+    /// poking out past the card's edges). Inside one padded frame the
+    /// equal width is structural, and the three are glass themselves:
+    /// tinted-glass bars, the prominent glass flash button, all inside
+    /// the frame's glass slab.
+    private var actionFrame: some View {
+        VStack(spacing: 12) {
+            packsBar
+            applySection
+            managerBar
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity)
+        .driftGlassSlab()
+    }
+
+    /// The flash controls, without a card of their own since #286 —
+    /// the action frame is the surface now.
+    private var applySection: some View {
         VStack(spacing: 10) {
             NativePrimaryButton(title: session.running ? "刷入中…" : "刷入",
                                 systemImage: "paintbrush.pointed",
@@ -371,7 +392,6 @@ struct DriftHomeView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .driftCard()
     }
 
     /// Refresh & Apply: the two ways to make a written wallpaper take

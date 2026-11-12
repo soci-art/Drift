@@ -189,9 +189,8 @@ private struct RewardCodeView: View {
                     Label("存到相册", systemImage: "square.and.arrow.down")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
                 }
-                .buttonStyle(.borderedProminent)
+                .driftGlassProminentButton()
                 Text("存好后打开微信扫一扫，选相册里的这张图就能识别。")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()

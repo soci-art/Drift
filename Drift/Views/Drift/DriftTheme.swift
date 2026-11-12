@@ -52,6 +52,39 @@ extension View {
     }
 }
 
+extension View {
+    /// One liquid-glass slab (collection #286): real glass on iOS 26+,
+    /// the legacy solid card surface below it — the same split
+    /// `driftCard` makes, minus the padding (the caller pads its own
+    /// contents; a slab frames a group, not a single card's text).
+    @ViewBuilder
+    func driftGlassSlab(cornerRadius: CGFloat = 26) -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular,
+                             in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        } else {
+            self
+                .background(Color(.secondarySystemBackground),
+                            in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+                )
+        }
+    }
+
+    /// A capsule of tinted liquid glass (collection #286) — the Home
+    /// bars' surface on iOS 26+; a solid tint capsule below it.
+    @ViewBuilder
+    func driftGlassCapsule(tint: Color) -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular.tint(tint), in: Capsule())
+        } else {
+            self.background(tint, in: Capsule())
+        }
+    }
+}
+
 /// Page background: the colour wash on iOS 26+; the flat grouped
 /// background on the legacy systems (#242).
 ///

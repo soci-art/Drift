@@ -28,6 +28,7 @@ struct PackListView: View {
     @State private var confirmDelete = false
     @State private var repairSummary: RepairSummary?
     @State private var deepRepairTarget: PosterBoardTendie?
+    @State private var previewPack: PosterBoardTendie?
     @State private var legacyURLs: Set<URL> = []
 
     private var identity: DeviceIdentity { identityMonitor.current }
@@ -45,7 +46,11 @@ struct PackListView: View {
                     ForEach(displayRows) { row in
                         PackListRow(pack: row.pack,
                                     selected: selection.tendies.contains { $0.url == row.pack.url },
-                                    kind: row.kind)
+                                    kind: row.kind,
+                                    onPreview: {
+                                        previewPack = row.pack
+                                        AppLog.op("壁纸包页：看 \(row.pack.name) 的大图")
+                                    })
                             .onTapGesture { toggle(row.pack) }
                     }
                 }
@@ -100,6 +105,16 @@ struct PackListView: View {
                     imports.append(repaired)
                 }
             }
+        }
+        .sheet(item: $previewPack) { pack in
+            // Collection #282 (Grace, 2026-11-13): the cover, big. A
+            // partial detent on purpose — the list stays visible and
+            // dimmed behind it, and the two ways out are exactly the
+            // two she named: swipe it down, or tap the area outside
+            // the sheet. Both are the sheet's own behaviour at this
+            // detent; the page itself only carries the words 下滑关闭.
+            PackCoverPreview(pack: pack)
+                .presentationDetents([.fraction(0.86)])
         }
         .overlay {
             if session.cover == .repairing {
@@ -222,14 +237,19 @@ struct PackListView: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.top, 4)
+        .padding(.top, 10)
         .padding(.bottom, 10)
         .background {
-            VStack(spacing: 0) {
-                Divider()
-                Rectangle().fill(.ultraThinMaterial)
-            }
-            .ignoresSafeArea(edges: .bottom)
+            // Collection #283 (Grace, 2026-11-13): the panel's top
+            // corners are rounded — it sits on the page like a slab
+            // with a finished edge instead of a strip glued straight
+            // across. The rounded edge is the separation now, so the
+            // old divider line is gone.
+            UnevenRoundedRectangle(cornerRadii: .init(topLeading: 20, topTrailing: 20),
+                                   style: .continuous)
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea(edges: .bottom)
+                .shadow(color: .black.opacity(0.10), radius: 10, y: -3)
         }
     }
 
@@ -463,6 +483,11 @@ private struct PackListRow: View {
     let pack: PosterBoardTendie
     let selected: Bool
     let kind: PackRowKind
+    /// Collection #282: the cover is its own tap target — tapping IT
+    /// opens the big preview, tapping anywhere else on the row just
+    /// selects. A real Button, so its taps never fall through to the
+    /// row's toggle gesture behind it.
+    let onPreview: () -> Void
 
     @State private var cover: UIImage?
 
@@ -472,18 +497,22 @@ private struct PackListRow: View {
                 .font(.title3)
                 .foregroundStyle(selected ? Color.accentColor : .secondary)
                 .frame(width: 24)
-            Group {
-                if let cover {
-                    Image(uiImage: cover).resizable().scaledToFill()
-                } else {
-                    LinearGradient(colors: [.blue.opacity(0.35), .mint.opacity(0.35)],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing)
-                        .overlay(Text(String(pack.url.lastPathComponent.prefix(1)))
-                            .font(.headline).foregroundStyle(.secondary))
+            Button(action: onPreview) {
+                Group {
+                    if let cover {
+                        Image(uiImage: cover).resizable().scaledToFill()
+                    } else {
+                        LinearGradient(colors: [.blue.opacity(0.35), .mint.opacity(0.35)],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing)
+                            .overlay(Text(String(pack.url.lastPathComponent.prefix(1)))
+                                .font(.headline).foregroundStyle(.secondary))
+                    }
                 }
+                .frame(width: 44, height: 60)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .contentShape(Rectangle())
             }
-            .frame(width: 44, height: 60)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .buttonStyle(.plain)
             VStack(alignment: .leading, spacing: 3) {
                 Text(pack.url.lastPathComponent).font(.subheadline.weight(.medium)).lineLimit(2)
                 HStack(spacing: 6) {
@@ -514,5 +543,88 @@ private struct PackListRow: View {
                 cover = PosterBoardPreview.coverImage(at: url, maxPixelSize: 180)
             }
         }
+    }
+}
+
+/// The cover, big (collection #282, Grace, 2026-11-13, layout from
+/// the approved full-page render): the pack's name and fact pills at
+/// the top, the whole-picture cover below at phone-screen
+/// proportions — every preview the pack carries, pageable when there
+/// is more than one — and at the bottom the only words the page
+/// carries about closing: 下滑关闭. (Tapping outside the sheet also
+/// closes it; that way out is behaviour, not copy — her ruling.)
+/// Selection is never touched from here.
+private struct PackCoverPreview: View {
+    let pack: PosterBoardTendie
+
+    @State private var images: [UIImage] = []
+    @State private var loaded = false
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text(pack.url.lastPathComponent)
+                .font(.headline)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 6) {
+                DriftPill(text: "\(pack.descriptorCount) 张")
+                DriftPill(text: pack.posterType.label)
+                if PackDeepRepair.isDeepRepaired(pack) {
+                    DriftPill(text: "深度修复版", tint: .blue)
+                } else if PackRepair.isRepaired(pack) {
+                    DriftPill(text: "修复版", tint: .blue)
+                }
+            }
+            stage
+            Text("下滑关闭")
+                .font(.caption).foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 22)
+        .padding(.top, 20)
+        .frame(maxWidth: .infinity)
+        .task {
+            let urls = await Task.detached {
+                PosterBoardPreview.previews(for: pack) ?? []
+            }.value
+            images = urls.compactMap { UIImage(contentsOfFile: $0.path) }
+            loaded = true
+        }
+    }
+
+    @ViewBuilder
+    private var stage: some View {
+        if images.count > 1 {
+            TabView {
+                ForEach(Array(images.enumerated()), id: \.offset) { _, image in
+                    stageImage(image)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .automatic))
+            .frame(height: 500)
+        } else if let image = images.first {
+            stageImage(image)
+        } else if loaded {
+            // A pack with no still anywhere (pure animation): the
+            // same placeholder the row shows, at stage size.
+            LinearGradient(colors: [.blue.opacity(0.35), .mint.opacity(0.35)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                .overlay(Text(String(pack.url.lastPathComponent.prefix(1)))
+                    .font(.largeTitle).foregroundStyle(.secondary))
+                .frame(width: 250, height: 500)
+                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        } else {
+            ProgressView()
+                .frame(height: 500)
+        }
+    }
+
+    private func stageImage(_ image: UIImage) -> some View {
+        Image(uiImage: image)
+            .resizable()
+            .scaledToFit()
+            .frame(maxHeight: 500)
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .shadow(color: .black.opacity(0.22), radius: 18, y: 8)
     }
 }

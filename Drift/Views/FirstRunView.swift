@@ -294,13 +294,13 @@ struct FirstRunView: View {
                     } label: {
                         Text("把这些值抄进隧道 App")
                     }
-                    .buttonStyle(.bordered)
+                    .driftGlassButton()
                     Button {
                         Task { await probe() }
                     } label: {
                         Label("再检测一次", systemImage: "arrow.clockwise")
                     }
-                    .buttonStyle(.bordered)
+                    .driftGlassButton()
                 }
                 if tunnel == .interfaceMissing {
                     NativeNote("没有接口带 \(Tunnel.ifaceIP) 这个地址——隧道 App 可能连错了网络，或者隧道 IP 还留着默认值。")

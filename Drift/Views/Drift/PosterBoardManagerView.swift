@@ -169,19 +169,9 @@ struct PosterBoardManagerView: View {
                 }
             }
             Spacer()
-            // #275 (Grace, 2026-11-13): the category at the row's
-            // right edge — red for a system wallpaper, orange for a
-            // flashed one, nothing at all when the scan could not
-            // positively tell (photo wallpapers included). No extra
-            // small print; her words.
-            switch entry.origin {
-            case .system:
-                Text("系统壁纸").font(.caption.weight(.medium)).foregroundStyle(.red)
-            case .flashed:
-                Text("刷入壁纸").font(.caption.weight(.medium)).foregroundStyle(.orange)
-            case .unknown:
-                EmptyView()
-            }
+            // #288 (Grace, 2026-11-13): no category label here — the
+            // page makes no judgement about who wrote a wallpaper.
+            // The #275 labels that briefly sat at this edge are gone.
         }
         .padding(.vertical, 2)
     }
