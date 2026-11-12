@@ -326,7 +326,7 @@ enum PackRepair {
         }
         for dir in directories.sorted() {
             try archive.addEntry(with: dir + "/", type: .directory,
-                                 uncompressedSize: 0) { _, _ in Data() }
+                                 uncompressedSize: Int64(0)) { _, _ in Data() }
         }
         for file in files.sorted(by: { $0.relative < $1.relative }) {
             try archive.addEntry(with: file.relative, fileURL: file.url)

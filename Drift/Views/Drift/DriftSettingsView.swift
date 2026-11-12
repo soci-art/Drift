@@ -30,10 +30,15 @@ struct DriftSettingsView: View {
     @State private var confirmClearCache = false
     @State private var cacheNote: String?
     @State private var notificationsAllowed = true
+    @State private var showAnnouncement = false
+    @State private var uploading = false
+    @State private var confirmUpload = false
+    @State private var uploadNote: String?
 
     var body: some View {
         NavigationStack {
             List {
+                announcementSection
                 connectionSection
                 localRouteSection
                 restoreSealedSection
@@ -61,6 +66,16 @@ struct DriftSettingsView: View {
             }
             .sheet(isPresented: $showGuide) {
                 FirstRunView(onClose: { showGuide = false })
+            }
+            .sheet(isPresented: $showAnnouncement) {
+                AppAnnouncementView { showAnnouncement = false }
+                    .presentationDetents([.large])
+            }
+            .alert("上传日志？", isPresented: $confirmUpload) {
+                Button("上传") { Task { await uploadLogs() } }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("把这份记录包（诊断信息和运行日志）传给开发者，只用来排查问题。")
             }
             .onChange(of: wirelessPair.generatedRecordPath) { _, path in
                 adoptWirelessRecord(at: path)
@@ -111,6 +126,18 @@ struct DriftSettingsView: View {
             }
             .sheet(item: $sharePackage) { item in
                 ActivityShareSheet(url: item.url)
+            }
+        }
+    }
+
+    // MARK: - Announcement
+
+    /// The update announcement, re-openable from Settings (Grace,
+    /// 2026-11-12): pinned at the very top, above the tunnel section.
+    private var announcementSection: some View {
+        Section {
+            Button { showAnnouncement = true } label: {
+                Label("更新公告", systemImage: "megaphone")
             }
         }
     }
@@ -533,12 +560,45 @@ struct DriftSettingsView: View {
                       systemImage: "doc.zipper")
             }
             .disabled(packaging)
+            Button {
+                confirmUpload = true
+            } label: {
+                Label(uploading ? "正在上传" : "上传日志",
+                      systemImage: "arrow.up.doc")
+            }
+            .disabled(uploading || packaging)
             if let recordsNote {
                 Text(recordsNote)
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Text("出问题时点这里打包，把整包发出去就行，不用再一个个找文件。")
+            if let uploadNote {
+                Text(uploadNote)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text("出问题时点这里打包，把整包发出去就行，不用再一个个找文件。也可以点「上传日志」直接传给开发者，不用自己转发。")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func uploadLogs() async {
+        uploading = true
+        uploadNote = nil
+        defer { uploading = false }
+        let package: URL
+        do {
+            package = try await LogPackage.build()
+        } catch {
+            AppLog.write("records: upload FAILED at packaging — \(error.localizedDescription)")
+            uploadNote = "上传失败：日志打包没成"
+            return
+        }
+        do {
+            try await LogUpload.upload(package: package)
+            AppLog.write("records: uploaded log package \(package.lastPathComponent)")
+            uploadNote = "上传成功"
+        } catch {
+            AppLog.write("records: upload FAILED — \(error.localizedDescription)")
+            uploadNote = "上传失败：\(error.localizedDescription)"
         }
     }
 

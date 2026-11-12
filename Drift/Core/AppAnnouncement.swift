@@ -46,7 +46,11 @@ enum AppAnnouncement {
     }
 
     static let items: [Item] = [
-        Item(icon: "wrench.and.screwdriver.fill", title: "细节修复",
-             body: "修复了一些细节问题"),
+        Item(icon: "checkmark.circle.fill", title: "修复了一些问题",
+             body: ""),
+        Item(icon: "wrench.and.screwdriver.fill", title: "新增壁纸修复选项",
+             body: ""),
+        Item(icon: "arrow.up.doc.fill", title: "新增日志上传功能",
+             body: ""),
     ]
 }
