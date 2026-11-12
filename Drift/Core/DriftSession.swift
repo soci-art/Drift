@@ -32,6 +32,37 @@ final class DriftSession: ObservableObject {
     /// other callers, and both clear it when the work ends.
     @Published var flashCover = false
 
+    /// Which full-screen cover is up, when it is not the flashing one
+    /// (collection round 2026-11-12, Grace): restarting PosterBoard and
+    /// repairing a pack get the same treatment as flashing — a blocking
+    /// card with a progress bar and no text under the bar. The respring
+    /// case exists for the post-delete activation (#212): only the two
+    /// tunnel methods' post-delete actions are covered; the local
+    /// method's swipe-close has nothing in-app to cover.
+    @Published var cover: CoverKind?
+    /// The up cover's progress, 0...1, or nil while no phase has
+    /// reported. Fed by the engine's real run progress while flashing,
+    /// and by phase marks for restart / repair.
+    @Published var coverProgress: Double?
+
+    enum CoverKind {
+        case restartingPosterBoard, respringing, repairing
+        var title: String {
+            switch self {
+            case .restartingPosterBoard: return "正在重启 PosterBoard"
+            case .respringing: return "正在注销"
+            case .repairing: return "正在修复"
+            }
+        }
+    }
+
+    /// A plain explanation the user asked to see — the restore seal's
+    /// notice, a sealed method's reason, the post-import problem list.
+    /// Shown in its own alert (#206: the apply card's status line no
+    /// longer carries these).
+    @Published var noticeText: String?
+    @Published var noticeTitle: String = "提示"
+
     /// How the last finished run took effect, when it used the in-process
     /// route. The home page shows a manual-respring button from this.
     @Published private(set) var lastEffect: PosterBoardEffect?
@@ -59,6 +90,11 @@ final class DriftSession: ObservableObject {
     /// start the core. Idempotent: safe to call from every appearance.
     func bootstrap() {
         DriftEngine.shared.onLog = { line in RunLog.shared.append(line) }
+        DriftEngine.shared.onProgress = { percent in
+            Task { @MainActor in
+                DriftSession.shared.coverProgress = percent.isNaN ? nil : percent / 100
+            }
+        }
         guard !didBootstrap else { return }
         didBootstrap = true
         let autoImportDisabled = UserDefaults.standard.bool(forKey: PairingRecord.Key.autoImportDisabled)
@@ -343,6 +379,34 @@ final class DriftSession: ObservableObject {
     // MARK: - Wallpaper runs
 
     func cancelRun() { DriftEngine.shared.requestCancel() }
+
+    /// Restart PosterBoard under its cover (#201): the bar sits on the
+    /// first of the two phases (kill → relaunch) while the attempt is
+    /// in flight and completes when the result lands.
+    func restartPosterBoardUnderCover() async -> (confirmed: Bool, status: PosterRefresh.Status) {
+        cover = .restartingPosterBoard
+        coverProgress = 0.5
+        defer { cover = nil; coverProgress = nil }
+        let result = await PosterRefresh.attempt(pairingPath: AppPaths.pairingFile.path)
+        coverProgress = 1
+        try? await Task.sleep(nanoseconds: 350_000_000)
+        return result
+    }
+
+    /// Trigger the respring under a cover (#212, post-delete tunnel
+    /// activations only). The respring itself ends the UI moments
+    /// later; the cover is for the wait in between.
+    @discardableResult
+    func respringUnderCover() -> Bool {
+        cover = .respringing
+        coverProgress = nil
+        let triggered = NeoSpring.trigger()
+        Task {
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            if cover == .respringing { cover = nil }
+        }
+        return triggered
+    }
 
     /// Run one wallpaper apply in the channel the judgement chose and record
     /// the four facts separately: the method the user picked, the channel the

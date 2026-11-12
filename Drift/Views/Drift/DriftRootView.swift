@@ -75,27 +75,42 @@ struct DriftRootView: View {
             get: { session.errorText != nil },
             set: { if !$0 { session.errorText = nil } }
         )) {
-            Button("好") { session.errorText = nil }
+            Button("知道了") { session.errorText = nil }
         } message: {
             Text(session.errorText ?? "")
         }
+        .alert(session.noticeTitle, isPresented: Binding(
+            get: { session.noticeText != nil },
+            set: { if !$0 { session.noticeText = nil } }
+        )) {
+            Button("知道了") { session.noticeText = nil }
+        } message: {
+            Text(session.noticeText ?? "")
+        }
         // Collection #150/#151 (Grace, 2026-11-11): while a flash run is
         // going, cover the whole app with a blocking card — nothing can be
-        // tapped until the run finishes. Deliberately minimal: spinner,
-        // the words, nothing else.
+        // tapped until the run finishes. The 2026-11-12 round adds the
+        // same cover for restarting PosterBoard, the post-delete respring
+        // and pack repair (#201/#210/#212), and a progress bar under the
+        // words — phase-driven, with no text under the bar (#202).
         .overlay {
-            if session.flashCover {
+            if session.flashCover || session.cover != nil {
                 ZStack {
                     Color.black.opacity(0.35)
                         .ignoresSafeArea()
                     VStack(spacing: 12) {
                         ProgressView()
                             .controlSize(.large)
-                        Text("正在刷入")
+                        Text(session.flashCover ? "正在刷入" : (session.cover?.title ?? ""))
                             .font(.headline)
                         Text("请勿熄屏或退出 App")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+                        if let progress = session.coverProgress {
+                            ProgressView(value: progress)
+                                .progressViewStyle(.linear)
+                                .frame(width: 220)
+                        }
                     }
                     .padding(.horizontal, 36)
                     .padding(.vertical, 28)
@@ -159,6 +174,10 @@ struct DriftRootView: View {
             do {
                 let tendie = try PosterBoardImports.import(from: url)
                 inboxNote = "壁纸包「\(tendie.url.lastPathComponent)」已导入（\(tendie.descriptorCount) 张）。到「壁纸」页勾选后刷入。"
+                if !PackRepair.blockingIssues(of: tendie).isEmpty {
+                    session.noticeTitle = "有壁纸包需要修一下"
+                    session.noticeText = "「\(tendie.name)」的结构有点问题，现在刷可能会找不到壁纸。点开它的详细页，里面有「壁纸修复」可以修。"
+                }
             } catch {
                 session.errorText = error.localizedDescription
             }

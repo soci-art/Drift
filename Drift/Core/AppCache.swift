@@ -20,7 +20,15 @@ enum AppCache {
         var catalogCache = 0
         var fetchScratch = 0
         var logs = 0
-        var total: Int { previews + catalogCache + fetchScratch + logs }
+        /// Update IPAs the checker downloaded (#196): they live in
+        /// Documents/Downloads, outside every other cache directory,
+        /// and re-download on demand — cache by any honest definition.
+        var updates = 0
+        var total: Int { previews + catalogCache + fetchScratch + logs + updates }
+    }
+
+    private static var downloadsDirectory: URL {
+        URL.documents.appendingPathComponent("Downloads", isDirectory: true)
     }
 
     private static var previewDirectories: [URL] {
@@ -47,6 +55,7 @@ enum AppCache {
         result.catalogCache = directorySize(catalogCacheDirectory)
         result.fetchScratch = directorySize(fetchScratchDirectory)
         for file in logFiles { result.logs += fileSize(file) }
+        result.updates = directorySize(downloadsDirectory)
         return result
     }
 
@@ -59,6 +68,7 @@ enum AppCache {
         for dir in previewDirectories { removeContents(of: dir) }
         removeContents(of: catalogCacheDirectory)
         removeContents(of: fetchScratchDirectory)
+        removeContents(of: downloadsDirectory)
         for file in logFiles {
             if file == AppPaths.diagnostics {
                 try? fm.removeItem(at: file)

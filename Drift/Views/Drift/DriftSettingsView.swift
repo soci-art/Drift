@@ -15,7 +15,6 @@ struct DriftSettingsView: View {
     @State private var showGuide = false
     @State private var confirmResetPairing = false
     @State private var history: [ApplyHistory.Record] = ApplyHistory.load()
-    @State private var autoConvert = PosterBoardPreferences.autoConvertLegacy
     @State private var packaging = false
     @State private var sharePackage: SharePackageItem?
     @State private var recordsNote: String?
@@ -37,7 +36,6 @@ struct DriftSettingsView: View {
             List {
                 connectionSection
                 localRouteSection
-                applySection
                 restoreSealedSection
                 historySection
                 recordsSection
@@ -75,9 +73,9 @@ struct DriftSettingsView: View {
             .onChange(of: wirelessPair.pin) { _, _ in
                 refreshNotificationStatus()
             }
-            .confirmationDialog("删除这张壁纸？", isPresented: Binding(
+            .alert("删除这张壁纸？", isPresented: Binding(
                 get: { receiptToDelete != nil },
-                set: { if !$0 { receiptToDelete = nil } }), titleVisibility: .visible
+                set: { if !$0 { receiptToDelete = nil } })
             ) {
                 Button("删除", role: .destructive) {
                     guard let receipt = receiptToDelete else { return }
@@ -90,8 +88,7 @@ struct DriftSettingsView: View {
                     Text("「\(receipt.pack)」将被删除。如果删的正是当前正在用的壁纸，生效后系统会换回默认壁纸。")
                 }
             }
-            .confirmationDialog("清空全部刷入记录？", isPresented: $confirmClearHistory,
-                                titleVisibility: .visible) {
+            .alert("清空全部刷入记录？", isPresented: $confirmClearHistory) {
                 Button("清空记录", role: .destructive) {
                     ApplyHistory.clear()
                     history = []
@@ -101,8 +98,7 @@ struct DriftSettingsView: View {
             } message: {
                 Text("记录清空后无法恢复。此操作只清记录，不会删除设备上已刷入的壁纸——要删壁纸请用「管理刷入的壁纸」。")
             }
-            .confirmationDialog("删除完成", isPresented: $showDeleteActivation,
-                                titleVisibility: .visible) {
+            .alert("删除完成", isPresented: $showDeleteActivation) {
                 Button(deleteActivationKind.actionTitle) { runDeleteActivation() }
                 Button("稍后再说", role: .cancel) {}
             } message: {
@@ -138,7 +134,7 @@ struct DriftSettingsView: View {
                 Button(role: .destructive) { confirmResetPairing = true } label: {
                     Label("删除配对（停止使用）", systemImage: "link.badge.minus")
                 }
-                .confirmationDialog("删除当前配对？", isPresented: $confirmResetPairing, titleVisibility: .visible) {
+                .alert("删除当前配对？", isPresented: $confirmResetPairing) {
                     Button("删除", role: .destructive) { session.resetPairing() }
                     Button("取消", role: .cancel) {}
                 } message: {
@@ -212,7 +208,7 @@ struct DriftSettingsView: View {
                     }
                 }
             }
-            Text("组名在运行时从安装包内嵌的签名描述文件读取。能用的组只有证书签名才带：免费 ID 签和 SideStore / AltStore 改签都用不了本机直刷。")
+            Text("组名在运行时从安装包内嵌的签名描述文件读取。能用的组只有证书签名才带：免费 ID 签和 SideStore / AltStore 都用不了本机直刷。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -257,13 +253,13 @@ struct DriftSettingsView: View {
                 : "没能自动打开 PosterBoard：请打开锁定屏幕壁纸选择器来刷新；如果删掉的壁纸还在，从应用切换器关闭 PosterBoard 后再看。"
         case .restartPosterBoard:
             Task {
-                let result = await PosterRefresh.attempt(pairingPath: AppPaths.pairingFile.path)
+                let result = await session.restartPosterBoardUnderCover()
                 recordsNote = result.status.explanation + (result.confirmed
                     ? "。删掉的壁纸已经生效移除。"
                     : "。可以连上隧道再试，或改用注销。")
             }
         case .respring:
-            NeoSpring.trigger()
+            session.respringUnderCover()
         }
     }
 
@@ -326,19 +322,6 @@ struct DriftSettingsView: View {
             DriftEngine.shared.log("settings: wireless pairing record adopted (\(PairingRecord.sourceLabel(record)))")
         } catch {
             session.errorText = error.localizedDescription
-        }
-    }
-
-    // MARK: - Apply
-
-    private var applySection: some View {
-        Section("刷入") {
-            Toggle("旧格式壁纸包自动转换", isOn: Binding(
-                get: { autoConvert },
-                set: { autoConvert = $0; PosterBoardPreferences.autoConvertLegacy = $0 }
-            ))
-            Text("打开时，旧格式包刷入前会转成新格式；每个包第一次勾选时会问你转还是按原样，答案会记住。关掉后，一律按原样刷入、不转换。")
-                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -606,14 +589,13 @@ struct DriftSettingsView: View {
             if let cacheNote {
                 Text(cacheNote).font(.caption).foregroundStyle(.secondary)
             }
-            Text("缓存只清能再生的：壁纸预览图、目录缓存、抓取临时文件和日志。配对文件、回执、刷入记录、设置和导入的壁纸包都不动。")
+            Text("缓存只清能再生的：壁纸预览图、目录缓存、抓取临时文件、日志和检查更新下载的安装包。配对文件、回执、刷入记录、设置和导入的壁纸包都不动。")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .task {
             cacheBreakdown = await Task.detached { AppCache.measure() }.value
         }
-        .confirmationDialog("清除这些缓存？", isPresented: $confirmClearCache,
-                            titleVisibility: .visible) {
+        .alert("清除这些缓存？", isPresented: $confirmClearCache) {
             Button("清除", role: .destructive) {
                 Task {
                     let freed = await Task.detached { AppCache.clear() }.value
@@ -624,7 +606,7 @@ struct DriftSettingsView: View {
             Button("取消", role: .cancel) {}
         } message: {
             if let cacheBreakdown {
-                Text("预览图 \(AppCache.format(cacheBreakdown.previews))、目录缓存 \(AppCache.format(cacheBreakdown.catalogCache))、临时文件 \(AppCache.format(cacheBreakdown.fetchScratch))、日志 \(AppCache.format(cacheBreakdown.logs))，共 \(AppCache.format(cacheBreakdown.total))。")
+                Text("预览图 \(AppCache.format(cacheBreakdown.previews))、目录缓存 \(AppCache.format(cacheBreakdown.catalogCache))、临时文件 \(AppCache.format(cacheBreakdown.fetchScratch))、日志 \(AppCache.format(cacheBreakdown.logs))、下载的安装包 \(AppCache.format(cacheBreakdown.updates))，共 \(AppCache.format(cacheBreakdown.total))。")
             }
         }
     }

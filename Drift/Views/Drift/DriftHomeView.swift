@@ -188,7 +188,8 @@ struct DriftHomeView: View {
             }
             if !DriftRestoreGate.isEnabled {
                 Button {
-                    statusLine = DriftRestoreGate.notice
+                    session.noticeTitle = "恢复刷（已封存）"
+                    session.noticeText = DriftRestoreGate.notice
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "lock.fill").font(.caption)
@@ -228,7 +229,8 @@ struct DriftHomeView: View {
         }
         return Button {
             if sealed {
-                statusLine = option?.reason
+                session.noticeTitle = "本机直刷不可选"
+                session.noticeText = option?.reason
                 return
             }
             manualPickRaw = pick == .auto ? nil : pick.rawValue
@@ -276,17 +278,20 @@ struct DriftHomeView: View {
 
     private var packsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // #209 (Grace, 2026-11-12): no separate import button — the
+            // packs area itself is tapped to import.
             HStack {
                 Text("壁纸包").font(.subheadline.weight(.semibold))
                 Spacer()
-                Button { importingTendies = true } label: {
-                    Label("导入", systemImage: "plus")
-                }
-                .buttonStyle(.glass)
+                Image(systemName: "plus.circle").foregroundStyle(.secondary)
             }
+            .contentShape(Rectangle())
+            .onTapGesture { importingTendies = true }
             if imports.isEmpty {
-                Text("还没有导入壁纸包。点「导入」选 .tendies 文件，或在「文件」App 里对壁纸包点打开方式选 Drift。")
+                Text("还没有导入壁纸包。点这里选 .tendies 文件导入，或在「文件」App 里对壁纸包点打开方式选 Drift。")
                     .font(.subheadline).foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
+                    .onTapGesture { importingTendies = true }
             }
             ForEach(imports) { pack in
                 DriftPackRow(pack: pack,
@@ -356,7 +361,7 @@ struct DriftHomeView: View {
     private var activationCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("刷新与生效").font(.subheadline.weight(.semibold))
-            Text("刷完壁纸还没生效时用这里。两个办法，轻的先试，不行再用注销。")
+            Text("刷完壁纸还没生效时用这里。")
                 .font(.subheadline).foregroundStyle(.secondary)
             NativePrimaryButton(title: "结束 PosterBoard",
                                 systemImage: "arrow.triangle.2.circlepath",
@@ -379,7 +384,7 @@ struct DriftHomeView: View {
             .buttonStyle(.glass)
             .controlSize(.large)
             .disabled(session.running)
-            .confirmationDialog("确认注销？", isPresented: $confirmRespring, titleVisibility: .visible) {
+            .alert("确认注销？", isPresented: $confirmRespring) {
                 Button("立即注销", role: .destructive) { respringNow() }
                 Button("取消", role: .cancel) {}
             } message: {
@@ -457,7 +462,7 @@ struct DriftHomeView: View {
         // but a blocked selection must never even be shaped into one.)
         if judgement.isBlocked {
             session.flashCover = false
-            statusLine = judgement.blockedReason
+            session.errorText = judgement.blockedReason
             return
         }
         var runSelection = selection
@@ -473,12 +478,17 @@ struct DriftHomeView: View {
             let checked = DriftJudge.judge(identity: identity, selection: runSelection,
                                            pick: manualPick, tunnelReady: tunnelReady)
             if checked.isBlocked {
-                statusLine = checked.blockedReason
+                session.errorText = checked.blockedReason
                 return
             }
             let outcome = await session.run(selection: runSelection, mode: checked.mode,
                                             pick: manualPick, identity: identity)
-            statusLine = outcome.message
+            if outcome.ok {
+                statusLine = outcome.message
+            } else {
+                statusLine = nil
+                session.errorText = outcome.message
+            }
         }
     }
 
@@ -506,11 +516,15 @@ struct DriftHomeView: View {
     }
 
     private func handleTendiesPick(_ urls: [URL]) {
+        var problemPacks: [String] = []
         for url in urls {
             do {
                 let tendie = try PosterBoardImports.import(from: url)
                 if !imports.contains(where: { $0.url == tendie.url }) {
                     imports.append(tendie)
+                }
+                if !PackRepair.blockingIssues(of: tendie).isEmpty {
+                    problemPacks.append(tendie.name)
                 }
                 Task.detached { _ = PosterBoardPreview.previews(for: tendie) }
             } catch {
@@ -518,6 +532,11 @@ struct DriftHomeView: View {
             }
         }
         imports = PosterBoardImports.load()
+        if !problemPacks.isEmpty {
+            session.noticeTitle = "有壁纸包需要修一下"
+            session.noticeText = problemPacks.map { "「\($0)」" }.joined(separator: "、")
+                + "的结构有点问题，现在刷可能会找不到壁纸。点开它的详细页，里面有「壁纸修复」可以修。"
+        }
     }
 
     private func handlePairingPick(_ urls: [URL]) {
@@ -623,7 +642,7 @@ struct DriftPackRow: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(pack.url.lastPathComponent).font(.subheadline.weight(.medium)).lineLimit(1)
+                        Text(pack.url.lastPathComponent).font(.subheadline.weight(.medium)).lineLimit(2)
                         HStack(spacing: 6) {
                             DriftPill(text: "\(pack.descriptorCount) 张")
                             DriftPill(text: pack.posterType.label)
@@ -709,13 +728,18 @@ struct DriftPackDetail: View {
     @Binding var selection: PosterBoardSelection
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var identityMonitor: DeviceIdentityMonitor
+    @EnvironmentObject private var session: DriftSession
     @State private var previews: [UIImage] = []
     @State private var packHasLegacy = false
+    @State private var repairAlert: RepairAlert?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    Text(current.name)
+                        .font(.headline)
+                        .fixedSize(horizontal: false, vertical: true)
                     if previews.isEmpty {
                         NativeNote("这个包提不出预览图（纯动画包只有动画文件、没有静态图时就会这样），不影响刷入。")
                     } else {
@@ -779,21 +803,37 @@ struct DriftPackDetail: View {
                     if current.isUnsafeContainer {
                         NativeSafetyNote("这个包带着壁纸商店的数据库，属于「容器包」：刷入可能弄乱现有壁纸索引，只能用恢复刷刷入。" + DriftRestoreGate.notice + "这类包只能走恢复刷；恢复刷已封存，目前刷不了。")
                     }
-                    Button(role: .destructive) {
-                        PosterBoardPreview.invalidate(for: current)
-                        PosterBoardImports.remove(current)
-                        imports.removeAll { $0.url == current.url }
-                        selection.tendies.removeAll { $0.url == current.url }
-                        dismiss()
-                    } label: {
-                        Label("删除这个包", systemImage: "trash")
+                    HStack(spacing: 12) {
+                        Button(role: .destructive) {
+                            PosterBoardPreview.invalidate(for: current)
+                            PosterBoardImports.remove(current)
+                            imports.removeAll { $0.url == current.url }
+                            selection.tendies.removeAll { $0.url == current.url }
+                            dismiss()
+                        } label: {
+                            Label("删除这个包", systemImage: "trash")
+                        }
+                        .buttonStyle(.glass)
+                        if PackRepair.isRepaired(current) {
+                            Label("已修复", systemImage: "checkmark.circle")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                        } else {
+                            Button {
+                                runRepair()
+                            } label: {
+                                Label("壁纸修复", systemImage: "wrench.and.screwdriver")
+                            }
+                            .buttonStyle(.glass)
+                        }
                     }
-                    .buttonStyle(.glass)
                 }
                 .padding(16)
             }
             .background { DriftBackground() }
-            .navigationTitle(pack.url.lastPathComponent)
+            .navigationTitle("壁纸详情")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -804,6 +844,45 @@ struct DriftPackDetail: View {
                 let urls = await Task.detached { PosterBoardPreview.previews(for: pack) }.value
                 previews = urls.compactMap { (try? Data(contentsOf: $0)).flatMap(UIImage.init(data:)) }
                 packHasLegacy = ((try? pack.legacyFamilies()) ?? []).isEmpty == false
+            }
+            .overlay {
+                if session.cover == .repairing {
+                    ZStack {
+                        Color.black.opacity(0.35)
+                            .ignoresSafeArea()
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .controlSize(.large)
+                            Text("正在修复")
+                                .font(.headline)
+                            Text("请勿熄屏或退出 App")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            if let progress = session.coverProgress {
+                                ProgressView(value: progress)
+                                    .progressViewStyle(.linear)
+                                    .frame(width: 220)
+                            }
+                        }
+                        .padding(.horizontal, 36)
+                        .padding(.vertical, 28)
+                        .background(.regularMaterial,
+                                    in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .alert(item: $repairAlert) { item in
+                switch item {
+                case .done(let name):
+                    return Alert(title: Text("修好了"),
+                                 message: Text("修好的包已放进壁纸列表，名字是「\(name)」。请返回主页查看。"),
+                                 dismissButton: .default(Text("知道了")))
+                case .noneNeeded:
+                    return Alert(title: Text("壁纸修复"),
+                                 message: Text("这个包没查到需要修的毛病，无需修复。"),
+                                 dismissButton: .default(Text("知道了")))
+                }
             }
         }
     }
@@ -829,6 +908,47 @@ struct DriftPackDetail: View {
         let version = identityMonitor.current.version
         guard let major = Int(version.split(separator: ".").first ?? "") else { return true }
         return major >= 27
+    }
+
+    /// The repair button's outcome, shown as an alert (#210): a new
+    /// (patched) pack in the list, or 无需修复 when nothing was wrong.
+    private enum RepairAlert: Identifiable {
+        case done(String)
+        case noneNeeded
+        var id: String {
+            switch self {
+            case .done(let name): return "done-\(name)"
+            case .noneNeeded: return "none-needed"
+            }
+        }
+    }
+
+    private func runRepair() {
+        let target = current
+        guard !PackRepair.inspect(target).isEmpty else {
+            repairAlert = .noneNeeded
+            return
+        }
+        let version = identityMonitor.current.version.isEmpty
+            ? WorseQueryEscape.processVersion : identityMonitor.current.version
+        session.cover = .repairing
+        session.coverProgress = 0
+        Task {
+            defer { session.cover = nil; session.coverProgress = nil }
+            do {
+                let repaired = try await Task.detached {
+                    try PackRepair.repair(target, deviceVersion: version) { phase in
+                        Task { @MainActor in DriftSession.shared.coverProgress = phase }
+                    }
+                }.value
+                if !imports.contains(where: { $0.url == repaired.url }) {
+                    imports.append(repaired)
+                }
+                repairAlert = .done(repaired.name)
+            } catch {
+                session.errorText = error.localizedDescription
+            }
+        }
     }
 
     private func setConvert(_ convert: Bool) {

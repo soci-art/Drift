@@ -173,7 +173,8 @@ struct DriftVideoView: View {
         // while the gate is closed the tap only explains — nothing is
         // shaped into a run. (The session funnel refuses it too.)
         guard DriftRestoreGate.isEnabled else {
-            statusLine = DriftRestoreGate.notice
+            session.noticeTitle = "恢复刷（已封存）"
+            session.noticeText = DriftRestoreGate.notice
             return
         }
         var videoSelection = PosterBoardSelection()
@@ -186,7 +187,12 @@ struct DriftVideoView: View {
         Task {
             let outcome = await session.run(selection: videoSelection, mode: .backup,
                                             pick: .auto, identity: identity)
-            statusLine = outcome.message
+            if outcome.ok {
+                statusLine = outcome.message
+            } else {
+                statusLine = nil
+                session.errorText = outcome.message
+            }
         }
     }
 

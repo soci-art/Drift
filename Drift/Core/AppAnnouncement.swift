@@ -23,7 +23,7 @@ enum AppAnnouncement {
     /// One id per shipped build: "3.0.7 (20)".
     static var id: String { "\(version) (\(build))" }
 
-    static let date = "2026年11月11日"
+    static let date = "2026年11月12日"
 
     static var versionLine: String { "版本 \(version)（构建 \(build)）· \(date)" }
 
@@ -46,11 +46,7 @@ enum AppAnnouncement {
     }
 
     static let items: [Item] = [
-        Item(icon: "megaphone.fill", title: "公告改版",
-             body: "更新公告换了更正式的版式：页头带版本号和日期，每条更新都有小标题。"),
-        Item(icon: "bell.fill", title: "权限提前问",
-             body: "第一次打开 App 就会把需要的权限一次问清；向导里配对时，验证码通知也能及时发出来。"),
-        Item(icon: "sparkles", title: "向导精简",
-             body: "设置向导的配对页删掉了多余的说明：状态只说正在等待配对，指引只留一行路径，两张卡只留标题。"),
+        Item(icon: "wrench.and.screwdriver.fill", title: "细节修复",
+             body: "修复了一些细节问题"),
     ]
 }

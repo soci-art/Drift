@@ -55,12 +55,6 @@ struct PosterBoardManagerView: View {
                     .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
 
-            if let loadError {
-                Section {
-                    Text(loadError).foregroundStyle(.secondary)
-                }
-            }
-
             if loading {
                 Section { ProgressView() }
             } else if entries.isEmpty && loadError == nil {
@@ -95,8 +89,7 @@ struct PosterBoardManagerView: View {
         .navigationTitle("管理刷入的壁纸")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
-        .confirmationDialog("确认删除这些壁纸？", isPresented: $confirmDelete,
-                            titleVisibility: .visible) {
+        .alert("确认删除这些壁纸？", isPresented: $confirmDelete) {
             Button("删除", role: .destructive) {
                 Task { await deleteSelected() }
             }
@@ -109,8 +102,7 @@ struct PosterBoardManagerView: View {
             Alert(title: Text(item.title), message: Text(item.message),
                   dismissButton: .default(Text("知道了")))
         }
-        .confirmationDialog("删除完成", isPresented: $showActivationPrompt,
-                            titleVisibility: .visible) {
+        .alert("删除完成", isPresented: $showActivationPrompt) {
             Button(activationKind.actionTitle) { runActivation() }
             Button("稍后再说", role: .cancel) {}
         } message: {
@@ -131,7 +123,7 @@ struct PosterBoardManagerView: View {
                 offersRefresh: false)
         case .restartPosterBoard:
             Task {
-                let result = await PosterRefresh.attempt(pairingPath: AppPaths.pairingFile.path)
+                let result = await session.restartPosterBoardUnderCover()
                 notice = ManagerNotice(
                     title: result.confirmed ? "已重启 PosterBoard" : "没重启成",
                     message: result.status.explanation + (result.confirmed
@@ -140,7 +132,7 @@ struct PosterBoardManagerView: View {
                     offersRefresh: false)
             }
         case .respring:
-            let triggered = NeoSpring.trigger()
+            let triggered = session.respringUnderCover()
             notice = ManagerNotice(
                 title: triggered ? "已触发注销" : "注销没触发成",
                 message: triggered
@@ -189,6 +181,9 @@ struct PosterBoardManagerView: View {
         entries = result.entries
         sourceLabel = result.source
         loadError = result.reason
+        if let reason = result.reason {
+            session.errorText = reason
+        }
         selected = selected.intersection(Set(entries.map(\.id)))
     }
 

@@ -52,6 +52,6 @@ enum InstallEnvironment {
         if current == .nested {
             return "这个 App 是套在另一个 App 里装的（比如 LiveContainer），不是正经装在手机上，本机直刷用不了；要用证书正常签名装到手机上才行。隧道那两种不受这个影响。"
         }
-        return "你这份签名没有能用的存储区，本机直刷用不了。本机直刷只有证书签的才行——免费 ID 签、SideStore / AltStore 改签都给不了能用的存储区。"
+        return "你这份签名没有能用的存储区，本机直刷用不了。本机直刷只有证书签的才行——免费 ID 签和 SideStore / AltStore 都给不了能用的存储区。"
     }
 }
