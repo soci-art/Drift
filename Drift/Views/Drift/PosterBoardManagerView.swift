@@ -89,15 +89,14 @@ struct PosterBoardManagerView: View {
         .navigationTitle("管理刷入的壁纸")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
-        .alert("确认删除这些壁纸？", isPresented: $confirmDelete) {
-            Button("删除", role: .destructive) {
-                Task { await deleteSelected() }
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text(selectedEntries.map { "· \($0.name)（\($0.provider) / \($0.uuid)）" }.joined(separator: "\n")
-                + "\n如果删的正是当前正在使用的壁纸，生效后系统会换回默认壁纸。")
-        }
+        .driftActionSheet(isPresented: $confirmDelete, title: "确认删除这些壁纸？",
+                          message: selectedEntries.map { "· \($0.name)（\($0.provider) / \($0.uuid)）" }.joined(separator: "\n")
+                            + "\n如果删的正是当前正在使用的壁纸，生效后系统会换回默认壁纸。",
+                          actions: [
+                            DriftSheetAction("删除", destructive: true) {
+                                Task { await deleteSelected() }
+                            },
+                          ])
         .alert(item: $notice) { item in
             Alert(title: Text(item.title), message: Text(item.message),
                   dismissButton: .default(Text("知道了")))

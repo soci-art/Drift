@@ -410,12 +410,11 @@ struct DriftHomeView: View {
             .driftGlassButton()
             .controlSize(.large)
             .disabled(session.running)
-            .alert("确认注销？", isPresented: $confirmRespring) {
-                Button("立即注销", role: .destructive) { respringNow() }
-                Button("取消", role: .cancel) {}
-            } message: {
-                Text("将立即注销，界面会重启一遍，壁纸在重启后生效。")
-            }
+            .driftActionSheet(isPresented: $confirmRespring, title: "确认注销？",
+                              message: "将立即注销，界面会重启一遍，壁纸在重启后生效。",
+                              actions: [
+                                DriftSheetAction("立即注销", destructive: true) { respringNow() },
+                              ])
             if session.running {
                 Text("正在刷入，刷完再注销。")
                     .font(.caption).foregroundStyle(.secondary)

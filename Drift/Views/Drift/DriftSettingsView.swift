@@ -76,12 +76,11 @@ struct DriftSettingsView: View {
                 AppAnnouncementView(manualEntry: true) { showAnnouncement = false }
                     .presentationDetents([.large])
             }
-            .alert("上传日志？", isPresented: $confirmUpload) {
-                Button("上传") { Task { await uploadLogs() } }
-                Button("取消", role: .cancel) {}
-            } message: {
-                Text("把这份记录包（诊断信息和运行日志）传给开发者，只用来排查问题。")
-            }
+            .driftActionSheet(isPresented: $confirmUpload, title: "上传日志？",
+                              message: "把这份记录包（诊断信息和运行日志）传给开发者，只用来排查问题。",
+                              actions: [
+                                DriftSheetAction("上传") { Task { await uploadLogs() } },
+                              ])
             .onChange(of: wirelessPair.generatedRecordPath) { _, path in
                 adoptWirelessRecord(at: path)
             }
@@ -93,31 +92,29 @@ struct DriftSettingsView: View {
             .onChange(of: wirelessPair.pin) { _, _ in
                 refreshNotificationStatus()
             }
-            .alert("删除这张壁纸？", isPresented: Binding(
+            .driftActionSheet(isPresented: Binding(
                 get: { receiptToDelete != nil },
-                set: { if !$0 { receiptToDelete = nil } })
-            ) {
-                Button("删除", role: .destructive) {
-                    guard let receipt = receiptToDelete else { return }
-                    receiptToDelete = nil
-                    Task { await deleteReceipt(receipt) }
-                }
-                Button("取消", role: .cancel) { receiptToDelete = nil }
-            } message: {
-                if let receipt = receiptToDelete {
-                    Text("「\(receipt.pack)」将被删除。如果删的正是当前正在用的壁纸，生效后系统会换回默认壁纸。")
-                }
-            }
-            .alert("清空全部刷入记录？", isPresented: $confirmClearHistory) {
-                Button("清空记录", role: .destructive) {
-                    ApplyHistory.clear()
-                    history = []
-                    recordsNote = "刷入记录已清空；回执没有动，管理页仍能认出已刷的壁纸。"
-                }
-                Button("取消", role: .cancel) {}
-            } message: {
-                Text("记录清空后无法恢复。此操作只清记录，不会删除设备上已刷入的壁纸——要删壁纸请用「管理刷入的壁纸」。")
-            }
+                set: { if !$0 { receiptToDelete = nil } }),
+                              title: "删除这张壁纸？",
+                              message: receiptToDelete.map {
+                                "「\($0.pack)」将被删除。如果删的正是当前正在用的壁纸，生效后系统会换回默认壁纸。"
+                              },
+                              actions: [
+                                DriftSheetAction("删除", destructive: true) {
+                                    guard let receipt = receiptToDelete else { return }
+                                    receiptToDelete = nil
+                                    Task { await deleteReceipt(receipt) }
+                                },
+                              ])
+            .driftActionSheet(isPresented: $confirmClearHistory, title: "清空全部刷入记录？",
+                              message: "记录清空后无法恢复。此操作只清记录，不会删除设备上已刷入的壁纸——要删壁纸请用「管理刷入的壁纸」。",
+                              actions: [
+                                DriftSheetAction("清空记录", destructive: true) {
+                                    ApplyHistory.clear()
+                                    history = []
+                                    recordsNote = "刷入记录已清空；回执没有动，管理页仍能认出已刷的壁纸。"
+                                },
+                              ])
             .alert("删除完成", isPresented: $showDeleteActivation) {
                 Button(deleteActivationKind.actionTitle) { runDeleteActivation() }
                 Button("稍后再说", role: .cancel) {}
@@ -137,17 +134,20 @@ struct DriftSettingsView: View {
             // missing-items list, no retention note. An oversize bundle
             // is handled inside uploadRecordExport with a plain note
             // after the tap instead of a greyed-out button.
-            .confirmationDialog("导出这条记录", isPresented: $showExportChoices,
-                                titleVisibility: .visible) {
-                Button("导出（存成文件）") { saveRecordExport() }
-                Button("分享") {
-                    if let bundle = exportBundle {
-                        sharePackage = SharePackageItem(url: bundle.url)
-                    }
-                }
-                Button("导出并上传") { uploadRecordExport() }
-                Button("取消", role: .cancel) {}
-            }
+            // On 3.0.11 (32) she flagged the system dialog's floating
+            // bubble presentation itself, so this is now the app's own
+            // bottom sheet (DriftActionSheet) like every other
+            // action confirmation in the app.
+            .driftActionSheet(isPresented: $showExportChoices, title: "导出这条记录",
+                              actions: [
+                                DriftSheetAction("导出（存成文件）") { saveRecordExport() },
+                                DriftSheetAction("分享") {
+                                    if let bundle = exportBundle {
+                                        sharePackage = SharePackageItem(url: bundle.url)
+                                    }
+                                },
+                                DriftSheetAction("导出并上传") { uploadRecordExport() },
+                              ])
         }
     }
 
@@ -182,12 +182,11 @@ struct DriftSettingsView: View {
                 Button(role: .destructive) { confirmResetPairing = true } label: {
                     Label("删除配对（停止使用）", systemImage: "link.badge.minus")
                 }
-                .alert("删除当前配对？", isPresented: $confirmResetPairing) {
-                    Button("删除", role: .destructive) { session.resetPairing() }
-                    Button("取消", role: .cancel) {}
-                } message: {
-                    Text("App 会忘掉这份配对记录，文件本身保留在 App 文档里；重新导入即可恢复。")
-                }
+                .driftActionSheet(isPresented: $confirmResetPairing, title: "删除当前配对？",
+                                  message: "App 会忘掉这份配对记录，文件本身保留在 App 文档里；重新导入即可恢复。",
+                                  actions: [
+                                    DriftSheetAction("删除", destructive: true) { session.resetPairing() },
+                                  ])
             }
             wirelessPairingRows
             HStack {
@@ -737,20 +736,19 @@ struct DriftSettingsView: View {
         .task {
             cacheBreakdown = await Task.detached { AppCache.measure() }.value
         }
-        .alert("清除这些缓存？", isPresented: $confirmClearCache) {
-            Button("清除", role: .destructive) {
-                Task {
-                    let freed = await Task.detached { AppCache.clear() }.value
-                    cacheBreakdown = await Task.detached { AppCache.measure() }.value
-                    cacheNote = "已清除，省出约 \(AppCache.format(freed))。"
-                }
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            if let cacheBreakdown {
-                Text("预览图 \(AppCache.format(cacheBreakdown.previews))、目录缓存 \(AppCache.format(cacheBreakdown.catalogCache))、临时文件 \(AppCache.format(cacheBreakdown.fetchScratch))、日志 \(AppCache.format(cacheBreakdown.logs))、下载的安装包 \(AppCache.format(cacheBreakdown.updates))，共 \(AppCache.format(cacheBreakdown.total))。")
-            }
-        }
+        .driftActionSheet(isPresented: $confirmClearCache, title: "清除这些缓存？",
+                          message: cacheBreakdown.map {
+                            "预览图 \(AppCache.format($0.previews))、目录缓存 \(AppCache.format($0.catalogCache))、临时文件 \(AppCache.format($0.fetchScratch))、日志 \(AppCache.format($0.logs))、下载的安装包 \(AppCache.format($0.updates))，共 \(AppCache.format($0.total))。"
+                          },
+                          actions: [
+                            DriftSheetAction("清除", destructive: true) {
+                                Task {
+                                    let freed = await Task.detached { AppCache.clear() }.value
+                                    cacheBreakdown = await Task.detached { AppCache.measure() }.value
+                                    cacheNote = "已清除，省出约 \(AppCache.format(freed))。"
+                                }
+                            },
+                          ])
     }
 
     private var aboutSection: some View {
