@@ -132,7 +132,12 @@ struct DriftSettingsView: View {
             .sheet(item: $sharePackage) { item in
                 ActivityShareSheet(url: item.url)
             }
-            .confirmationDialog("导出这次刷入", isPresented: $showExportChoices,
+            // Grace (2026-11-12, on 3.0.11): the dialog shows ONLY the
+            // title and the three choices — no bundle breakdown, no
+            // missing-items list, no retention note. An oversize bundle
+            // is handled inside uploadRecordExport with a plain note
+            // after the tap instead of a greyed-out button.
+            .confirmationDialog("导出这条记录", isPresented: $showExportChoices,
                                 titleVisibility: .visible) {
                 Button("导出（存成文件）") { saveRecordExport() }
                 Button("分享") {
@@ -141,10 +146,7 @@ struct DriftSettingsView: View {
                     }
                 }
                 Button("导出并上传") { uploadRecordExport() }
-                    .disabled(exportBundle?.tooBigToUpload ?? true)
                 Button("取消", role: .cancel) {}
-            } message: {
-                Text(exportDialogMessage)
             }
         }
     }
@@ -473,6 +475,10 @@ struct DriftSettingsView: View {
                 recordExportNote = "存文件失败：\(error.localizedDescription)"
                 return
             }
+            if bundle.tooBigToUpload {
+                recordExportNote = "这个包超过 24 MB，传不了；已存成文件：\(saved.lastPathComponent)"
+                return
+            }
             do {
                 try await LogUpload.uploadBig(package: saved)
                 recordExportNote = "已导出并上传：\(saved.lastPathComponent)（收件箱存 7 天）"
@@ -480,21 +486,6 @@ struct DriftSettingsView: View {
                 recordExportNote = "文件已存好，但上传失败：\(error.localizedDescription)"
             }
         }
-    }
-
-    private var exportDialogMessage: String {
-        guard let record = exportTarget, let bundle = exportBundle else { return "" }
-        var text = "「\(recordTitle(record))」· \(recordMeta(record))\n"
-            + "打包内容：刷入记录 + 这次的日志 + 原始壁纸包（约 \(bundle.sizeText)）"
-        if !bundle.missing.isEmpty {
-            text += "\n缺：\(bundle.missing.joined(separator: "；"))"
-        }
-        if bundle.tooBigToUpload {
-            text += "\n包超过 24 MB，只能导出，不能上传。"
-        } else {
-            text += "\n上传后在收件箱存 7 天，之后自动删除。"
-        }
-        return text
     }
 
     @ViewBuilder

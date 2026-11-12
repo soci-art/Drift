@@ -135,12 +135,10 @@ struct DriftHomeView: View {
                     .frame(width: 38, height: 38)
                     .background(Color.accentColor,
                                 in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("使用教程").font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Text("三种刷入方式，分开讲").font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                // Grace (2026-11-12, on 3.0.11): no small print under
+                // the tutorial entry — the title alone.
+                Text("使用教程").font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.bold)).foregroundStyle(.tertiary)
