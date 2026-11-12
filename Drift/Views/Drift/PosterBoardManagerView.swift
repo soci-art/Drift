@@ -101,12 +101,16 @@ struct PosterBoardManagerView: View {
             Alert(title: Text(item.title), message: Text(item.message),
                   dismissButton: .default(Text("知道了")))
         }
-        .alert("删除完成", isPresented: $showActivationPrompt) {
-            Button(activationKind.actionTitle) { runActivation() }
-            Button("稍后再说", role: .cancel) {}
-        } message: {
-            Text(activationMessage + "\n\n" + activationKind.needText)
-        }
+        // #262 (Grace, 2026-11-12): same bottom-sheet UI as the
+        // Settings deletion chain's「删除完成」ask — one look for the
+        // same question everywhere. Wording and choices unchanged.
+        .driftActionSheet(isPresented: $showActivationPrompt, title: "删除完成",
+                          message: activationMessage + "\n\n" + activationKind.needText,
+                          actions: [
+                            DriftSheetAction(activationKind.actionTitle) {
+                                runActivation()
+                            },
+                          ])
     }
 
     /// Execute the prompted activation immediately on tap (#161).

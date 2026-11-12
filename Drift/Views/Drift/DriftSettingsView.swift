@@ -104,13 +104,19 @@ struct DriftSettingsView: View {
                               message: receiptToDelete.map {
                                 "「\($0.pack)」将被删除。如果删的正是当前正在用的壁纸，生效后系统会换回默认壁纸。"
                               },
-                              actions: [
-                                DriftSheetAction("删除", destructive: true) {
-                                    guard let receipt = receiptToDelete else { return }
+                              // #262 (Grace, 2026-11-12): the action must
+                              // carry the receipt it was presented for.
+                              // The sheet dismisses BEFORE running its
+                              // handler, and dismissal clears
+                              // receiptToDelete — a handler that re-read
+                              // it found nothing and silently did
+                              // nothing, so the delete never ran.
+                              actions: receiptToDelete.map { receipt in
+                                [DriftSheetAction("删除", destructive: true) {
                                     receiptToDelete = nil
                                     Task { await deleteReceipt(receipt) }
-                                },
-                              ])
+                                }]
+                              } ?? [])
             .driftActionSheet(isPresented: $confirmClearHistory, title: "清空全部刷入记录？",
                               message: "记录清空后无法恢复。此操作只清记录，不会删除设备上已刷入的壁纸——要删壁纸请用「壁纸管理」。",
                               actions: [
@@ -120,12 +126,17 @@ struct DriftSettingsView: View {
                                     recordsNote = "刷入记录已清空；回执没有动，管理页仍能认出已刷的壁纸。"
                                 },
                               ])
-            .alert("删除完成", isPresented: $showDeleteActivation) {
-                Button(deleteActivationKind.actionTitle) { runDeleteActivation() }
-                Button("稍后再说", role: .cancel) {}
-            } message: {
-                Text(deleteActivationMessage + "\n\n" + deleteActivationKind.needText)
-            }
+            // #262 (Grace, 2026-11-12): the post-delete activation ask
+            // wears the same bottom-sheet UI as the confirmation before
+            // it — same layout family, the sheet's 取消 standing in for
+            // 「稍后再说」. Wording and choices are unchanged.
+            .driftActionSheet(isPresented: $showDeleteActivation, title: "删除完成",
+                              message: deleteActivationMessage + "\n\n" + deleteActivationKind.needText,
+                              actions: [
+                                DriftSheetAction(deleteActivationKind.actionTitle) {
+                                    runDeleteActivation()
+                                },
+                              ])
             .alert("恢复刷已封存", isPresented: $showSealedNotice) {
                 Button("知道了", role: .cancel) {}
             } message: {
