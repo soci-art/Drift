@@ -22,15 +22,38 @@ enum LogUpload {
     /// here with a plain explanation instead of a server rejection.
     static let maxBytes = 20 * 1024 * 1024
 
+    /// The inbox's big-package door (collection #237): one apply record's
+    /// bundle — record + that run's log slice + the original wallpaper
+    /// pack — posted only when the user taps 导出并上传 on that record.
+    /// Its rate counter is separate from the log door's (5 per hour of
+    /// its own), and its ceiling is 24 MB.
+    static let bigEndpoint = URL(string: "https://log.86419753.xyz/upload-big")!
+
+    /// The big door's per-package cap.
+    static let bigMaxBytes = 24 * 1024 * 1024
+
     /// Post a packaged log zip. Throws a plain-language DriftError for
     /// every failure the user can act on.
     static func upload(package: URL) async throws {
+        try await upload(package: package, endpoint: endpoint,
+                         maxBytes: maxBytes, oversize: "日志包太大了（超过 20 MB）")
+    }
+
+    /// Post one record bundle to the big door (#237). Same failure
+    /// wording as the log door, including the shared 429 line.
+    static func uploadBig(package: URL) async throws {
+        try await upload(package: package, endpoint: bigEndpoint,
+                         maxBytes: bigMaxBytes, oversize: "记录包太大了（超过 24 MB）")
+    }
+
+    private static func upload(package: URL, endpoint: URL,
+                               maxBytes: Int, oversize: String) async throws {
         let data = try Data(contentsOf: package)
         guard !data.isEmpty else {
             throw DriftError("日志包是空的")
         }
         guard data.count <= maxBytes else {
-            throw DriftError("日志包太大了（超过 20 MB）")
+            throw DriftError(oversize)
         }
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -66,7 +89,7 @@ enum LogUpload {
                 throw DriftError("服务器回应不对")
             }
         case 413:
-            throw DriftError("日志包太大了（超过 20 MB）")
+            throw DriftError(oversize)
         case 429:
             throw DriftError("上传太频繁了，过一会儿再试")
         default:

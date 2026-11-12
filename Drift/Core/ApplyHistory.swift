@@ -40,6 +40,17 @@ enum ApplyHistory {
         /// lead with the pack name). Optional — records written before
         /// build 19 do not have it and fall back to the mode text.
         var packName: String? = nil
+        /// The imported pack file name(s) this run flashed, inside the
+        /// imports directory — a record export (#237) packs these as the
+        /// ORIGINAL wallpaper files. Optional: records written before
+        /// this field existed never stored them, and their exports say
+        /// so in the missing-contents note instead of substituting
+        /// another pack.
+        var packFiles: [String]? = nil
+        /// The file name (inside `History/Slices/`) holding this run's
+        /// own log lines, snapshotted by the caller at record time
+        /// (#237). Optional for the same reason as `packFiles`.
+        var logSlice: String? = nil
 
         /// `datetime.now().astimezone().isoformat(timespec="seconds")`, which is
         /// local time with the offset (`"2026-10-12T14:05:33+03:00"`).
@@ -71,8 +82,17 @@ enum ApplyHistory {
                        device: String = "", model: String = "", ios: String = "",
                        udid: String = "", effect: String? = nil,
                        channel: String? = nil, provider: String? = nil,
-                       verification: String? = nil, packName: String? = nil) {
-        let item = Record(timestamp: Record.now(),
+                       verification: String? = nil, packName: String? = nil,
+                       packFiles: [String]? = nil, logSliceText: String? = nil) {
+        let timestamp = Record.now()
+        // The run's log slice is written first so the record can name it;
+        // a failed write just leaves the field empty (the export then
+        // declares the slice missing rather than inventing one).
+        var sliceName: String? = nil
+        if let logSliceText, !logSliceText.isEmpty {
+            sliceName = saveLogSlice(text: logSliceText, timestamp: timestamp)
+        }
+        let item = Record(timestamp: timestamp,
                           mode: mode,
                           success: success,
                           error: error,
@@ -84,11 +104,14 @@ enum ApplyHistory {
                           channel: channel,
                           provider: provider,
                           verification: verification,
-                          packName: packName)
+                          packName: packName,
+                          packFiles: packFiles,
+                          logSlice: sliceName)
         var records = load() + [item]
         if records.count > maxEntries {
             records = Array(records.suffix(maxEntries))
         }
+        pruneLogSlices(keeping: Set(records.compactMap(\.logSlice)))
         do {
             let directory = fileURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -104,9 +127,50 @@ enum ApplyHistory {
     }
 
     /// `clear_history` — unlink the file, tolerating its absence
-    /// (`apply_history.py:52`).
+    /// (`apply_history.py:52`). The log slices go with it (#237: no
+    /// orphaned slice files outliving their records).
     static func clear() {
         try? FileManager.default.removeItem(at: fileURL)
+        try? FileManager.default.removeItem(at: slicesDirectory)
+    }
+
+    // MARK: - Per-run log slices (#237)
+
+    /// Where the per-run log slices live: `History/Slices/` next to
+    /// `operations.json`.
+    static var slicesDirectory: URL {
+        fileURL.deletingLastPathComponent()
+            .appendingPathComponent("Slices", isDirectory: true)
+    }
+
+    /// The on-disk URL for a record's `logSlice` file name.
+    static func sliceURL(_ name: String) -> URL {
+        slicesDirectory.appendingPathComponent(name)
+    }
+
+    /// Write one run's log lines to its slice file. Returns the file
+    /// name to store in the record, or nil when the write failed.
+    private static func saveLogSlice(text: String, timestamp: String) -> String? {
+        let name = timestamp
+            .replacingOccurrences(of: ":", with: "-")
+            .replacingOccurrences(of: "+", with: "_") + ".txt"
+        do {
+            try FileManager.default.createDirectory(at: slicesDirectory,
+                                                    withIntermediateDirectories: true)
+            try text.write(to: sliceURL(name), atomically: true, encoding: .utf8)
+            return name
+        } catch {
+            return nil
+        }
+    }
+
+    /// Delete every slice file whose record is gone — records trimmed by
+    /// the 30-entry cap, or files orphaned any other way.
+    private static func pruneLogSlices(keeping names: Set<String>) {
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: slicesDirectory.path)) ?? []
+        for file in files where !names.contains(file) {
+            try? FileManager.default.removeItem(at: sliceURL(file))
+        }
     }
 
     /// `_path` (`apply_history.py:12`): the file this app owns inside

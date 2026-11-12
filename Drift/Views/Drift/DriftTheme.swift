@@ -11,29 +11,60 @@ enum DriftTheme {
             ? [Color(red: 0.10, green: 0.13, blue: 0.22), Color(red: 0.05, green: 0.16, blue: 0.14), Color(red: 0.07, green: 0.07, blue: 0.10)]
             : [Color(red: 0.93, green: 0.95, blue: 1.0), Color(red: 0.90, green: 0.97, blue: 0.94), Color(red: 0.97, green: 0.97, blue: 0.98)]
     }
-}
 
-extension View {
-    /// A white (or dark) glass card on the wash.
-    func driftCard(cornerRadius: CGFloat = 20) -> some View {
-        self
-            .padding(16)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
-            )
+    /// The pre–Liquid Glass systems (collection #242, Grace 2026-11-12):
+    /// iOS 17/18 have no Liquid Glass, so they get a plain surface
+    /// treatment of their own — flat grouped background, solid cards,
+    /// an opaque tab bar — instead of the glass look falling back
+    /// piecemeal. Layout, wording and function are identical on every
+    /// system; only the surface differs, and every surface decision in
+    /// the app reads this one flag (the two button styles have their
+    /// own matching gate in NativeUI).
+    static var legacyUI: Bool {
+        !ProcessInfo.processInfo.isOperatingSystemAtLeast(
+            OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0))
     }
 }
 
-/// Page background: the colour wash, edge to edge.
+extension View {
+    /// A card on the page background: translucent glass over the wash on
+    /// iOS 26+, a solid grouped-list card on the legacy systems (#242).
+    @ViewBuilder
+    func driftCard(cornerRadius: CGFloat = 20) -> some View {
+        if DriftTheme.legacyUI {
+            self
+                .padding(16)
+                .background(Color(.secondarySystemBackground),
+                            in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+                )
+        } else {
+            self
+                .padding(16)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+                )
+        }
+    }
+}
+
+/// Page background: the colour wash on iOS 26+; the flat grouped
+/// background on the legacy systems (#242).
 struct DriftBackground: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        LinearGradient(colors: DriftTheme.washColors(scheme: scheme),
-                       startPoint: .topLeading, endPoint: .bottomTrailing)
-            .ignoresSafeArea()
+        if DriftTheme.legacyUI {
+            Color(.systemGroupedBackground).ignoresSafeArea()
+        } else {
+            LinearGradient(colors: DriftTheme.washColors(scheme: scheme),
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                .ignoresSafeArea()
+        }
     }
 }
 

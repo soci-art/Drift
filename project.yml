@@ -130,13 +130,13 @@ settings:
     CODE_SIGN_STYLE: Automatic
     CODE_SIGN_IDENTITY: Apple Development
     DEVELOPMENT_TEAM: ""
-    CURRENT_PROJECT_VERSION: 30
+    CURRENT_PROJECT_VERSION: 31
     # 3.0.0 is the four-method refactor: three independent channels (本机直刷 /
     # 免注销直刷 / 注销直刷) with their own write and effect flows, the
     # 3106-style transactional local installer with receipts, and the sealed
     # restore route. The CI release step reads MARKETING_VERSION, so the tag,
     # the release notes and the built IPA stay in step.
-    MARKETING_VERSION: 3.0.10
+    MARKETING_VERSION: 3.0.11
     # The app icon is an Icon Composer document (`Assets.xcassets/AppIcon.icon`),
     # not loose PNGs: it layers one glass image over an `automatic-gradient`
     # fill, and actool expands that into the light/dark/tintable renditions the
@@ -209,6 +209,12 @@ targets:
       - path: layout/Applications/Drift.app/Logo@2x.png
         buildPhase: resources
       - path: layout/Applications/Drift.app/Logo@1x.png
+        buildPhase: resources
+      # The tutorial's gesture film (collection #234): a silent loop showing
+      # the app switcher flick that activates a local-channel flash. Shipped
+      # like the Logo files — a loose bundle resource the tutorial page
+      # loads by name.
+      - path: layout/Applications/Drift.app/PosterCloseGesture.mp4
         buildPhase: resources
       # NO loose AppIcon*.png here, on purpose.  actool can emit them itself
       # (`standalone-icon-behavior`, set to `none` below) and a loose light-only

@@ -24,9 +24,11 @@ struct DeviceIdentity: Equatable, Sendable {
 
     var describe: String {
         if productType.isEmpty && version.isEmpty { return "unknown device" }
-        if productType.isEmpty { return "iOS \(version)" }
+        if productType.isEmpty {
+            return SystemVersionName.display(version: version, build: buildVersion)
+        }
         if version.isEmpty { return productType }
-        return "\(productType) / iOS \(version)"
+        return "\(productType) / \(SystemVersionName.display(version: version, build: buildVersion))"
     }
 
     /// Used when the read fails.  An empty version deliberately *disables* the

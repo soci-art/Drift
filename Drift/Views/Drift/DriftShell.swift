@@ -27,12 +27,31 @@ struct DriftShell: View {
                     .tabItem { Label("设置", systemImage: "gearshape") }
                     .tag(3)
             }
+            // #242: on the pre-glass systems the tab bar is pinned opaque
+            // (their own classic look, stated rather than inherited); on
+            // iOS 26+ the system's glass bar stands as designed.
+            .modifier(LegacyTabBarBackground())
         }
         .task {
             var restored = PosterBoardSelection()
             restored.loadFromDisk()
             selection.video = restored.video
             selection.thumbnail = restored.thumbnail
+        }
+    }
+}
+
+/// The legacy tab bar treatment (#242): an opaque system-background bar
+/// below iOS 26, untouched above it. (`toolbarBackground` is iOS 16+,
+/// so the legacy branch is available on every system it serves.)
+private struct LegacyTabBarBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if DriftTheme.legacyUI {
+            content
+                .toolbarBackground(.visible, for: .tabBar)
+                .toolbarBackground(Color(.systemBackground), for: .tabBar)
+        } else {
+            content
         }
     }
 }

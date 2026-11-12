@@ -483,7 +483,7 @@ final class DriftSession: ObservableObject {
                                 channel: mode == .backup ? nil : mode.shortTitle,
                                 provider: providers,
                                 verification: verification?.summary,
-                                packName: selection.tendies.map(\.name).joined(separator: "、"))
+                                packName: selection.tendies.map(\.name).joined(separator: "、"), packFiles: selection.tendies.map { $0.url.lastPathComponent }, logSliceText: RunLog.shared.lines.joined(separator: "\n"))
             // The reset flags are one-shot; the calling page clears its own
             // selection on success (this session only ever holds a copy).
             errorText = nil
@@ -524,7 +524,7 @@ final class DriftSession: ObservableObject {
                 ApplyHistory.record(mode: selectedLabel, success: false, error: "已取消",
                                     device: identity.describe,
                                     model: identity.productType, ios: iosVersion,
-                                    packName: selection.tendies.map(\.name).joined(separator: "、"))
+                                    packName: selection.tendies.map(\.name).joined(separator: "、"), packFiles: selection.tendies.map { $0.url.lastPathComponent }, logSliceText: RunLog.shared.lines.joined(separator: "\n"))
                 return (false, "刷入已取消", nil)
             }
             DriftEngine.shared.log("posterboard apply failed: \(error.localizedDescription)")
@@ -534,7 +534,7 @@ final class DriftSession: ObservableObject {
             ApplyHistory.record(mode: selectedLabel, success: false, error: message,
                                 device: identity.describe,
                                 model: identity.productType, ios: iosVersion,
-                                packName: selection.tendies.map(\.name).joined(separator: "、"))
+                                packName: selection.tendies.map(\.name).joined(separator: "、"), packFiles: selection.tendies.map { $0.url.lastPathComponent }, logSliceText: RunLog.shared.lines.joined(separator: "\n"))
             return (false, message, nil)
         }
     }
@@ -673,6 +673,7 @@ enum DriftJudge {
     ///   and the app's own version is never substituted for the device's.
     private struct Premises {
         let appVersion: String
+        let appBuild: String
         let localReady: Bool
         let localWhy: String
         let localSealed: Bool
@@ -743,6 +744,7 @@ enum DriftJudge {
 
         return Premises(
             appVersion: appVersion,
+            appBuild: appBuild,
             localReady: localReady,
             localWhy: localWhy,
             localSealed: localSealed,
@@ -772,13 +774,13 @@ enum DriftJudge {
     private static func optionRows(_ p: Premises, identity: DeviceIdentity) -> [DriftModeAvailability] {
         let device = identity.version.isEmpty
             ? "设备系统版本未读到"
-            : "设备 iOS \(identity.version)\(identity.buildVersion.isEmpty ? "" : "（\(identity.buildVersion)）")"
+            : "设备 \(SystemVersionName.display(version: identity.version, build: identity.buildVersion))"
         return [
             DriftModeAvailability(
                 mode: .worseQuery,
                 available: p.localReady,
                 reason: p.localReady
-                    ? "可用：iOS \(p.appVersion)，签名授予的 App Group 可打开"
+                    ? "可用：\(SystemVersionName.display(version: p.appVersion, build: p.appBuild))，签名授予的 App Group 可打开"
                     : p.localWhy,
                 effect: expectedEffect(for: .worseQuery),
                 sealed: p.localSealed),
@@ -786,14 +788,14 @@ enum DriftJudge {
                 mode: .direct,
                 available: p.directReady,
                 reason: p.directReady
-                    ? "可用：\(device) 在 17.0–27.1 及 27.2 测试版 1/2 内"
+                    ? "可用：\(device) 在 17.0–27.1 正式版及 27.2 beta 1 / 2 内"
                     : p.directWhy,
                 effect: expectedEffect(for: .direct)),
             DriftModeAvailability(
                 mode: .airlift,
                 available: p.respringReady,
                 reason: p.respringReady
-                    ? "可用：\(device) 在 17.0–27.1 及 27.2 测试版 1/2 内"
+                    ? "可用：\(device) 在 17.0–27.1 正式版及 27.2 beta 1 / 2 内"
                     : p.respringWhy,
                 effect: expectedEffect(for: .airlift)),
         ]

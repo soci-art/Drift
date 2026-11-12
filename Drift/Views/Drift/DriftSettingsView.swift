@@ -25,6 +25,11 @@ struct DriftSettingsView: View {
     @State private var deleteActivationKind: ActivationKind = .respring
     @State private var deleteActivationMessage = ""
     @State private var confirmClearHistory = false
+    @State private var exportTarget: ApplyHistory.Record?
+    @State private var exportBundle: RecordExport.Bundle?
+    @State private var showExportChoices = false
+    @State private var recordExportNote: String?
+    @State private var recordBusy = false
     @ObservedObject private var updateChecker = AppUpdateChecker.shared
     @State private var cacheBreakdown: AppCache.Breakdown?
     @State private var confirmClearCache = false
@@ -127,6 +132,20 @@ struct DriftSettingsView: View {
             .sheet(item: $sharePackage) { item in
                 ActivityShareSheet(url: item.url)
             }
+            .confirmationDialog("导出这次刷入", isPresented: $showExportChoices,
+                                titleVisibility: .visible) {
+                Button("导出（存成文件）") { saveRecordExport() }
+                Button("分享") {
+                    if let bundle = exportBundle {
+                        sharePackage = SharePackageItem(url: bundle.url)
+                    }
+                }
+                Button("导出并上传") { uploadRecordExport() }
+                    .disabled(exportBundle?.tooBigToUpload ?? true)
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text(exportDialogMessage)
+            }
         }
     }
 
@@ -185,14 +204,8 @@ struct DriftSettingsView: View {
             } label: {
                 Label("重新打开设置向导", systemImage: "wand.and.stars")
             }
-            // Feedback #29: the tutorial lives directly under the guide
-            // row — the guide walks the connection setup once, the
-            // tutorial is the standing how-to for everyday flashing.
-            NavigationLink {
-                DriftTutorialView()
-            } label: {
-                Label("使用教程", systemImage: "book")
-            }
+            // Collection #239 (Grace, 2026-11-12): no tutorial entry in
+            // Settings — the tutorial lives on the Home page only (#230).
         }
     }
 
@@ -206,10 +219,7 @@ struct DriftSettingsView: View {
             HStack {
                 Label("系统版本", systemImage: "iphone")
                 Spacer()
-                Text(WorseQueryEscape.isSupported(deviceVersion: WorseQueryEscape.processVersion,
-                                                 buildVersion: WorseQueryEscape.processBuildVersion)
-                     ? "iOS \(WorseQueryEscape.processVersion)\(WorseQueryEscape.processBuildVersion.isEmpty ? "" : "（\(WorseQueryEscape.processBuildVersion)）")（在范围内）"
-                     : "iOS \(WorseQueryEscape.processVersion)（不在范围内）")
+                Text("\(SystemVersionName.display(version: WorseQueryEscape.processVersion, build: WorseQueryEscape.processBuildVersion))\(WorseQueryEscape.isSupported(deviceVersion: WorseQueryEscape.processVersion, buildVersion: WorseQueryEscape.processBuildVersion) ? "（在范围内）" : "（不在范围内）")")
                     .foregroundStyle(.secondary)
             }
             HStack {
@@ -411,9 +421,80 @@ struct DriftSettingsView: View {
                     Label("清空记录", systemImage: "trash")
                 }
             }
-            Text("带「删除」的条目删的是设备上的壁纸；其余只是历史记录。")
+            if let recordExportNote {
+                Text(recordExportNote)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text("带「删除」的条目删的是设备上的壁纸；点「导出」可以把某次刷入的记录、那次的日志和壁纸包打包。")
                 .font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    // MARK: - Per-record export (#237/#238)
+
+    /// Build the tapped record's bundle, then offer the three things the
+    /// user can do with it: save it as a file, share it, or save and
+    /// upload it to the log inbox.
+    private func startRecordExport(_ record: ApplyHistory.Record) {
+        guard !recordBusy else { return }
+        recordBusy = true
+        recordExportNote = nil
+        Task {
+            defer { recordBusy = false }
+            do {
+                exportBundle = try RecordExport.build(for: record)
+                exportTarget = record
+                showExportChoices = true
+            } catch {
+                recordExportNote = "打包失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func saveRecordExport() {
+        guard let bundle = exportBundle else { return }
+        do {
+            let saved = try RecordExport.saveToFiles(bundle)
+            recordExportNote = "已存成文件：\(saved.lastPathComponent)"
+        } catch {
+            recordExportNote = "存文件失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func uploadRecordExport() {
+        guard let bundle = exportBundle else { return }
+        recordBusy = true
+        Task {
+            defer { recordBusy = false }
+            let saved: URL
+            do {
+                saved = try RecordExport.saveToFiles(bundle)
+            } catch {
+                recordExportNote = "存文件失败：\(error.localizedDescription)"
+                return
+            }
+            do {
+                try await LogUpload.uploadBig(package: saved)
+                recordExportNote = "已导出并上传：\(saved.lastPathComponent)（收件箱存 7 天）"
+            } catch {
+                recordExportNote = "文件已存好，但上传失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private var exportDialogMessage: String {
+        guard let record = exportTarget, let bundle = exportBundle else { return "" }
+        var text = "「\(recordTitle(record))」· \(recordMeta(record))\n"
+            + "打包内容：刷入记录 + 这次的日志 + 原始壁纸包（约 \(bundle.sizeText)）"
+        if !bundle.missing.isEmpty {
+            text += "\n缺：\(bundle.missing.joined(separator: "；"))"
+        }
+        if bundle.tooBigToUpload {
+            text += "\n包超过 24 MB，只能导出，不能上传。"
+        } else {
+            text += "\n上传后在收件箱存 7 天，之后自动删除。"
+        }
+        return text
     }
 
     @ViewBuilder
@@ -432,6 +513,16 @@ struct DriftSettingsView: View {
                     Text(recordMeta(record))
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                Spacer()
+                // #237/#238: one record exports on its own — record +
+                // that run's log slice + the original pack, by hand only.
+                Button {
+                    startRecordExport(record)
+                } label: {
+                    Text("导出").font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .disabled(recordBusy)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 

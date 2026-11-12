@@ -45,18 +45,24 @@ struct DriftAboutView: View {
         }
     }
 
+    /// The coverage table (collection #237, Grace 2026-11-12: a real table
+    /// instead of pill rows — one row per system band, one column per
+    /// channel, ✓ usable / — not usable). Version names follow the
+    /// full-form rule (#229/#241): 正式版 / beta x written out, and the
+    /// iOS 27.2 正式版 row that the pill list never had is here — the
+    /// tunnel gates are build-based, so that band is local-only.
     private var rangeTable: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("版本对照").font(.subheadline.weight(.semibold))
-            rangeRow("17.0 – 18.x", "免注销直刷 / 注销直刷", "免注销 / 注销")
-            rangeRow("26.0 – 26.1", "本机直刷*", "上滑关闭 PosterBoard")
-            rangeRow("26.2 – 27.1", "免注销直刷 / 注销直刷 / 本机直刷*", "免注销 / 注销 / 上滑关闭")
-            rangeRow("27.2 测试版 1 / 2", "免注销直刷 / 注销直刷 / 本机直刷*", "免注销 / 注销 / 上滑关闭")
-            rangeRow("27.2 测试版 3 起", "本机直刷*", "上滑关闭 PosterBoard")
-            rangeRow("27.2.1", "本机直刷*", "上滑关闭 PosterBoard")
-            rangeRow("27.3 测试版 1", "本机直刷*", "上滑关闭 PosterBoard")
-            rangeRow("27.3 起", "无可用通道", "—")
-            Text("* 本机直刷要证书签名带能用的组；没有可用组，这一档就没有可用通道。刷完上滑关闭 PosterBoard 生效。")
+            tableHeader
+            Divider()
+            ForEach(Array(Self.tableRows.enumerated()), id: \.offset) { _, row in
+                tableRow(row)
+                if row.version != Self.tableRows.last?.version { Divider() }
+            }
+            Text("✓ = 能用，— = 用不了。本机直刷还要证书签名带能用的组；没有能用的组，本机直刷这一列就全是 —。")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("刷完怎么生效：免注销直刷直接生效；注销直刷要注销一次；本机直刷要把壁纸界面从后台划掉。")
                 .font(.caption).foregroundStyle(.secondary)
             Text(DriftRestoreGate.isEnabled
                  ? "视频壁纸在任何版本都只能走恢复刷。"
@@ -67,12 +73,59 @@ struct DriftAboutView: View {
         .driftCard()
     }
 
-    private func rangeRow(_ range: String, _ mode: String, _ cost: String) -> some View {
-        HStack {
-            Text(range).font(.subheadline)
-            Spacer()
-            DriftPill(text: mode)
-            DriftPill(text: cost, tint: .secondary)
+    private struct TableRow {
+        let version: String
+        let noRespring: Bool
+        let respring: Bool
+        let local: Bool
+        var experimental: Bool = false
+    }
+
+    private static let tableRows: [TableRow] = [
+        TableRow(version: "iOS 17.0 – 18.x", noRespring: true, respring: true, local: false),
+        TableRow(version: "iOS 26.0 – 26.1 正式版", noRespring: false, respring: false, local: true),
+        TableRow(version: "iOS 26.2 – 27.1 正式版", noRespring: true, respring: true, local: true),
+        TableRow(version: "iOS 27.2 beta 1 / beta 2", noRespring: true, respring: true, local: true),
+        TableRow(version: "iOS 27.2 beta 3 起", noRespring: false, respring: false, local: true),
+        TableRow(version: "iOS 27.2 正式版", noRespring: false, respring: false, local: true),
+        TableRow(version: "iOS 27.2.1 正式版", noRespring: false, respring: false, local: true),
+        TableRow(version: "iOS 27.3 beta 1", noRespring: false, respring: false, local: true, experimental: true),
+        TableRow(version: "iOS 27.3 起", noRespring: false, respring: false, local: false),
+    ]
+
+    private var tableHeader: some View {
+        HStack(spacing: 4) {
+            Text("系统版本").frame(maxWidth: .infinity, alignment: .leading)
+            Text("免注销直刷").frame(width: 62)
+            Text("注销直刷").frame(width: 62)
+            Text("本机直刷").frame(width: 62)
         }
+        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+    }
+
+    private func tableRow(_ row: TableRow) -> some View {
+        HStack(spacing: 4) {
+            HStack(spacing: 5) {
+                Text(row.version).font(.subheadline)
+                if row.experimental {
+                    Text("实验")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Color.orange.opacity(0.16),
+                                    in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        .foregroundStyle(.orange)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            mark(row.noRespring).frame(width: 62)
+            mark(row.respring).frame(width: 62)
+            mark(row.local).frame(width: 62)
+        }
+    }
+
+    private func mark(_ usable: Bool) -> some View {
+        Text(usable ? "✓" : "—")
+            .font(.subheadline.weight(.bold))
+            .foregroundStyle(usable ? Color.green : Color.secondary.opacity(0.55))
     }
 }

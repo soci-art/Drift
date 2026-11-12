@@ -50,7 +50,7 @@ struct DriftHomeView: View {
     }
     private var headerSubtitle: String {
         if localReady {
-            return "本机直刷可用（本机 iOS \(localVersion)）：现在就能刷，不用配对，也不用开隧道。"
+            return "本机直刷可用（本机 \(SystemVersionName.display(version: localVersion, build: localBuild))）：现在就能刷，不用配对，也不用开隧道。"
         }
         if !identity.version.isEmpty { return identity.describe }
         return "本机直刷不可用；要走两条隧道通道，请导入配对文件并打开 LocalDevVPN。"
@@ -63,6 +63,7 @@ struct DriftHomeView: View {
                 ScrollView {
                     VStack(spacing: 14) {
                         headerCard
+                        tutorialEntryCard
                         if updateChecker.updateAvailable, let latest = updateChecker.latest {
                             updateHintCard(latest)
                         }
@@ -118,6 +119,38 @@ struct DriftHomeView: View {
 
     // MARK: - Cards
 
+    /// The tutorial entry (collection #230, Grace 2026-11-12): in the gap
+    /// between the status card and the method card, nowhere else — the
+    /// setup wizard is unchanged and Settings carries no tutorial entry
+    /// (#239).
+    private var tutorialEntryCard: some View {
+        NavigationLink {
+            DriftTutorialView(states: DriftTutorialStates.current(
+                identity: identity, tunnelReady: tunnelReady))
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "book.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 38, height: 38)
+                    .background(Color.accentColor,
+                                in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("使用教程").font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text("三种刷入方式，分开讲").font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .driftCard()
+        }
+        .buttonStyle(.plain)
+    }
+
     private var headerCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             // The premises are listed per route, not as one global gate: the
@@ -126,7 +159,7 @@ struct DriftHomeView: View {
             HStack(spacing: 8) {
                 DriftPill(text: localReady ? "本机直刷可用" : "本机直刷不可用",
                           tint: localReady ? .green : .orange)
-                DriftPill(text: "本机 iOS \(localVersion)\(localBuild.isEmpty ? "" : "（\(localBuild)）")")
+                DriftPill(text: "本机 \(SystemVersionName.display(version: localVersion, build: localBuild))")
             }
             Text(headerSubtitle)
                 .font(.subheadline)
@@ -147,7 +180,7 @@ struct DriftHomeView: View {
                 if identity.version.isEmpty {
                     DriftPill(text: "隧道设备信息未读到", tint: .orange)
                 } else {
-                    DriftPill(text: "设备 iOS \(identity.version)\(identity.buildVersion.isEmpty ? "" : "（\(identity.buildVersion)）")")
+                    DriftPill(text: "设备 \(SystemVersionName.display(version: identity.version, build: identity.buildVersion))")
                 }
             }
             if !session.paired {
