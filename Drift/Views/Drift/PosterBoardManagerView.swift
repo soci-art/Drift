@@ -86,7 +86,7 @@ struct PosterBoardManagerView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
-        .navigationTitle("管理刷入的壁纸")
+        .navigationTitle("壁纸管理")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .driftActionSheet(isPresented: $confirmDelete, title: "确认删除这些壁纸？",

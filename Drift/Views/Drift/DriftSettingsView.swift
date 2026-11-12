@@ -107,7 +107,7 @@ struct DriftSettingsView: View {
                                 },
                               ])
             .driftActionSheet(isPresented: $confirmClearHistory, title: "清空全部刷入记录？",
-                              message: "记录清空后无法恢复。此操作只清记录，不会删除设备上已刷入的壁纸——要删壁纸请用「管理刷入的壁纸」。",
+                              message: "记录清空后无法恢复。此操作只清记录，不会删除设备上已刷入的壁纸——要删壁纸请用「壁纸管理」。",
                               actions: [
                                 DriftSheetAction("清空记录", destructive: true) {
                                     ApplyHistory.clear()
@@ -398,7 +398,7 @@ struct DriftSettingsView: View {
             NavigationLink {
                 PosterBoardManagerView()
             } label: {
-                Label("管理刷入的壁纸", systemImage: "square.stack.3d.up")
+                Label("壁纸管理", systemImage: "square.stack.3d.up")
             }
             let rows = mergedRecords
             if rows.isEmpty {
