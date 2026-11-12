@@ -132,7 +132,10 @@ jobs:
       # Publish a curated release, but only when the pushed commit says so:
       # an ordinary push still just produces the artifact above. The tag and
       # asset name come from MARKETING_VERSION in project.yml, so a release
-      # cannot advertise a version the binary does not carry.
+      # cannot advertise a version the binary does not carry. The asset name
+      # also carries CURRENT_PROJECT_VERSION (collection #224): the in-app
+      # update checker reads the build out of the asset name, so replacing
+      # a release's asset in place still registers as an update.
       - name: Publish unsigned IPA to Releases
         if: >-
           github.event_name == 'push' &&
@@ -148,8 +151,13 @@ jobs:
             echo "error: MARKETING_VERSION not found in project.yml" >&2
             exit 1
           fi
+          BUILD="$(sed -n 's/^[[:space:]]*CURRENT_PROJECT_VERSION:[[:space:]]*//p' project.yml | tr -d '"' | head -1)"
+          if [ -z "$BUILD" ]; then
+            echo "error: CURRENT_PROJECT_VERSION not found in project.yml" >&2
+            exit 1
+          fi
           TAG="v$VERSION"
-          ASSET="build/Drift-$VERSION-unsigned.ipa"
+          ASSET="build/Drift-$VERSION-$BUILD-unsigned.ipa"
           cp build/Drift.ipa "$ASSET"
           NOTES="$(cat "RELEASE-NOTES-$VERSION.md")"
           NOTES="${NOTES//__COMMIT__/${GITHUB_SHA:0:12}}"

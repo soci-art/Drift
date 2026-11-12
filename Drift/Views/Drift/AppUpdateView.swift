@@ -26,7 +26,7 @@ struct AppUpdateView: View {
                 HStack {
                     Text("当前版本")
                     Spacer()
-                    Text("Drift \(checker.currentVersion)").foregroundStyle(.secondary)
+                    Text("Drift \(checker.currentDisplay)").foregroundStyle(.secondary)
                 }
                 HStack {
                     Text("最新版本")
@@ -34,7 +34,7 @@ struct AppUpdateView: View {
                     if checker.checking {
                         ProgressView()
                     } else if let latest = checker.latest {
-                        Text("Drift \(latest.version)")
+                        Text("Drift \(latest.displayVersion)")
                             .foregroundStyle(checker.updateAvailable ? .primary : .secondary)
                     } else {
                         Text("还没查到").foregroundStyle(.secondary)
@@ -122,7 +122,7 @@ struct AppUpdateView: View {
             Button {
                 checker.startDownload()
             } label: {
-                Label("下载 Drift \(latest.version)", systemImage: "arrow.down.circle")
+                Label("下载 Drift \(latest.displayVersion)", systemImage: "arrow.down.circle")
             }
         }
     }

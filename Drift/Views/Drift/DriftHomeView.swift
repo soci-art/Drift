@@ -439,7 +439,7 @@ struct DriftHomeView: View {
     private func updateHintCard(_ latest: AppUpdateChecker.ReleaseInfo) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.down.circle").foregroundStyle(.blue)
-            Text("有新版 Drift \(latest.version)，到「设置 → 检查更新」下载。")
+            Text("有新版 Drift \(latest.displayVersion)，到「设置 → 检查更新」下载。")
                 .font(.subheadline)
             Spacer()
         }

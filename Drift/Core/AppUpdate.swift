@@ -24,10 +24,20 @@ final class AppUpdateChecker: ObservableObject {
 
     struct ReleaseInfo {
         let version: String
+        /// The release's build number, read out of the asset name
+        /// (`Drift-<version>-<build>-unsigned.ipa`, collection #224).
+        /// nil for releases published before the name carried one.
+        let build: Int?
         let notes: String
         let assetName: String
         let assetSize: Int
         let directURL: URL
+
+        /// "3.0.9（构建 26）" when the build is known, else "3.0.9".
+        var displayVersion: String {
+            if let build { return "\(version)（构建 \(build)）" }
+            return version
+        }
     }
 
     enum DownloadPhase {
@@ -55,9 +65,22 @@ final class AppUpdateChecker: ObservableObject {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
     }
 
+    var currentBuild: Int {
+        Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
+    }
+
+    /// "3.0.9（构建 25）" — what the update page shows as 本机版本.
+    var currentDisplay: String { "\(currentVersion)（构建 \(currentBuild)）" }
+
     var updateAvailable: Bool {
         guard let latest else { return false }
-        return (PosterBoard.compareVersion(latest.version, currentVersion) ?? 0) > 0
+        let order = PosterBoard.compareVersion(latest.version, currentVersion) ?? 0
+        if order != 0 { return order > 0 }
+        // Collection #224 (Grace, 2026-11-12): same version — a release
+        // whose asset was replaced in place is still an update when its
+        // build is newer than this install's.
+        guard let latestBuild = latest.build else { return false }
+        return latestBuild > currentBuild
     }
 
     func autoCheck() async {
@@ -112,8 +135,19 @@ final class AppUpdateChecker: ObservableObject {
            let assetURL = URL(string: download) else {
             throw URLError(.cannotParseResponse)
         }
-        return ReleaseInfo(version: version, notes: notes, assetName: name,
+        return ReleaseInfo(version: version,
+                           build: Self.buildNumber(fromAssetName: name, version: version),
+                           notes: notes, assetName: name,
                            assetSize: asset["size"] as? Int ?? 0, directURL: assetURL)
+    }
+
+    /// The build segment of `Drift-<version>-<build>-unsigned.ipa`;
+    /// nil for the older `Drift-<version>-unsigned.ipa` shape.
+    static func buildNumber(fromAssetName name: String, version: String) -> Int? {
+        let prefix = "Drift-\(version)-"
+        guard name.hasPrefix(prefix), name.hasSuffix("-unsigned.ipa") else { return nil }
+        let middle = name.dropFirst(prefix.count).dropLast("-unsigned.ipa".count)
+        return Int(middle)
     }
 
     private static func fetchViaPage() async throws -> ReleaseInfo {
@@ -129,12 +163,30 @@ final class AppUpdateChecker: ObservableObject {
         guard !version.isEmpty, version.allSatisfy({ $0.isNumber || $0 == "." }) else {
             throw URLError(.cannotParseResponse)
         }
-        let name = "Drift-\(version)-unsigned.ipa"
+        // The asset name carries the build (#224), so it is no longer
+        // deterministic: read the release's asset list page and take
+        // the real name out of it.
+        let name = try await fetchAssetName(version: version)
         guard let assetURL = URL(string: "https://github.com/soci-art/Drift/releases/download/v\(version)/\(name)") else {
             throw URLError(.badURL)
         }
-        return ReleaseInfo(version: version, notes: "", assetName: name,
+        return ReleaseInfo(version: version,
+                           build: buildNumber(fromAssetName: name, version: version),
+                           notes: "", assetName: name,
                            assetSize: 0, directURL: assetURL)
+    }
+
+    private static func fetchAssetName(version: String) async throws -> String {
+        let page = "https://github.com/soci-art/Drift/releases/expanded_assets/v\(version)"
+        guard let url = URL(string: mirrorPrefix + page) else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 12
+        let (data, _) = try await URLSession.shared.data(for: request)
+        guard let html = String(data: data, encoding: .utf8),
+              let start = html.range(of: "Drift-\(version)"),
+              let end = html.range(of: "-unsigned.ipa", range: start.lowerBound..<html.endIndex)
+        else { throw URLError(.cannotParseResponse) }
+        return String(html[start.lowerBound..<end.upperBound])
     }
 
     // MARK: - Download
