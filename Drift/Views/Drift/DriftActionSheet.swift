@@ -106,7 +106,9 @@ extension View {
         return sheet(isPresented: isPresented) {
             DriftActionSheetView(title: title, message: message, actions: actions)
                 .presentationDetents([.height(height)])
-                .presentationDragIndicator(.visible)
+                // Grace (2026-11-12, on build 33): no drag-indicator
+                // bar at the top of these sheets — remove it everywhere.
+                .presentationDragIndicator(.hidden)
                 .presentationBackground(Color(.systemBackground))
         }
     }
