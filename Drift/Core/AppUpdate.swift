@@ -67,7 +67,7 @@ final class AppUpdateChecker: ObservableObject {
     static let latestPage = "https://github.com/soci-art/Drift/releases/latest"
     /// Domestic accelerator prefix — verified working 2026-11-11.
     /// RE-VERIFY AND REPLACE AT EVERY RELEASE (Grace's rule).
-    static let mirrorPrefix = "https://gh-proxy.com/"
+    static let mirrorPrefix = "https://gh.86419753.xyz/"
 
     var currentVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
