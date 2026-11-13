@@ -103,6 +103,29 @@ static void pathleak_scan_range(NSString *dir, fsid_t fsid,
     }
 }
 
+NSArray<NSString *> *pathleak_range(NSString *path, uint64_t start_inode,
+                                    uint64_t end_inode) {
+    if (path.length == 0 || start_inode < 1 || end_inode < start_inode) return nil;
+    NSString *dir = path;
+    while (dir.length > 1 && [dir hasSuffix: @"/"]) {
+        dir = [dir substringToIndex: dir.length - 1];
+    }
+
+    struct statfs sfs;
+    if (statfs(dir.fileSystemRepresentation, &sfs) != 0) return nil;
+    fsid_t fsid = sfs.f_fsid;
+
+    char prefix[PATH_MAX];
+    if (![dir getFileSystemRepresentation: prefix maxLength: sizeof(prefix)]) return nil;
+    size_t prefix_length = strlen(prefix);
+    if (prefix_length == 1 && prefix[0] == '/') prefix_length = 0;
+
+    NSMutableArray<NSString *> *result = [NSMutableArray array];
+    pathleak_scan_range(dir, fsid, prefix, prefix_length,
+                        start_inode, end_inode, result);
+    return result;
+}
+
 NSArray<NSString *> *pathleak_parallel(NSString *path, uint64_t max_inode,
                                        NSUInteger threadCount) {
     if (path.length == 0 || max_inode < 1) return nil;

@@ -561,6 +561,19 @@ enum PosterBoardLocal {
     /// refuses them can fall back by changing only this number.
     private static let probeConcurrency = 6
 
+    /// One cold-location scan at a time. A prewarm and a formal caller share
+    /// the same run: the later caller waits, then finds the cached result.
+    private enum LocationPurpose { case formal, prewarm }
+    private static let locationCondition = NSCondition()
+    private static var locationRunning = false
+    private static var prewarmResultPending = false
+    private static var prewarmStarted = false
+
+    /// Cold-location enumeration is split into contiguous inode ranges so a
+    /// hit near the front stops the rest of the scan. 200k is a starting
+    /// point chosen for device measurement, not a tuning claim.
+    private static let leakSegmentSize: UInt64 = 200_000
+
     private static func millis(since start: DispatchTime) -> Double {
         Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
     }
@@ -575,6 +588,44 @@ enum PosterBoardLocal {
     /// -6, and the old order let that refusal kill the run before pathleak was
     /// reached (feedback #77–81).
     private static func openContainer(log: @escaping @Sendable (String) -> Void) throws -> (path: String, handle: Int64) {
+        try coordinatedContainer(purpose: .formal, log: log)
+    }
+
+    private static func openContainerForPrewarm(log: @escaping @Sendable (String) -> Void) throws -> (path: String, handle: Int64) {
+        try coordinatedContainer(purpose: .prewarm, log: log)
+    }
+
+    /// Serialize location attempts. `openContainer`'s contract stays the same
+    /// for every caller; this only stops a prewarm and an apply from running
+    /// two pathleak scans at once.
+    private static func coordinatedContainer(purpose: LocationPurpose,
+                                             log: @escaping @Sendable (String) -> Void) throws -> (path: String, handle: Int64) {
+        locationCondition.lock()
+        while locationRunning { locationCondition.wait() }
+        if purpose == .formal, prewarmResultPending {
+            if !cachedContainer.isEmpty { log("接上预热的定位结果") }
+            prewarmResultPending = false
+        }
+        locationRunning = true
+        locationCondition.unlock()
+
+        var succeeded = false
+        defer {
+            locationCondition.lock()
+            locationRunning = false
+            if purpose == .prewarm, succeeded, !cachedContainer.isEmpty {
+                prewarmResultPending = true
+            }
+            locationCondition.broadcast()
+            locationCondition.unlock()
+        }
+
+        let result = try locateContainer(log: log)
+        succeeded = true
+        return result
+    }
+
+    private static func locateContainer(log: @escaping @Sendable (String) -> Void) throws -> (path: String, handle: Int64) {
         log("本机通道 App Group：\(WorseQueryEscape.discoveredGroupIdentifier ?? "没有可用的组")")
         let locateStart = DispatchTime.now()
         log("正在定位壁纸商店，第一次会慢一些")
@@ -625,18 +676,46 @@ enum PosterBoardLocal {
             log("已知容器路径核对失败：商店目录不存在或不是目录（已知路径本应正确，此行诊断价值最高）")
         }
 
-        // 2. pathleak: walks inodes and names the children of the applications
-        // root without asking for an extension on the root.
+        // 2. pathleak: walk contiguous inode ranges and probe each range as
+        // soon as it finishes. A hit near the front stops the rest of the walk.
         let leakStart = DispatchTime.now()
-        let leaked = WorseQueryEscape.leakedChildren(of: applicationsRoot)
-        log(String(format: "pathleak：在 %@ 下枚举到 %d 个路径（枚举耗时 %.0f ms）",
-                   applicationsRoot, leaked.count, millis(since: leakStart)))
-        if let path = tryConsumePosterBoard(among: leaked, label: "pathleak", log: log) {
-            let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
-            cachedContainer = path
-            log(String(format: "PosterBoard container resolved by pathleak: %@（handle %lld，总定位 %.0f ms）",
-                       path, handle, millis(since: locateStart)))
-            return (path, handle)
+        if let limit = WorseQueryEscape.pathleakScanLimit() {
+            defer { limit.cleanup() }
+            let maxInode = limit.maxInode
+            var scanned: UInt64 = 0
+            var segments = 0
+            var candidates = 0
+            var enumerationMs: Double = 0
+
+            while scanned < maxInode {
+                let start = scanned + 1
+                let end = scanned + min(leakSegmentSize, maxInode - scanned)
+                let segmentStarted = DispatchTime.now()
+                let leaked = WorseQueryEscape.leakedChildren(in: applicationsRoot,
+                                                             from: start, to: end)
+                enumerationMs += millis(since: segmentStarted)
+                scanned = end
+                segments += 1
+                candidates += leaked.count
+                log("pathleak 段 \(segments)：inode \(start)–\(end)，本段 \(leaked.count) 个候选，累计 \(candidates) 个")
+
+                if let path = tryConsumePosterBoard(among: leaked,
+                                                    label: "pathleak 第 \(segments) 段",
+                                                    log: log) {
+                    let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
+                    cachedContainer = path
+                    log(String(format: "pathleak 命中：停在第 %d 段，实际扫过 %llu/%llu 个 inode，枚举耗时 %.0f ms",
+                               segments, scanned, maxInode, enumerationMs))
+                    log(String(format: "PosterBoard container resolved by pathleak: %@（handle %lld，总定位 %.0f ms）",
+                               path, handle, millis(since: locateStart)))
+                    return (path, handle)
+                }
+            }
+
+            log(String(format: "pathleak：在 %@ 下扫描 %llu 个 inode（%d 段），累计 %d 个路径（枚举耗时 %.0f ms）",
+                       applicationsRoot, maxInode, segments, candidates, enumerationMs))
+        } else {
+            log("pathleak：无法建立 inode 上限临时文件")
         }
 
         // 3. The root extension is an optional accelerator, never a gate.

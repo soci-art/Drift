@@ -41,6 +41,13 @@
 /// this app is a directory listing under the Application root's extension.
 NSArray<NSString *> * _Nullable pathleak(NSString *filter, uint64_t max_inode);
 
+/// Scan one inclusive inode range, using the same statfs/prefix/direct-child
+/// rules as `pathleak`. The formal local-location pipeline calls this one
+/// segment at a time; the probe's parallel entry shares the same range worker.
+NSArray<NSString *> * _Nullable pathleak_range(NSString *filter,
+                                                uint64_t start_inode,
+                                                uint64_t end_inode);
+
 /// Same enumeration as `pathleak`, split into `threadCount` contiguous inode
 /// ranges and run concurrently. Results are merged in inode order and
 /// deduplicated. This is the probe-only entry point; the normal apply path

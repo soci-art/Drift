@@ -332,6 +332,22 @@ enum WorseQueryEscape {
         return pathleak(directory, inode.uint64Value) ?? []
     }
 
+    /// One inclusive inode range, same prefix and direct-child rules as the
+    /// full `pathleak` call above. The cold-location pipeline uses this to
+    /// stop as soon as a segment identifies PosterBoard.
+    static func leakedChildren(in directory: String, from start: UInt64, to end: UInt64) -> [String] {
+        pathleak_range(directory, start, end) as? [String] ?? []
+    }
+
+    /// The upper bound and cleanup for the segmented scan.
+    ///
+    /// Kept next to `leakedChildren(of:)` so the temp-file rule is not
+    /// duplicated: the file is created once, read for its inode, and removed
+    /// when the whole location attempt is over.
+    static func pathleakScanLimit() -> (maxInode: UInt64, cleanup: () -> Void)? {
+        pathleakInodeUpperBound()
+    }
+
     // MARK: - Enumeration probe
 
     /// One timed parallel enumeration. `paths` is the merged, inode-ordered
