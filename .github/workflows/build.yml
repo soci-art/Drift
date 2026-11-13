@@ -156,7 +156,7 @@ jobs:
             exit 1
           fi
           TAG="v$VERSION"
-          ASSET="build/Drift-$VERSION-$BUILD-unsigned.ipa"
+          ASSET="build/Drift-$VERSION-unsigned.ipa"
           cp build/Drift.ipa "$ASSET"
           if [ "$(gh release view "$TAG" --json isPrerelease --jq '.isPrerelease')" != "true" ]; then
             echo "error: $TAG is not a pre-release; refusing to replace its IPA" >&2
@@ -173,10 +173,12 @@ jobs:
       # Publish a curated release, but only when the pushed commit says so:
       # an ordinary push still just produces the artifact above. The tag and
       # asset name come from MARKETING_VERSION in project.yml, so a release
-      # cannot advertise a version the binary does not carry. The asset name
-      # also carries CURRENT_PROJECT_VERSION (collection #224): the in-app
-      # update checker reads the build out of the asset name, so replacing
-      # a release's asset in place still registers as an update.
+      # cannot advertise a version the binary does not carry. The asset
+      # name is the version alone, no build number (Grace's rule of
+      # 2026-11-13, first applied to 3.2.2): the in-app update checker
+      # tolerates a build-less name and falls back to comparing versions;
+      # the accepted cost is that an in-place asset swap under the same
+      # version no longer prompts an in-app update.
       - name: Publish unsigned IPA to Releases
         if: >-
           github.event_name == 'push' &&
@@ -198,7 +200,7 @@ jobs:
             exit 1
           fi
           TAG="v$VERSION"
-          ASSET="build/Drift-$VERSION-$BUILD-unsigned.ipa"
+          ASSET="build/Drift-$VERSION-unsigned.ipa"
           cp build/Drift.ipa "$ASSET"
           NOTES="$(cat "RELEASE-NOTES-$VERSION.md")"
           NOTES="${NOTES//__COMMIT__/${GITHUB_SHA:0:12}}"

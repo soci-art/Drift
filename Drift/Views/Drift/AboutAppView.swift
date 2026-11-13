@@ -149,13 +149,11 @@ struct AboutAppView: View {
 
     // #315: decoded once into a static let — as computed statics
     // these two images were re-decoded from disk on every render.
-    private static func bundledImage(_ name: String, _ ext: String) -> UIImage? {
-        guard let url = Bundle.main.url(forResource: name, withExtension: ext)
-        else { return nil }
-        return UIImage(contentsOfFile: url.path)
-    }
-
-    static let qqCardImage: UIImage? = bundledImage("QQGroupCard", "png")
+    // #317: both cards live in the asset catalog now. As loose bundle
+    // files they were what signer tools grabbed when hunting for an
+    // app icon — the QQ card, a QR code image, ended up shown as
+    // Drift's icon in LCSign.
+    static let qqCardImage: UIImage? = UIImage(named: "QQGroupCard")
 
     // MARK: - Reward code (#271, moved from the 说明 page)
 
@@ -180,7 +178,7 @@ struct AboutAppView: View {
         .driftCard()
     }
 
-    static let rewardImage: UIImage? = bundledImage("RewardCode", "jpg")
+    static let rewardImage: UIImage? = UIImage(named: "RewardCode")
 
     // MARK: - Credit
 

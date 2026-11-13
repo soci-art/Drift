@@ -72,14 +72,21 @@ struct NativePrimaryButton: View {
 
 /// The app artwork at a chosen size, rounded like the home-screen icon.
 ///
-/// Self-contained on purpose: it loads the same `Logo@1x/@2x` bundle files the
-/// ported `GoldenLogo` did, without depending on a component library for it.
+/// Self-contained on purpose, without depending on a component library for
+/// it. Since #318 it draws the current app icon from the catalog's
+/// `AboutIcon` set — the same light/dark pair the About page header uses —
+/// resolved against the active color scheme, so the first-run pages follow
+/// the system appearance like the home-screen icon does. (It used to load
+/// the loose `Logo@1x/@2x` bundle files: the old pastel artwork, light
+/// only, which never matched the current icon and could not switch.)
 struct NativeLogo: View {
     var size: CGFloat = 72
 
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         Group {
-            if let image = NativeLogo.bundledIcon {
+            if let image = Self.icon(for: colorScheme) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
@@ -99,15 +106,15 @@ struct NativeLogo: View {
         .clipShape(RoundedRectangle(cornerRadius: size * 0.2, style: .continuous))
     }
 
-    /// `Logo@1x/@2x` are the icon artwork under names no icon key can claim, so
-    /// loading them by path cannot abort the way `UIImage(named: "AppIcon")` can.
-    private static let bundledIcon: UIImage? = {
-        if let path = Bundle.main.path(forResource: "Logo@2x", ofType: "png"),
-           let image = UIImage(contentsOfFile: path) { return image }
-        if let path = Bundle.main.path(forResource: "Logo@1x", ofType: "png"),
-           let image = UIImage(contentsOfFile: path) { return image }
-        return nil
-    }()
+    /// The catalog rendition of the app icon for the given scheme. Asking
+    /// with explicit traits is what makes the dark rendition come back in
+    /// dark mode; a plain name lookup would keep whichever appearance the
+    /// process happened to resolve first.
+    private static func icon(for scheme: ColorScheme) -> UIImage? {
+        let traits = UITraitCollection(
+            userInterfaceStyle: scheme == .dark ? .dark : .light)
+        return UIImage(named: "AboutIcon", in: nil, compatibleWith: traits)
+    }
 }
 
 /// The tone slots the reference has named colors for.
