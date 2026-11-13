@@ -30,8 +30,8 @@ enum Diagnostics {
         // Collection #144 (Grace, 2026-11-11): the facts a reader needs
         // first, in one place — previously a log package recorded neither
         // the device system nor the App version at all.
-        let appShort = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-        let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        let appShort = AppVersion.marketing
+        let appBuild = AppVersion.build
         lines.append("  App: Drift \(appShort) (\(appBuild))")
         lines.append("  设备: \(machineName) · iOS \(WorseQueryEscape.processVersion) (\(WorseQueryEscape.processBuildVersion))")
         let identity = DeviceIdentityMonitor.shared.current

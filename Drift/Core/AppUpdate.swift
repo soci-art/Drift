@@ -6,10 +6,12 @@ import Foundation
 /// - The app checks on its own: silently at launch, and any time from
 ///   设置 → 检查更新. Only a found update is surfaced; a failed check
 ///   stays quiet unless the user asked.
-/// - ONE download button. The app picks the route that works: the
-///   domestic accelerator first, direct GitHub as fallback, for both
-///   the check and the download (collection #225, Grace, 2026-11-12 —
-///   the order was the other way round up to 3.0.9). The user never
+/// - ONE download button. The app picks the route that works, in
+///   three tiers (collection #310, Grace, 2026-11-13): her own
+///   accelerator domain first, a public domestic accelerator second,
+///   direct GitHub as the final fallback — for both the check and
+///   the download. (Up to #225's single-accelerator order the tiers
+///   were two; up to 3.0.9 direct went first.) The user never
 ///   chooses a line.
 /// - The accelerator prefix is a single constant, re-verified by hand
 ///   at every release and baked into that build (this build's was
@@ -31,6 +33,10 @@ final class AppUpdateChecker: ObservableObject {
         /// nil for releases published before the name carried one.
         let build: Int?
         let notes: String
+        /// The release's publish date, "2026年11月13日", when the API
+        /// route provided it (the page route cannot) — the
+        /// announcement shows it when it reuses this fetch (#315).
+        let dateLine: String?
         let assetName: String
         let assetSize: Int
         let directURL: URL
@@ -68,17 +74,16 @@ final class AppUpdateChecker: ObservableObject {
     /// Domestic accelerator prefix — verified working 2026-11-11.
     /// RE-VERIFY AND REPLACE AT EVERY RELEASE (Grace's rule).
     static let mirrorPrefix = "https://gh.86419753.xyz/"
+    /// Second tier (#310): a public domestic accelerator, tried when
+    /// her own domain does not answer, before falling back to direct.
+    static let secondMirrorPrefix = "https://gh-proxy.com/"
 
-    var currentVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
-    }
-
-    var currentBuild: Int {
-        Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
-    }
+    // The bundle reads themselves live in AppVersion (#315).
+    var currentVersion: String { AppVersion.marketing }
+    var currentBuild: Int { AppVersion.buildNumber }
 
     /// "3.0.9（构建 25）" — what the update page shows as 本机版本.
-    var currentDisplay: String { "\(currentVersion)（构建 \(currentBuild)）" }
+    var currentDisplay: String { AppVersion.display }
 
     var updateAvailable: Bool {
         guard let latest else { return false }
@@ -111,13 +116,15 @@ final class AppUpdateChecker: ObservableObject {
     // MARK: - Check
 
     private static func fetchLatest() async throws -> ReleaseInfo {
-        // Route 1: the API through the domestic accelerator. Route 2:
-        // the direct API. Route 3: the release page (accelerator,
-        // then direct) — its redirect target carries the tag, and the
-        // asset list page carries the real asset name, so a
-        // ReleaseInfo can still be built (without notes or size).
-        // Accelerator first since #225; up to 3.0.9 direct went first.
+        // Three tiers (#310): her accelerator, the public domestic
+        // accelerator, then direct — the API first, and the release
+        // page as the last route (its redirect target carries the
+        // tag, and the asset list page carries the real asset name,
+        // so a ReleaseInfo can still be built, without notes or
+        // size). Accelerator first since #225; up to 3.0.9 direct
+        // went first.
         if let info = try? await fetchViaAPI(base: mirrorPrefix) { return info }
+        if let info = try? await fetchViaAPI(base: secondMirrorPrefix) { return info }
         if let info = try? await fetchViaAPI(base: "") { return info }
         return try await fetchViaPage()
     }
@@ -135,6 +142,7 @@ final class AppUpdateChecker: ObservableObject {
         guard let tag = object?["tag_name"] as? String else { throw URLError(.cannotParseResponse) }
         let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
         let notes = object?["body"] as? String ?? ""
+        let dateLine = (object?["published_at"] as? String).flatMap(AppAnnouncement.dateLine(fromISO:))
         let assets = object?["assets"] as? [[String: Any]] ?? []
         guard let asset = assets.first(where: {
             ($0["name"] as? String)?.hasPrefix("Drift-") == true
@@ -146,7 +154,7 @@ final class AppUpdateChecker: ObservableObject {
         }
         return ReleaseInfo(version: version,
                            build: Self.buildNumber(fromAssetName: name, version: version),
-                           notes: notes, assetName: name,
+                           notes: notes, dateLine: dateLine, assetName: name,
                            assetSize: asset["size"] as? Int ?? 0, directURL: assetURL)
     }
 
@@ -160,9 +168,9 @@ final class AppUpdateChecker: ObservableObject {
     }
 
     private static func fetchViaPage() async throws -> ReleaseInfo {
-        // The page route goes through the accelerator first like
-        // every other route (#225), direct as its own fallback.
+        // The page route walks the same three tiers (#310).
         if let info = try? await fetchViaPage(base: mirrorPrefix) { return info }
+        if let info = try? await fetchViaPage(base: secondMirrorPrefix) { return info }
         return try await fetchViaPage(base: "")
     }
 
@@ -188,14 +196,14 @@ final class AppUpdateChecker: ObservableObject {
         }
         return ReleaseInfo(version: version,
                            build: buildNumber(fromAssetName: name, version: version),
-                           notes: "", assetName: name,
+                           notes: "", dateLine: nil, assetName: name,
                            assetSize: 0, directURL: assetURL)
     }
 
     private static func fetchAssetName(version: String) async throws -> String {
-        // Accelerator first, direct as fallback (#225), like the
-        // other routes.
+        // Same three tiers (#310), like the other routes.
         if let name = try? await fetchAssetName(base: mirrorPrefix, version: version) { return name }
+        if let name = try? await fetchAssetName(base: secondMirrorPrefix, version: version) { return name }
         return try await fetchAssetName(base: "", version: version)
     }
 
@@ -225,21 +233,43 @@ final class AppUpdateChecker: ObservableObject {
     }
 
     private func download(_ info: ReleaseInfo) async {
-        // The accelerator first (#225); any failure retries once direct.
-        do {
-            guard let mirrorURL = URL(string: Self.mirrorPrefix + info.directURL.absoluteString) else {
-                throw URLError(.badURL)
-            }
-            let file = try await downloadOnce(from: mirrorURL, info: info)
-            downloadPhase = .done(file)
-        } catch {
-            routeNote = "加速线不通，正在换直连重试…"
+        // The same three tiers as the check (#310): her accelerator,
+        // the public domestic accelerator, then direct. Each failure
+        // moves to the next tier; the note under the button says
+        // which switch is happening.
+        let tiers: [(base: String, note: String)] = [
+            (Self.mirrorPrefix, ""),
+            (Self.secondMirrorPrefix, "第一条加速线不通，正在换第二条…"),
+            ("", "加速线都不通，正在换直连重试…"),
+        ]
+        for tier in tiers {
+            if !tier.note.isEmpty { routeNote = tier.note }
             do {
-                let file = try await downloadOnce(from: info.directURL, info: info)
+                guard let url = URL(string: tier.base + info.directURL.absoluteString) else {
+                    throw URLError(.badURL)
+                }
+                let file = try await downloadOnce(from: url, info: info)
                 downloadPhase = .done(file)
+                return
             } catch {
-                downloadPhase = .failed("下载失败：两条线都没走通。检查网络后再试一次。")
+                continue
             }
+        }
+        downloadPhase = .failed("下载失败：几条线都没走通。检查网络后再试一次。")
+    }
+
+    /// #313: the downloaded IPA lives in the cache the Settings
+    /// clear-cache removes, so after a clear the page can be left
+    /// holding a 「保存或分享安装包」 button for a file that no
+    /// longer exists (Grace hit exactly this: 清完缓存回来点分享，
+    /// 签名工具报文件不存在）. The page re-validates whenever it
+    /// appears; a vanished file drops the phase back to idle so the
+    /// download button comes back instead.
+    func validateDownloadedFile() {
+        if case .done(let url) = downloadPhase,
+           !FileManager.default.fileExists(atPath: url.path) {
+            downloadPhase = .idle
+            routeNote = ""
         }
     }
 
@@ -268,7 +298,14 @@ final class AppUpdateChecker: ObservableObject {
         defer { session.finishTasksAndInvalidate() }
         var request = URLRequest(url: url)
         request.timeoutInterval = 60
-        let (tempURL, response) = try await session.download(for: request)
+        // #311: an explicit download task resumed through the
+        // bridge's continuation, not the async `download(for:)`
+        // convenience — with the convenience API the progress
+        // callbacks were not reliably delivered on device (Grace:
+        // the whole download ran with no progress bar at all, on
+        // multiple versions), while the classic task's delegate
+        // callbacks are the same channel that finishes the download.
+        let (tempURL, response) = try await bridge.download(with: session, request: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
             throw URLError(.badServerResponse)
         }
@@ -286,8 +323,10 @@ final class AppUpdateChecker: ObservableObject {
     }
 }
 
-/// Bridges URLSessionDownloadDelegate progress into a closure; the
-/// async `download(for:)` resumes on completion or error by itself.
+/// Bridges a classic URLSession download task into async/await:
+/// the delegate's progress callbacks feed a closure, and the
+/// finish/error callbacks resume the continuation (#311 — see
+/// downloadOnce for why the task form replaced `download(for:)`).
 /// Reports raw byte counts rather than a fraction (#226): when the
 /// response has no expected length — the accelerator's usual shape —
 /// the caller's fallback total (the release metadata's asset size)
@@ -301,13 +340,54 @@ private struct DownloadSample: Equatable {
 private final class DownloadBridge: NSObject, URLSessionDownloadDelegate {
     let fallbackTotal: Int64
     let onProgress: (Int64, Int64) -> Void
+    private var continuation: CheckedContinuation<(URL, URLResponse), Error>?
+    private var finishedLocation: URL?
+    private var finishedResponse: URLResponse?
+
     init(fallbackTotal: Int64, onProgress: @escaping (Int64, Int64) -> Void) {
         self.fallbackTotal = fallbackTotal
         self.onProgress = onProgress
     }
 
+    /// Starts the task and suspends until the delegate finishes it.
+    /// The temp file is copied out inside didFinishDownloadingTo —
+    /// the system deletes it when that callback returns.
+    func download(with session: URLSession, request: URLRequest) async throws -> (URL, URLResponse) {
+        try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            let task = session.downloadTask(with: request)
+            task.resume()
+        }
+    }
+
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
-                    didFinishDownloadingTo location: URL) {}
+                    didFinishDownloadingTo location: URL) {
+        // The temp file dies with this callback: copy it aside and
+        // let didCompleteWithError hand the copy to the caller.
+        let stash = FileManager.default.temporaryDirectory
+            .appendingPathComponent("drift-download-\(UUID().uuidString).ipa")
+        do {
+            try FileManager.default.copyItem(at: location, to: stash)
+            finishedLocation = stash
+            finishedResponse = downloadTask.response
+        } catch {
+            finishedLocation = nil
+            finishedResponse = nil
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    didCompleteWithError error: Error?) {
+        guard let continuation else { return }
+        self.continuation = nil
+        if let error {
+            continuation.resume(throwing: error)
+        } else if let finishedLocation, let finishedResponse {
+            continuation.resume(returning: (finishedLocation, finishedResponse))
+        } else {
+            continuation.resume(throwing: URLError(.cannotDecodeContentData))
+        }
+    }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                     didWriteData bytesWritten: Int64, totalBytesWritten: Int64,

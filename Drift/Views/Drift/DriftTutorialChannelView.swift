@@ -87,7 +87,7 @@ struct DriftTutorialChannelView: View {
             return [
                 "配对文件（先配对一次，之后一直能用）",
                 "隧道：刷的时候开着 LocalDevVPN，手机连着 Wi-Fi",
-                "系统在 iOS 17.0 到 iOS 27.1 正式版之间；iOS 27.2 只支持 beta 1 / beta 2，iOS 27.2 正式版用不了",
+                "系统在 iOS 18.0 到 iOS 27.1 正式版之间；iOS 27.2 只支持 beta 1 / beta 2，iOS 27.2 正式版用不了",
                 "签名不限：哪种签名装的都行",
             ]
         }

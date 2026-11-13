@@ -83,7 +83,11 @@ struct DriftAboutView: View {
     }
 
     private static let tableRows: [TableRow] = [
-        TableRow(version: "iOS 17.0 – 18.x", noRespring: true, respring: true, local: false),
+        // #314 (Grace, 2026-11-13): the 17 band lost its tunnel
+        // ticks — its system refuses the container lookup (see
+        // DriftSession) — and 18 keeps its own row.
+        TableRow(version: "iOS 17.0 – 17.x", noRespring: false, respring: false, local: false),
+        TableRow(version: "iOS 18.0 – 18.x", noRespring: true, respring: true, local: false),
         TableRow(version: "iOS 26.0 – 26.1 正式版", noRespring: false, respring: false, local: true),
         TableRow(version: "iOS 26.2 – 27.1 正式版", noRespring: true, respring: true, local: true),
         TableRow(version: "iOS 27.2 beta 1 / beta 2", noRespring: true, respring: true, local: true),

@@ -729,6 +729,19 @@ enum DriftJudge {
             tunnelMissing = "隧道未连通（打开 LocalDevVPN 并连上 Wi-Fi）"
         } else if identity.version.isEmpty {
             tunnelMissing = "还没有读到设备系统版本"
+        } else if let order = PosterBoard.compareVersion(identity.version, "18"), order < 0 {
+            // #314 (Grace, 2026-11-13): the tunnel floor is iOS 18.0
+            // now, judged here at the session layer (the channels'
+            // own gates are not this layer's to move). The whole 17
+            // band is out: on iOS 17.0 正式版 the device refuses the
+            // container lookup itself — two user logs, all five
+            // lookup shapes disconnected by the device, and even a
+            // build-number query comes back GetProhibited — and no
+            // 17.1–17.7 device has ever produced a successful flash.
+            // Upstream AirCard's floor is 18.0 as well. The app still
+            // installs on 17.0 (its own floor stays) for the sake of
+            // the future on-device routes aimed at that band.
+            tunnelMissing = "设备系统是 iOS 17 这一代，隧道通道用不了：这一代系统会拒绝查壁纸文件夹，两条隧道都走不通。隧道通道需要 iOS 18.0 及以上。"
         } else if identity.buildVersion.isEmpty,
                   PosterBoard.compareVersion(identity.version, "27.2") == 0 {
             // #294 (Grace, 2026-11-13): the build number only decides
@@ -802,14 +815,14 @@ enum DriftJudge {
                 mode: .direct,
                 available: p.directReady,
                 reason: p.directReady
-                    ? "可用：\(device) 在 17.0–27.1 正式版及 27.2 beta 1 / 2 内"
+                    ? "可用：\(device) 在 18.0–27.1 正式版及 27.2 beta 1 / 2 内"
                     : p.directWhy,
                 effect: expectedEffect(for: .direct)),
             DriftModeAvailability(
                 mode: .airlift,
                 available: p.respringReady,
                 reason: p.respringReady
-                    ? "可用：\(device) 在 17.0–27.1 正式版及 27.2 beta 1 / 2 内"
+                    ? "可用：\(device) 在 18.0–27.1 正式版及 27.2 beta 1 / 2 内"
                     : p.respringWhy,
                 effect: expectedEffect(for: .airlift)),
         ]

@@ -200,18 +200,33 @@ struct DriftVideoView: View {
     }
 
     private func importPicked(_ urls: [URL], into directory: URL,
-                              assign: (URL?) -> Void) {
+                              assign: @escaping (URL?) -> Void) {
         guard let source = urls.first else { return }
-        do {
-            let scoped = source.startAccessingSecurityScopedResource()
-            defer { if scoped { source.stopAccessingSecurityScopedResource() } }
-            PosterBoard.clearFiles(in: directory)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let destination = directory.appendingPathComponent(source.lastPathComponent)
-            try FileManager.default.copyItem(at: source, to: destination)
-            assign(destination)
-        } catch {
-            session.errorText = "拷贝素材失败：\(error.localizedDescription)"
+        // #315: the copy used to run synchronously on the main
+        // thread — a large picked video stalled the page until it
+        // landed. The copy (and the security-scope dance around it)
+        // runs detached now; only the assignment comes back to the
+        // main actor.
+        Task {
+            let outcome: Result<URL, Error> = await Task.detached(priority: .userInitiated) {
+                do {
+                    let scoped = source.startAccessingSecurityScopedResource()
+                    defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+                    PosterBoard.clearFiles(in: directory)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    let destination = directory.appendingPathComponent(source.lastPathComponent)
+                    try FileManager.default.copyItem(at: source, to: destination)
+                    return .success(destination)
+                } catch {
+                    return .failure(error)
+                }
+            }.value
+            switch outcome {
+            case .success(let destination):
+                assign(destination)
+            case .failure(let error):
+                session.errorText = "拷贝素材失败：\(error.localizedDescription)"
+            }
         }
     }
 

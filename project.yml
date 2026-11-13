@@ -130,18 +130,15 @@ settings:
     CODE_SIGN_STYLE: Automatic
     CODE_SIGN_IDENTITY: Apple Development
     DEVELOPMENT_TEAM: ""
-    # Empty for every normal build. The probe workflow passes
-    # DRIFT_PROBE_FLAG=DRIFT_ENUM_PROBE on the xcodebuild command line, which
-    # compiles the temporary 「枚举测速」 section in. Without it the button
-    # does not exist in the binary at all.
-    DRIFT_PROBE_FLAG: ""
-    SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) $(DRIFT_PROBE_FLAG)"
+    # The enumeration probe that used to compile in behind a
+    # DRIFT_PROBE_FLAG condition was removed in the #315 cleanup
+    # (its UI went with it; the probe line itself closed earlier).
     # 3.0.15's pre-release carried builds 43–47 (43 formal candidate,
     # 44–46 probe/assistant rounds, 47 the outsourced handover). 3.0.16
     # is the next formal release; its first build is 48. (Shipped
     # briefly as 3.0.16, renamed to 3.1.0 the same day at Grace's
     # word — a major update earns a major number.)
-    CURRENT_PROJECT_VERSION: 51
+    CURRENT_PROJECT_VERSION: 52
     # 3.0.0 is the four-method refactor: three independent channels (本机直刷 /
     # 免注销直刷 / 注销直刷) with their own write and effect flows, the
     # 3106-style transactional local installer with receipts, and the sealed
@@ -286,8 +283,8 @@ targets:
         # The hand-written pbxproj carried these on the target; project.yml used
         # to omit them, so a regeneration would have dropped them.  The rpath is
         # what lets the embedded EMProxy dynamic slice load; the icon-catalog
-        # setting is what compiles the alternate `ScrappedIcon` alongside the
-        # primary stack.
+        # setting compiles every app-icon asset in the catalog (there is no
+        # alternate icon — the old `ScrappedIcon` remnant went in #315).
         LD_RUNPATH_SEARCH_PATHS:
           - "$(inherited)"
           - "@executable_path/Frameworks"

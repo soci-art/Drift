@@ -43,9 +43,13 @@ struct PackListView: View {
                             .font(.subheadline).foregroundStyle(.secondary)
                             .padding(.vertical, 8)
                     }
+                    // #315: the selected set is built once per body
+                    // pass — each row used to rescan the whole
+                    // selection array to answer "am I selected".
+                    let selectedURLs = Set(selection.tendies.map(\.url))
                     ForEach(displayRows) { row in
                         PackListRow(pack: row.pack,
-                                    selected: selection.tendies.contains { $0.url == row.pack.url },
+                                    selected: selectedURLs.contains(row.pack.url),
                                     kind: row.kind,
                                     onPreview: {
                                         previewPack = row.pack
@@ -418,8 +422,9 @@ struct PackListView: View {
             PosterBoardPreview.invalidate(for: pack)
             PosterBoardImports.remove(pack)
         }
-        imports.removeAll { candidate in targets.contains { $0.url == candidate.url } }
-        selection.tendies.removeAll { candidate in targets.contains { $0.url == candidate.url } }
+        let targetURLs = Set(targets.map(\.url))
+        imports.removeAll { targetURLs.contains($0.url) }
+        selection.tendies.removeAll { targetURLs.contains($0.url) }
         AppLog.op("壁纸包页：删除了 \(targets.map(\.name).joined(separator: "、"))")
     }
 

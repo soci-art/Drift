@@ -24,16 +24,12 @@ import Foundation
 /// the notes body: any edit to the release notes makes it a new
 /// announcement that pops once more.
 enum AppAnnouncement {
-    static var version: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-    }
-
-    static var build: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
-    }
+    // The bundle reads themselves live in AppVersion (#315).
+    static var version: String { AppVersion.marketing }
+    static var build: String { AppVersion.build }
 
     /// One id per shipped build: "3.0.9 (25)".
-    static var id: String { "\(version) (\(build))" }
+    static var id: String { AppVersion.id }
 
     private static let seenKey = "DriftAnnouncementSeenID"
 
@@ -91,12 +87,31 @@ enum AppAnnouncement {
                      dateLine: UserDefaults.standard.string(forKey: cacheDateKey))
     }
 
-    /// Fetch this version's release notes: the API through the
-    /// accelerator first, then direct — the same order the update
-    /// checker uses since #225. A success refreshes the cache.
+    /// Fetch this version's release notes: the same three tiers
+    /// the update checker uses since #310. A success refreshes
+    /// the cache.
     static func fetchNotes() async -> Notes? {
+        // #315: when the update check has already fetched THIS
+        // version's release (the usual up-to-date launch), reuse its
+        // notes instead of asking the API for the same release a
+        // second time through a different endpoint.
+        let reused = await MainActor.run { () -> Notes? in
+            guard let latest = AppUpdateChecker.shared.latest,
+                  latest.version == version,
+                  !latest.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { return nil }
+            return Notes(body: latest.notes, dateLine: latest.dateLine)
+        }
+        if let notes = reused {
+            UserDefaults.standard.set(notes.body, forKey: cacheBodyKey)
+            if let date = notes.dateLine {
+                UserDefaults.standard.set(date, forKey: cacheDateKey)
+            }
+            AppLog.info("公告：复用查更新取到的 \(version) 发行说明，内容标识 \(contentKey(for: notes.body))")
+            return notes
+        }
         let api = "https://api.github.com/repos/soci-art/Drift/releases/tags/v\(version)"
-        for base in [AppUpdateChecker.mirrorPrefix, ""] {
+        for base in [AppUpdateChecker.mirrorPrefix, AppUpdateChecker.secondMirrorPrefix, ""] {
             if let notes = try? await fetchNotes(base: base, api: api) {
                 UserDefaults.standard.set(notes.body, forKey: cacheBodyKey)
                 if let date = notes.dateLine {
@@ -106,7 +121,7 @@ enum AppAnnouncement {
                 return notes
             }
         }
-        AppLog.warn("公告：\(version) 的发行说明没取到（加速和直连都不通）")
+        AppLog.warn("公告：\(version) 的发行说明没取到（三条线都不通）")
         return nil
     }
 
@@ -123,11 +138,13 @@ enum AppAnnouncement {
         guard let body = object?["body"] as? String,
               !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { throw URLError(.cannotParseResponse) }
-        let date = (object?["published_at"] as? String).flatMap(Self.formatDate)
+        let date = (object?["published_at"] as? String).flatMap(Self.dateLine(fromISO:))
         return Notes(body: body, dateLine: date)
     }
 
-    private static func formatDate(iso: String) -> String? {
+    /// Shared with the update checker, which parses the same
+    /// `published_at` field out of its own fetch (#315).
+    static func dateLine(fromISO iso: String) -> String? {
         guard let date = ISO8601DateFormatter().date(from: iso) else { return nil }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")

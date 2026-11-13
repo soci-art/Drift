@@ -15,6 +15,10 @@ struct DriftSettingsView: View {
     @State private var showGuide = false
     @State private var confirmResetPairing = false
     @State private var history: [ApplyHistory.Record] = ApplyHistory.load()
+    /// #315: the merged history rows, rebuilt only when the page
+    /// appears or the records change — the computed property used to
+    /// re-merge and re-sort on every render.
+    @State private var mergedRows: [MergedRecord] = []
     @State private var packaging = false
     @State private var sharePackage: SharePackageItem?
     @State private var recordsNote: String?
@@ -34,31 +38,15 @@ struct DriftSettingsView: View {
     @ObservedObject private var updateChecker = AppUpdateChecker.shared
     @State private var cacheBreakdown: AppCache.Breakdown?
     @State private var confirmClearCache = false
-    @State private var cacheNote: String?
+    // #312 (Grace, 2026-11-13): the clear-cache outcome is a popup
+    // now, not a standing line under the button — the same rule the
+    // upload outcomes got in #277.
+    @State private var showCacheCleared = false
+    @State private var cacheClearedMessage = ""
     @State private var notificationsAllowed = true
     @State private var showAnnouncement = false
     @State private var uploading = false
     @State private var confirmUpload = false
-    #if DRIFT_ENUM_PROBE
-    @State private var probeRunning = false
-    @State private var probeStatus = ""
-    // #292 (Grace, 2026-11-13): live progress for the probe run — which
-    // tier is running, the finished tiers' times, a rough remaining
-    // estimate — and a completion / failure sheet at the end. Tier-level
-    // only: the C scan reports nothing until a tier finishes, so there
-    // is no honest within-tier counter to show.
-    @State private var probeTierIndex = 0
-    @State private var probeTierTotal = 9
-    @State private var probeCurrentTier = ""
-    @State private var probeDoneLines: [String] = []
-    @State private var probeStartedAt: Date?
-    @State private var probeDoneWeight = 0.0
-    @State private var probeShowDone = false
-    @State private var probeDoneMessage = ""
-    @State private var probeShowFailed = false
-    @State private var probeFailedMessage = ""
-    #endif
-
     var body: some View {
         NavigationStack {
             List {
@@ -66,9 +54,6 @@ struct DriftSettingsView: View {
                 announcementSection
                 connectionSection
                 localRouteSection
-                #if DRIFT_ENUM_PROBE
-                probeSection
-                #endif
                 restoreSealedSection
                 historySection
                 recordsSection
@@ -115,6 +100,7 @@ struct DriftSettingsView: View {
                 AppLog.op("打开设置页")
                 history = ApplyHistory.load()
                 receipts = PosterBoardLocalReceipts.load()
+                refreshMergedRows()
                 refreshNotificationStatus()
             }
             .onChange(of: wirelessPair.pin) { _, _ in
@@ -131,16 +117,25 @@ struct DriftSettingsView: View {
                                     Task {
                                         let freed = await Task.detached { AppCache.clear() }.value
                                         cacheBreakdown = await Task.detached { AppCache.measure() }.value
-                                        cacheNote = "已清除，省出约 \(AppCache.format(freed))。"
+                                        // #312: the result arrives as
+                                        // the popup below, presented
+                                        // from the root like this
+                                        // confirmation (#293).
+                                        cacheClearedMessage = "省出约 \(AppCache.format(freed))。"
+                                        showCacheCleared = true
                                     }
                                 },
                               ])
+            .driftActionSheet(isPresented: $showCacheCleared, title: "清除完成",
+                              message: cacheClearedMessage,
+                              actions: [DriftSheetAction("知道了") {}])
             .driftActionSheet(isPresented: $confirmClearHistory, title: "清空全部刷入记录？",
                               message: "记录清空后无法恢复。此操作只清记录，不会删除设备上已刷入的壁纸——要删壁纸请用主页的「本机壁纸管理」。",
                               actions: [
                                 DriftSheetAction("清空记录", destructive: true) {
                                     ApplyHistory.clear()
                                     history = []
+                                    refreshMergedRows()
                                     recordsNote = "刷入记录已清空；回执没有动，管理页仍能认出已刷的壁纸。"
                                 },
                               ])
@@ -150,7 +145,7 @@ struct DriftSettingsView: View {
                 Text(DriftRestoreGate.notice)
             }
             .sheet(item: $sharePackage) { item in
-                ActivityShareSheet(url: item.url)
+                FileShareSheet(url: item.url)
             }
             // Grace (2026-11-12, on 3.0.11): the dialog shows ONLY the
             // title and the three choices — no bundle breakdown, no
@@ -303,241 +298,6 @@ struct DriftSettingsView: View {
         }
     }
 
-    #if DRIFT_ENUM_PROBE
-    // MARK: - Enumeration probe
-
-    /// Temporary probe UI. The compile condition is empty in every normal
-    /// build, so this section and its button do not exist there at all.
-    private var probeSection: some View {
-        Section("枚举测速（探针）") {
-            Text("插电、前台、屏幕常亮，中途不要操作。点一次会依次跑 1→2→4→6 线程：先扫 max_inode 的前 1/4，再扫全范围，最后补跑一次 1 线程交叉复核。")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("只枚举路径：不 consume、不探身份、不清缓存、不写壁纸；临时上限文件跑完删除。")
-                .font(.caption).foregroundStyle(.secondary)
-            Button {
-                startEnumerationProbe()
-            } label: {
-                Label(probeRunning ? "正在测速…" : "枚举测速", systemImage: "speedometer")
-            }
-            .disabled(probeRunning)
-            // #292: while a run is going, show where it stands — tier x
-            // of 9, the tier now scanning, each finished tier's time as
-            // it lands, elapsed time and a rough remaining estimate.
-            // Finished tiers stay listed if a later tier fails.
-            if probeRunning || !probeDoneLines.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    if probeRunning {
-                        Text("正在测速：第 \(probeTierIndex) / \(probeTierTotal) 档（\(probeCurrentTier)）")
-                            .font(.caption.weight(.semibold))
-                        ProgressView(value: probeDoneWeight, total: 24)
-                        if let started = probeStartedAt {
-                            TimelineView(.periodic(from: started, by: 1)) { context in
-                                let elapsed = context.date.timeIntervalSince(started)
-                                Text(probeEstimateText(elapsed: elapsed))
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    ForEach(Array(probeDoneLines.enumerated()), id: \.offset) { _, line in
-                        Text(line).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-            } else if !probeStatus.isEmpty {
-                Text(probeStatus)
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Text("每档写一行日志：线程数、max_inode 原值、实际扫描数、命中数、耗时 ms、每秒扫描数，以及与本轮 1 线程名单是否一致。")
-                .font(.caption2).foregroundStyle(.tertiary)
-        }
-        .driftActionSheet(isPresented: $probeShowDone, title: "测速完成",
-                          message: probeDoneMessage,
-                          actions: [DriftSheetAction("知道了") {}])
-        .driftActionSheet(isPresented: $probeShowFailed, title: "出错了",
-                          message: probeFailedMessage,
-                          actions: [DriftSheetAction("知道了") {}])
-    }
-
-    /// Rough remaining time from the tier weights (a full-range tier
-    /// weighs four quarter tiers). Only shown once at least one tier has
-    /// finished — before that there is no honest basis for an estimate.
-    private func probeEstimateText(elapsed: TimeInterval) -> String {
-        let used = Self.probeTimeText(elapsed)
-        guard probeDoneWeight > 0 else { return "已用 \(used)" }
-        let remaining = elapsed / probeDoneWeight * (24 - probeDoneWeight)
-        return "已用 \(used)，粗估还剩 \(Self.probeTimeText(remaining))"
-    }
-
-    private static func probeTimeText(_ seconds: TimeInterval) -> String {
-        let total = Int(seconds.rounded())
-        if total < 60 { return "\(total) 秒" }
-        return "\(total / 60) 分 \(total % 60) 秒"
-    }
-
-    /// One progress event from the detached probe run. The run reports
-    /// through an AsyncStream because its continuation is Sendable —
-    /// the callbacks capture nothing but it, which keeps Swift 6 happy
-    /// without the view itself crossing into the detached task.
-    private enum ProbeEvent {
-        case tierStart(index: Int, total: Int, name: String)
-        case tierDone(line: String, weight: Double)
-    }
-
-    private func startEnumerationProbe() {
-        guard !probeRunning else { return }
-        probeRunning = true
-        probeStatus = ""
-        probeTierIndex = 0
-        probeCurrentTier = ""
-        probeDoneLines = []
-        probeDoneWeight = 0
-        probeStartedAt = Date()
-        let started = Date()
-        let (stream, continuation) = AsyncStream<ProbeEvent>.makeStream()
-        Task {
-            for await event in stream {
-                switch event {
-                case .tierStart(let index, let total, let name):
-                    probeTierIndex = index
-                    probeTierTotal = total
-                    probeCurrentTier = name
-                case .tierDone(let line, let weight):
-                    probeDoneLines.append(line)
-                    probeDoneWeight += weight
-                }
-            }
-        }
-        Task {
-            let outcome = await Task.detached(priority: .userInitiated) {
-                Self.runEnumerationProbe { index, total, name in
-                    continuation.yield(.tierStart(index: index, total: total, name: name))
-                } onTierDone: { line, weight in
-                    continuation.yield(.tierDone(line: line, weight: weight))
-                }
-            }.value
-            continuation.finish()
-            probeRunning = false
-            let total = Self.probeTimeText(Date().timeIntervalSince(started))
-            switch outcome {
-            case .finished:
-                probeDoneMessage = "9 档都跑完了，一共用了 \(total)。请回到设置页点「上传日志」，把日志传回来。"
-                probeShowDone = true
-            case .failed(let reason):
-                // The finished tiers' lines stay on the page behind the
-                // sheet — a failed run does not throw its data away.
-                probeFailedMessage = reason
-                probeShowFailed = true
-            }
-        }
-    }
-
-    private enum ProbeOutcome {
-        case finished
-        case failed(String)
-    }
-
-    /// Runs the nine tiers in order, reporting each tier's start and
-    /// finish (one display line plus the tier's weight toward the rough
-    /// estimate) through the callbacks. Tier weights: a quarter-range
-    /// tier counts 1, a full-range tier 4 — 24 in all.
-    private static func runEnumerationProbe(onTierStart: @Sendable @escaping (Int, Int, String) -> Void,
-                                            onTierDone: @Sendable @escaping (String, Double) -> Void) -> ProbeOutcome {
-        guard let bound = WorseQueryEscape.pathleakInodeUpperBound() else {
-            AppLog.failure("枚举探针：无法创建 inode 上限临时文件")
-            return .failed("没有跑成：建不了临时上限文件。跑完的档位数据还在上面，详情见日志。")
-        }
-        defer { bound.cleanup() }
-
-        let maxInode = bound.maxInode
-        let quarter = max(1, maxInode / 4)
-        AppLog.write("枚举探针：开始 max_inode=\(maxInode)，1/4 范围 1...\(quarter)，全范围 1...\(maxInode)")
-
-        var tier = 0
-        let totalTiers = 9
-        _ = runProbeRound(label: "1/4", limit: quarter, maxInode: maxInode, weight: 1,
-                          tier: &tier, totalTiers: totalTiers,
-                          onTierStart: onTierStart, onTierDone: onTierDone)
-        let fullBaseline = runProbeRound(label: "全范围", limit: maxInode, maxInode: maxInode,
-                                         weight: 4, tier: &tier, totalTiers: totalTiers,
-                                         onTierStart: onTierStart, onTierDone: onTierDone)
-
-        // The after-run single-thread pass exists so a hot device slowing the
-        // later parallel rounds cannot be mistaken for a parallel regression.
-        tier += 1
-        onTierStart(tier, totalTiers, "全范围复核 · 1 线程")
-        let check = WorseQueryEscape.measurePathleak(threads: 1, limit: maxInode)
-        let checkComparison = compare(check.paths, to: fullBaseline)
-        logProbeLine(label: "全范围复核", threads: 1, maxInode: maxInode,
-                     scannedInodes: maxInode, hitCount: check.paths.count,
-                     milliseconds: check.milliseconds,
-                     comparison: checkComparison)
-        onTierDone(probeDisplayLine(range: "全范围复核", threads: 1,
-                                    milliseconds: check.milliseconds,
-                                    comparison: checkComparison), 4)
-
-        AppLog.write("枚举探针：完成 max_inode=\(maxInode)")
-        return .finished
-    }
-
-    @discardableResult
-    private static func runProbeRound(label: String, limit: UInt64, maxInode: UInt64,
-                                      weight: Double, tier: inout Int, totalTiers: Int,
-                                      onTierStart: @Sendable (Int, Int, String) -> Void,
-                                      onTierDone: @Sendable (String, Double) -> Void) -> [String] {
-        var baseline: [String] = []
-        for threads in [1, 2, 4, 6] {
-            tier += 1
-            onTierStart(tier, totalTiers, "\(label)范围 · \(threads) 线程")
-            let sample = WorseQueryEscape.measurePathleak(threads: threads, limit: limit)
-            if threads == 1 { baseline = sample.paths }
-            let comparison = threads == 1
-                ? "基准（本轮 1 线程）"
-                : compare(sample.paths, to: baseline)
-            logProbeLine(label: label, threads: threads, maxInode: maxInode,
-                         scannedInodes: limit, hitCount: sample.paths.count,
-                         milliseconds: sample.milliseconds,
-                         comparison: comparison)
-            onTierDone(probeDisplayLine(range: "\(label)范围", threads: threads,
-                                        milliseconds: sample.milliseconds,
-                                        comparison: comparison), weight)
-        }
-        return baseline
-    }
-
-    /// One finished tier's line on the progress page: range, threads,
-    /// time, and the list verdict in short form.
-    private static func probeDisplayLine(range: String, threads: Int,
-                                         milliseconds: Double, comparison: String) -> String {
-        let verdict = comparison.hasPrefix("一致") ? "名单一致"
-            : comparison.hasPrefix("基准") ? "基准"
-            : "名单不一致"
-        return "\(range) · \(threads) 线程：\(probeTimeText(milliseconds / 1000))（\(verdict)）"
-    }
-
-    private static func logProbeLine(label: String, threads: Int, maxInode: UInt64,
-                                     scannedInodes: UInt64, hitCount: Int,
-                                     milliseconds: Double, comparison: String) {
-        let seconds = milliseconds / 1000
-        let perSecond = seconds > 0 ? Double(scannedInodes) / seconds : 0
-        AppLog.write(String(format: "枚举探针 %@：线程=%d max_inode原值=%llu 实际扫描=%llu 命中=%d 耗时=%.1fms 每秒=%.0f 名单%@",
-                            label, threads, maxInode, scannedInodes, hitCount,
-                            milliseconds, perSecond, comparison))
-    }
-
-    private static func compare(_ candidate: [String], to baseline: [String]) -> String {
-        if candidate == baseline {
-            return "一致（条数 \(candidate.count)/\(baseline.count)，逐条相同）"
-        }
-        let candidateSet = Set(candidate)
-        let baselineSet = Set(baseline)
-        let missing = baselineSet.subtracting(candidateSet).count
-        let extra = candidateSet.subtracting(baselineSet).count
-        let duplicates = candidate.count - candidateSet.count
-        let orderOnly = candidate.count == baseline.count && candidateSet == baselineSet
-        return "不一致（条数 \(candidate.count)/\(baseline.count)，少 \(missing)，多 \(extra)，重复 \(duplicates)\(orderOnly ? "，顺序不同" : "")）"
-    }
-    #endif
-
-
     // Collection #306 (Grace, 2026-11-13): deleting a wallpaper from
     // a record lived here until today. It moved to the management
     // page on Home — records are a ledger now, nothing on this page
@@ -634,7 +394,7 @@ struct DriftSettingsView: View {
             // #280 (Grace, 2026-11-13): no manager entry here any
             // more — 本机壁纸管理 lives on Home now, under the flash
             // button. This section is just the records.
-            let rows = mergedRecords
+            let rows = mergedRows
             if rows.isEmpty {
                 Text("暂无记录").foregroundStyle(.secondary)
             } else {
@@ -826,15 +586,33 @@ struct DriftSettingsView: View {
             .trimmingCharacters(in: .whitespaces)
     }
 
+    /// #315: the two formatters are shared statics — displayTime and
+    /// parsedRecordDate used to build a fresh one per row per render.
+    private static let recordTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日 HH:mm"
+        return formatter
+    }()
+
+    private static let recordISOFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let recordISOFractionalFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
     /// Record timestamps are ISO strings; rows show a human local
     /// time ("11月11日 21:44") instead.
     private func displayTime(_ raw: String) -> String {
         let date = parsedRecordDate(raw)
         guard date != .distantPast else { return raw }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月d日 HH:mm"
-        return formatter.string(from: date)
+        return Self.recordTimeFormatter.string(from: date)
     }
 
     private func refreshNotificationStatus() {
@@ -846,7 +624,10 @@ struct DriftSettingsView: View {
         }
     }
 
-    private var mergedRecords: [MergedRecord] {
+    /// Rebuilds `mergedRows` from the two stores (#315: was a
+    /// computed property re-run on every render). Called when the
+    /// page appears and after 清空记录 — the only in-page mutation.
+    private func refreshMergedRows() {
         var rows: [MergedRecord] = []
         for (index, record) in history.enumerated() {
             rows.append(MergedRecord(
@@ -860,15 +641,12 @@ struct DriftSettingsView: View {
                 date: parsedRecordDate(receipt.date),
                 kind: .receipt(receipt)))
         }
-        return rows.sorted { $0.date > $1.date }
+        mergedRows = rows.sorted { $0.date > $1.date }
     }
 
     private func parsedRecordDate(_ raw: String) -> Date {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        if let date = formatter.date(from: raw) { return date }
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.date(from: raw) ?? .distantPast
+        if let date = Self.recordISOFormatter.date(from: raw) { return date }
+        return Self.recordISOFractionalFormatter.date(from: raw) ?? .distantPast
     }
 
     // MARK: - Records
@@ -993,9 +771,6 @@ struct DriftSettingsView: View {
                 }
             }
             .disabled(cacheBreakdown == nil || cacheBreakdown?.total == 0)
-            if let cacheNote {
-                Text(cacheNote).font(.caption).foregroundStyle(.secondary)
-            }
             Text("缓存只清能再生的：壁纸预览图、目录缓存、抓取临时文件、日志和检查更新下载的安装包。配对文件、回执、刷入记录、设置和导入的壁纸包都不动。")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -1047,17 +822,6 @@ private struct SharePackageItem: Identifiable {
     var id: String { url.path }
 }
 
-/// The system share sheet for one file. The rest of the app shares through
-/// `ShareLink`; the package flow needs the sheet to open BY ITSELF once the
-/// zip exists, which is the one thing ShareLink cannot do.
-private struct ActivityShareSheet: UIViewControllerRepresentable {
-    let url: URL
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [url], applicationActivities: nil)
-    }
-
-    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
 

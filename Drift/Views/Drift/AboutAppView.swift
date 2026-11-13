@@ -81,12 +81,7 @@ struct AboutAppView: View {
         .padding(.top, 6)
     }
 
-    private static var versionText: String {
-        let info = Bundle.main.infoDictionary
-        let version = info?["CFBundleShortVersionString"] as? String ?? "1.0.0"
-        let build = info?["CFBundleVersion"] as? String ?? "1"
-        return "\(version)（构建 \(build)）"
-    }
+    private static var versionText: String { AppVersion.display }
 
     // MARK: - Author (#295)
 
@@ -152,11 +147,15 @@ struct AboutAppView: View {
         .driftCard()
     }
 
-    static var qqCardImage: UIImage? {
-        guard let url = Bundle.main.url(forResource: "QQGroupCard", withExtension: "png")
+    // #315: decoded once into a static let — as computed statics
+    // these two images were re-decoded from disk on every render.
+    private static func bundledImage(_ name: String, _ ext: String) -> UIImage? {
+        guard let url = Bundle.main.url(forResource: name, withExtension: ext)
         else { return nil }
         return UIImage(contentsOfFile: url.path)
     }
+
+    static let qqCardImage: UIImage? = bundledImage("QQGroupCard", "png")
 
     // MARK: - Reward code (#271, moved from the 说明 page)
 
@@ -181,11 +180,7 @@ struct AboutAppView: View {
         .driftCard()
     }
 
-    static var rewardImage: UIImage? {
-        guard let url = Bundle.main.url(forResource: "RewardCode", withExtension: "jpg")
-        else { return nil }
-        return UIImage(contentsOfFile: url.path)
-    }
+    static let rewardImage: UIImage? = bundledImage("RewardCode", "jpg")
 
     // MARK: - Credit
 

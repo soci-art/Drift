@@ -24,6 +24,10 @@ struct LoopingVideoView: View {
         }
 
         func updateUIView(_ uiView: PlayerUIView, context: Context) {}
+
+        static func dismantleUIView(_ uiView: PlayerUIView, coordinator: ()) {
+            uiView.stop()
+        }
     }
 
     private final class PlayerUIView: UIView {
@@ -39,6 +43,17 @@ struct LoopingVideoView: View {
             playerLayer.videoGravity = .resizeAspect
             player.play()
         }
+
+        /// #315: the loop used to play forever, including after the
+        /// tutorial page was left — a muted film nobody was watching
+        /// still cost battery and decode time. Playback now follows
+        /// the window: on screen plays, off screen pauses.
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window != nil { player.play() } else { player.pause() }
+        }
+
+        func stop() { player.pause() }
 
         @available(*, unavailable)
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

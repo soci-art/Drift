@@ -93,8 +93,12 @@ struct AppUpdateView: View {
                 await checker.refresh()
             }
         }
+        // #313: coming back to this page (e.g. after clearing the
+        // cache in Settings, which deletes the downloaded IPA) must
+        // not leave a share button standing for a vanished file.
+        .onAppear { checker.validateDownloadedFile() }
         .sheet(item: $shareItem) { item in
-            UpdateShareSheet(url: item.url)
+            FileShareSheet(url: item.url)
         }
         .onChange(of: doneURL?.absoluteString) { _, _ in
             if let url = doneURL { shareItem = ShareItem(url: url) }
@@ -119,10 +123,13 @@ struct AppUpdateView: View {
                 // #226: the percentage rides on the byte counts, so
                 // the user sees movement even while the total is
                 // still unknown — a bare bar that sat at 0% for the
-                // whole download read as no progress at all.
+                // whole download read as no progress at all. #311:
+                // the percentage is body-sized, not a caption — a
+                // progress display the user has to hunt for reads
+                // as no progress display.
                 if let fraction {
                     Text("正在下载…\(Int(fraction * 100))%")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.body.weight(.medium))
                 }
                 if totalBytes > 0 {
                     Text("已下载 \(ByteCountFormatter.string(fromByteCount: downloadedBytes, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file))")
@@ -134,6 +141,10 @@ struct AppUpdateView: View {
             }
         case .done:
             Button {
+                // #313 belt-and-braces: if the file vanished since
+                // the page appeared, reset instead of handing a dead
+                // URL to the share sheet.
+                checker.validateDownloadedFile()
                 if let url = doneURL { shareItem = ShareItem(url: url) }
             } label: {
                 Label("保存或分享安装包", systemImage: "square.and.arrow.up")
@@ -148,12 +159,4 @@ struct AppUpdateView: View {
     }
 }
 
-/// The system share sheet for the downloaded IPA (same shape as the
-/// log package's sheet in Settings).
-private struct UpdateShareSheet: UIViewControllerRepresentable {
-    let url: URL
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [url], applicationActivities: nil)
-    }
-    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

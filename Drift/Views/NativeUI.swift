@@ -265,3 +265,19 @@ struct DriftStaticGlassButtonStyle: ButtonStyle {
             .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.45)
     }
 }
+
+/// The system share sheet for one file, shared by every screen that
+/// hands a file to it (#315: Settings' log package and the update
+/// page's downloaded IPA each carried an identical private copy).
+/// The flows share through this sheet rather than `ShareLink`
+/// because the sheet has to open BY ITSELF once the file exists,
+/// which is the one thing ShareLink cannot do.
+struct FileShareSheet: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
