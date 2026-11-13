@@ -525,8 +525,27 @@ enum PosterBoardImports {
                 : DeviceIdentityMonitor.shared.current.version
             if let repaired = try? PackRepair.repair(clean, deviceVersion: version,
                                                      progress: { _ in }) {
-                AppLog.op("导入：\(clean.name) 查到结构问题，已自动修复出 \(repaired.name)")
-                result.append(repaired)
+                // #291 (Grace, 2026-11-13): an import-time repair is
+                // invisible in the list — the repaired pack REPLACES
+                // the imported one under its own file name, so the
+                // list holds exactly one pack, wearing the original
+                // name with no「已修复」mark. Only a repair the user
+                // runs by hand (detail page / list actions) still
+                // produces a separate `(patched)` pack. The swap is
+                // best-effort like the repair itself: if the file
+                // cannot be moved over, the repaired pack joins the
+                // list the old way and the original stays.
+                let fm = FileManager.default
+                if repaired.url != clean.url,
+                   (try? fm.removeItem(at: clean.url)) != nil,
+                   (try? fm.moveItem(at: repaired.url, to: clean.url)) != nil,
+                   let swapped = try? PosterBoardTendie(url: clean.url) {
+                    AppLog.op("导入：\(clean.name) 查到结构问题，已自动修复并替换原包（列表只留修好的这一份）")
+                    result = [swapped]
+                } else {
+                    AppLog.op("导入：\(clean.name) 查到结构问题，已自动修复出 \(repaired.name)")
+                    result.append(repaired)
+                }
             } else {
                 AppLog.warn("导入：\(clean.name) 查到结构问题，这次自动修复没成功")
             }

@@ -46,6 +46,21 @@ struct DriftSettingsView: View {
     #if DRIFT_ENUM_PROBE
     @State private var probeRunning = false
     @State private var probeStatus = ""
+    // #292 (Grace, 2026-11-13): live progress for the probe run — which
+    // tier is running, the finished tiers' times, a rough remaining
+    // estimate — and a completion / failure sheet at the end. Tier-level
+    // only: the C scan reports nothing until a tier finishes, so there
+    // is no honest within-tier counter to show.
+    @State private var probeTierIndex = 0
+    @State private var probeTierTotal = 9
+    @State private var probeCurrentTier = ""
+    @State private var probeDoneLines: [String] = []
+    @State private var probeStartedAt: Date?
+    @State private var probeDoneWeight = 0.0
+    @State private var probeShowDone = false
+    @State private var probeDoneMessage = ""
+    @State private var probeShowFailed = false
+    @State private var probeFailedMessage = ""
     #endif
 
     var body: some View {
@@ -302,32 +317,130 @@ struct DriftSettingsView: View {
                 Label(probeRunning ? "正在测速…" : "枚举测速", systemImage: "speedometer")
             }
             .disabled(probeRunning)
-            if !probeStatus.isEmpty {
+            // #292: while a run is going, show where it stands — tier x
+            // of 9, the tier now scanning, each finished tier's time as
+            // it lands, elapsed time and a rough remaining estimate.
+            // Finished tiers stay listed if a later tier fails.
+            if probeRunning || !probeDoneLines.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    if probeRunning {
+                        Text("正在测速：第 \(probeTierIndex) / \(probeTierTotal) 档（\(probeCurrentTier)）")
+                            .font(.caption.weight(.semibold))
+                        ProgressView(value: probeDoneWeight, total: 24)
+                        if let started = probeStartedAt {
+                            TimelineView(.periodic(from: started, by: 1)) { context in
+                                let elapsed = context.date.timeIntervalSince(started)
+                                Text(probeEstimateText(elapsed: elapsed))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    ForEach(Array(probeDoneLines.enumerated()), id: \.offset) { _, line in
+                        Text(line).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            } else if !probeStatus.isEmpty {
                 Text(probeStatus)
                     .font(.caption).foregroundStyle(.secondary)
             }
             Text("每档写一行日志：线程数、max_inode 原值、实际扫描数、命中数、耗时 ms、每秒扫描数，以及与本轮 1 线程名单是否一致。")
                 .font(.caption2).foregroundStyle(.tertiary)
         }
+        .driftActionSheet(isPresented: $probeShowDone, title: "测速完成",
+                          message: probeDoneMessage,
+                          actions: [DriftSheetAction("知道了") {}])
+        .driftActionSheet(isPresented: $probeShowFailed, title: "出错了",
+                          message: probeFailedMessage,
+                          actions: [DriftSheetAction("知道了") {}])
+    }
+
+    /// Rough remaining time from the tier weights (a full-range tier
+    /// weighs four quarter tiers). Only shown once at least one tier has
+    /// finished — before that there is no honest basis for an estimate.
+    private func probeEstimateText(elapsed: TimeInterval) -> String {
+        let used = Self.probeTimeText(elapsed)
+        guard probeDoneWeight > 0 else { return "已用 \(used)" }
+        let remaining = elapsed / probeDoneWeight * (24 - probeDoneWeight)
+        return "已用 \(used)，粗估还剩 \(Self.probeTimeText(remaining))"
+    }
+
+    private static func probeTimeText(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded())
+        if total < 60 { return "\(total) 秒" }
+        return "\(total / 60) 分 \(total % 60) 秒"
+    }
+
+    /// One progress event from the detached probe run. The run reports
+    /// through an AsyncStream because its continuation is Sendable —
+    /// the callbacks capture nothing but it, which keeps Swift 6 happy
+    /// without the view itself crossing into the detached task.
+    private enum ProbeEvent {
+        case tierStart(index: Int, total: Int, name: String)
+        case tierDone(line: String, weight: Double)
     }
 
     private func startEnumerationProbe() {
         guard !probeRunning else { return }
         probeRunning = true
-        probeStatus = "正在跑 1→2→4→6 线程，先 1/4 再全范围…"
+        probeStatus = ""
+        probeTierIndex = 0
+        probeCurrentTier = ""
+        probeDoneLines = []
+        probeDoneWeight = 0
+        probeStartedAt = Date()
+        let started = Date()
+        let (stream, continuation) = AsyncStream<ProbeEvent>.makeStream()
+        Task {
+            for await event in stream {
+                switch event {
+                case .tierStart(let index, let total, let name):
+                    probeTierIndex = index
+                    probeTierTotal = total
+                    probeCurrentTier = name
+                case .tierDone(let line, let weight):
+                    probeDoneLines.append(line)
+                    probeDoneWeight += weight
+                }
+            }
+        }
         Task {
             let outcome = await Task.detached(priority: .userInitiated) {
-                Self.runEnumerationProbe()
+                Self.runEnumerationProbe { index, total, name in
+                    continuation.yield(.tierStart(index: index, total: total, name: name))
+                } onTierDone: { line, weight in
+                    continuation.yield(.tierDone(line: line, weight: weight))
+                }
             }.value
-            probeStatus = outcome
+            continuation.finish()
             probeRunning = false
+            let total = Self.probeTimeText(Date().timeIntervalSince(started))
+            switch outcome {
+            case .finished:
+                probeDoneMessage = "9 档都跑完了，一共用了 \(total)。请回到设置页点「上传日志」，把日志传回来。"
+                probeShowDone = true
+            case .failed(let reason):
+                // The finished tiers' lines stay on the page behind the
+                // sheet — a failed run does not throw its data away.
+                probeFailedMessage = reason
+                probeShowFailed = true
+            }
         }
     }
 
-    private static func runEnumerationProbe() -> String {
+    private enum ProbeOutcome {
+        case finished
+        case failed(String)
+    }
+
+    /// Runs the nine tiers in order, reporting each tier's start and
+    /// finish (one display line plus the tier's weight toward the rough
+    /// estimate) through the callbacks. Tier weights: a quarter-range
+    /// tier counts 1, a full-range tier 4 — 24 in all.
+    private static func runEnumerationProbe(onTierStart: @Sendable @escaping (Int, Int, String) -> Void,
+                                            onTierDone: @Sendable @escaping (String, Double) -> Void) -> ProbeOutcome {
         guard let bound = WorseQueryEscape.pathleakInodeUpperBound() else {
             AppLog.failure("枚举探针：无法创建 inode 上限临时文件")
-            return "没有跑成：建不了临时上限文件。详情见日志。"
+            return .failed("没有跑成：建不了临时上限文件。跑完的档位数据还在上面，详情见日志。")
         }
         defer { bound.cleanup() }
 
@@ -335,35 +448,66 @@ struct DriftSettingsView: View {
         let quarter = max(1, maxInode / 4)
         AppLog.write("枚举探针：开始 max_inode=\(maxInode)，1/4 范围 1...\(quarter)，全范围 1...\(maxInode)")
 
-        _ = runProbeRound(label: "1/4", limit: quarter, maxInode: maxInode)
-        let fullBaseline = runProbeRound(label: "全范围", limit: maxInode, maxInode: maxInode)
+        var tier = 0
+        let totalTiers = 9
+        _ = runProbeRound(label: "1/4", limit: quarter, maxInode: maxInode, weight: 1,
+                          tier: &tier, totalTiers: totalTiers,
+                          onTierStart: onTierStart, onTierDone: onTierDone)
+        let fullBaseline = runProbeRound(label: "全范围", limit: maxInode, maxInode: maxInode,
+                                         weight: 4, tier: &tier, totalTiers: totalTiers,
+                                         onTierStart: onTierStart, onTierDone: onTierDone)
 
         // The after-run single-thread pass exists so a hot device slowing the
         // later parallel rounds cannot be mistaken for a parallel regression.
+        tier += 1
+        onTierStart(tier, totalTiers, "全范围复核 · 1 线程")
         let check = WorseQueryEscape.measurePathleak(threads: 1, limit: maxInode)
+        let checkComparison = compare(check.paths, to: fullBaseline)
         logProbeLine(label: "全范围复核", threads: 1, maxInode: maxInode,
                      scannedInodes: maxInode, hitCount: check.paths.count,
                      milliseconds: check.milliseconds,
-                     comparison: compare(check.paths, to: fullBaseline))
+                     comparison: checkComparison)
+        onTierDone(probeDisplayLine(range: "全范围复核", threads: 1,
+                                    milliseconds: check.milliseconds,
+                                    comparison: checkComparison), 4)
 
         AppLog.write("枚举探针：完成 max_inode=\(maxInode)")
-        return "跑完了：max_inode=\(maxInode)，日志里每档一行。"
+        return .finished
     }
 
     @discardableResult
-    private static func runProbeRound(label: String, limit: UInt64, maxInode: UInt64) -> [String] {
+    private static func runProbeRound(label: String, limit: UInt64, maxInode: UInt64,
+                                      weight: Double, tier: inout Int, totalTiers: Int,
+                                      onTierStart: @Sendable (Int, Int, String) -> Void,
+                                      onTierDone: @Sendable (String, Double) -> Void) -> [String] {
         var baseline: [String] = []
         for threads in [1, 2, 4, 6] {
+            tier += 1
+            onTierStart(tier, totalTiers, "\(label)范围 · \(threads) 线程")
             let sample = WorseQueryEscape.measurePathleak(threads: threads, limit: limit)
             if threads == 1 { baseline = sample.paths }
+            let comparison = threads == 1
+                ? "基准（本轮 1 线程）"
+                : compare(sample.paths, to: baseline)
             logProbeLine(label: label, threads: threads, maxInode: maxInode,
                          scannedInodes: limit, hitCount: sample.paths.count,
                          milliseconds: sample.milliseconds,
-                         comparison: threads == 1
-                            ? "基准（本轮 1 线程）"
-                            : compare(sample.paths, to: baseline))
+                         comparison: comparison)
+            onTierDone(probeDisplayLine(range: "\(label)范围", threads: threads,
+                                        milliseconds: sample.milliseconds,
+                                        comparison: comparison), weight)
         }
         return baseline
+    }
+
+    /// One finished tier's line on the progress page: range, threads,
+    /// time, and the list verdict in short form.
+    private static func probeDisplayLine(range: String, threads: Int,
+                                         milliseconds: Double, comparison: String) -> String {
+        let verdict = comparison.hasPrefix("一致") ? "名单一致"
+            : comparison.hasPrefix("基准") ? "基准"
+            : "名单不一致"
+        return "\(range) · \(threads) 线程：\(probeTimeText(milliseconds / 1000))（\(verdict)）"
     }
 
     private static func logProbeLine(label: String, threads: Int, maxInode: UInt64,
