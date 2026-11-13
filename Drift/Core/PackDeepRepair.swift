@@ -172,7 +172,11 @@ enum PackDeepRepair {
 
     /// The tree-level findings, shared by the stock-take and the run
     /// itself so the two can never disagree about what needs doing.
-    private struct Scan {
+    /// `fileprivate`, not `private`: the held stock-take (`Session`)
+    /// stores one, and a fileprivate member may not use a type whose
+    /// scope is only this enum's body (build 50's first CI run caught
+    /// exactly that).
+    fileprivate struct Scan {
         var fixLines: [String] = []
         var convertDescriptors: [URL] = []
         var videoFixes: [(url: URL, bakeRotation: Bool, downscale: Bool, line: String)] = []
