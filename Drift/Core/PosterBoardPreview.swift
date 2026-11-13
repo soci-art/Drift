@@ -41,20 +41,52 @@ enum PosterBoardPreview {
         return "\(base)-\(size)-r2"
     }
 
+    /// Results memo (cleanup round, 2026-11-13): the disk cache made
+    /// re-extraction rare, but every call still listed the cache
+    /// directory and re-filtered it — and the list page asks once per
+    /// row appearance plus once per import warm-up. Keyed by the same
+    /// cache key as the files; dropped per pack by `invalidate(for:)`
+    /// and wholesale by `noteCacheCleared()`.
+    private static var previewsMemo: [String: [URL]] = [:]
+    private static let previewsMemoLock = NSLock()
+
     /// One preview per descriptor (in archive order), cached. Empty when the
     /// pack has nothing previewable. Runs synchronously — call off the main
     /// thread.
     static func previews(for tendie: PosterBoardTendie) -> [URL] {
         let key = key(for: tendie)
+        previewsMemoLock.lock()
+        if let memo = previewsMemo[key] {
+            previewsMemoLock.unlock()
+            return memo
+        }
+        previewsMemoLock.unlock()
         let fm = FileManager.default
         let cached = ((try? fm.contentsOfDirectory(atPath: cacheDirectory.path)) ?? [])
             .filter { $0.hasPrefix(key + "-") && $0.hasSuffix(".jpg") }
             .sorted()
+        let result: [URL]
         if !cached.isEmpty {
-            return cached.map { cacheDirectory.appending(path: $0) }
+            result = cached.map { cacheDirectory.appending(path: $0) }
+        } else {
+            result = extract(tendie: tendie, key: key) ?? []
         }
-        guard let made = extract(tendie: tendie, key: key) else { return [] }
-        return made
+        previewsMemoLock.lock()
+        previewsMemo[key] = result
+        previewsMemoLock.unlock()
+        return result
+    }
+
+    /// The Settings cache-clear wipes the preview directory behind
+    /// this type's back; drop every memo and decoded cover with it.
+    static func noteCacheCleared() {
+        previewsMemoLock.lock()
+        previewsMemo.removeAll()
+        previewsMemoLock.unlock()
+        coverCache.removeAllObjects()
+        coverKeysLock.lock()
+        coverCacheKeys.removeAll()
+        coverKeysLock.unlock()
     }
 
     static func cover(for tendie: PosterBoardTendie) -> URL? {
@@ -70,6 +102,12 @@ enum PosterBoardPreview {
     /// the pack's name, size and picking-rule version), so a replaced
     /// pack never serves its old cover.
     private static let coverCache = NSCache<NSString, UIImage>()
+    /// Every key ever put in `coverCache`, so one pack's invalidation
+    /// can evict exactly its own covers (cleanup round, 2026-11-13).
+    /// NSCache cannot enumerate; without this, `invalidate(for:)`
+    /// had to empty the whole cache and every row re-decoded.
+    private static var coverCacheKeys: Set<NSString> = []
+    private static let coverKeysLock = NSLock()
 
     static func coverImage(at url: URL, maxPixelSize: CGFloat) -> UIImage? {
         let cacheKey = "\(url.path)|\(Int(maxPixelSize))" as NSString
@@ -87,13 +125,25 @@ enum PosterBoardPreview {
         } else {
             image = UIImage(data: data)
         }
-        if let image { coverCache.setObject(image, forKey: cacheKey) }
+        if let image {
+            coverCache.setObject(image, forKey: cacheKey)
+            coverKeysLock.lock()
+            coverCacheKeys.insert(cacheKey)
+            coverKeysLock.unlock()
+        }
         return image
     }
 
     static func invalidate(for tendie: PosterBoardTendie) {
-        coverCache.removeAllObjects()
         let key = key(for: tendie)
+        previewsMemoLock.lock()
+        previewsMemo[key] = nil
+        previewsMemoLock.unlock()
+        coverKeysLock.lock()
+        let own = coverCacheKeys.filter { ($0 as String).contains("/\(key)-") }
+        coverCacheKeys.subtract(own)
+        coverKeysLock.unlock()
+        for cacheKey in own { coverCache.removeObject(forKey: cacheKey) }
         let fm = FileManager.default
         for name in (try? fm.contentsOfDirectory(atPath: cacheDirectory.path)) ?? []
         where name.hasPrefix(key + "-") {
@@ -184,53 +234,55 @@ enum PosterBoardPreview {
     /// any single part, and a comparable transparent part is composited
     /// onto the background instead of being shown alone.
     ///
-    /// Two passes over the archive on purpose: the first reads each
-    /// still's pixel size and alpha from its image header (cheap, no
-    /// full decode) and keeps nothing; only the one or two winners are
-    /// extracted again and decoded.
+    /// One pass over the archive (cleanup round, 2026-11-13): each
+    /// still is extracted exactly once; its header gives pixel size
+    /// and alpha (cheap, no full decode), and only the running winners
+    /// — named, opaque, transparent, at most three images — keep
+    /// their bytes. The old shape extracted every still in full for
+    /// the survey and then extracted the winner a second time.
     private static func pickStillImage(archive: Archive, stills: [Candidate]) -> UIImage? {
-        struct Meta {
-            let candidate: Candidate
-            let pixelSize: CGSize
-            let hasAlpha: Bool
+        struct Winner {
+            let area: CGFloat
             let fileBytes: Int
-            var area: CGFloat { pixelSize.width * pixelSize.height }
-        }
-        var metas: [Meta] = []
-        for candidate in stills {
-            guard let data = entryData(archive: archive, entry: candidate.entry) else { continue }
-            let info = imageInfo(data)
-            metas.append(Meta(candidate: candidate, pixelSize: info.size,
-                              hasAlpha: info.hasAlpha, fileBytes: data.count))
-        }
-        guard !metas.isEmpty else { return nil }
-        func load(_ meta: Meta) -> UIImage? {
-            entryData(archive: archive, entry: meta.candidate.entry)
-                .flatMap { UIImage(data: $0) }
+            let data: Data
         }
         // A named preview/poster is the pack author saying "this is the
         // cover" — it wins outright, as it always did.
         let keywords = ["preview", "poster", "thumbnail", "hero", "cover"]
-        let named = metas.filter { meta in
-            keywords.contains { meta.candidate.entry.path.lowercased().contains($0) }
+        var named: Winner?
+        var background: Winner?
+        var foreground: Winner?
+        func beats(_ current: Winner, area: CGFloat, bytes: Int) -> Bool {
+            area != current.area ? area > current.area : bytes > current.fileBytes
         }
-        if let best = named.max(by: { $0.fileBytes < $1.fileBytes }) {
-            return load(best)
+        for candidate in stills {
+            guard let data = entryData(archive: archive, entry: candidate.entry) else { continue }
+            let info = imageInfo(data)
+            let winner = Winner(area: info.size.width * info.size.height,
+                                fileBytes: data.count, data: data)
+            if keywords.contains(where: { candidate.entry.path.lowercased().contains($0) }) {
+                if named.map({ data.count > $0.fileBytes }) ?? true { named = winner }
+            } else if info.hasAlpha {
+                if foreground.map({ beats($0, area: winner.area, bytes: winner.fileBytes) }) ?? true {
+                    foreground = winner
+                }
+            } else {
+                if background.map({ beats($0, area: winner.area, bytes: winner.fileBytes) }) ?? true {
+                    background = winner
+                }
+            }
         }
-        let byArea: (Meta, Meta) -> Bool = { a, b in
-            a.area != b.area ? a.area < b.area : a.fileBytes < b.fileBytes
-        }
-        let background = metas.filter { !$0.hasAlpha }.max(by: byArea)
-        let foreground = metas.filter { $0.hasAlpha }.max(by: byArea)
+        if let named { return UIImage(data: named.data) }
         // A transparent layer sized like the frame belongs ON the frame,
         // not in place of it. A small transparent asset (a strip, a logo)
         // never displaces the background.
         if let background, let foreground, foreground.area >= background.area * 0.5,
-           let bgImage = load(background), let fgImage = load(foreground) {
+           let bgImage = UIImage(data: background.data),
+           let fgImage = UIImage(data: foreground.data) {
             return composite(fgImage, over: bgImage)
         }
-        if let background, let image = load(background) { return image }
-        if let foreground, let image = load(foreground) { return image }
+        if let background, let image = UIImage(data: background.data) { return image }
+        if let foreground, let image = UIImage(data: foreground.data) { return image }
         return nil
     }
 

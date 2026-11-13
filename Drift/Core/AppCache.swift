@@ -66,6 +66,9 @@ enum AppCache {
         let before = measure().total
         let fm = FileManager.default
         for dir in previewDirectories { removeContents(of: dir) }
+        // The preview type keeps in-memory memos of what was in that
+        // directory — they go with it (cleanup round, 2026-11-13).
+        PosterBoardPreview.noteCacheCleared()
         removeContents(of: catalogCacheDirectory)
         removeContents(of: fetchScratchDirectory)
         removeContents(of: downloadsDirectory)

@@ -15,6 +15,9 @@ struct PackDeepRepairView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var report: PackDeepRepair.Report?
+    /// The held stock-take: its extracted tree is what the run below
+    /// works on, instead of unpacking the pack a second time.
+    @State private var session: PackDeepRepair.Session?
     @State private var running = false
     @State private var progress: Double = 0
     @State private var doneLines: [String]?
@@ -41,9 +44,15 @@ struct PackDeepRepairView: View {
         }
         .task {
             let canvas = PackDeepRepair.Canvas.current
-            report = await Task.detached {
-                await PackDeepRepair.analyze(pack, canvas: canvas)
+            let opened = await Task.detached {
+                await PackDeepRepair.openSession(pack, canvas: canvas)
             }.value
+            session = opened
+            report = opened.report
+        }
+        .onDisappear {
+            session?.discard()
+            session = nil
         }
     }
 
@@ -137,10 +146,24 @@ struct PackDeepRepairView: View {
         failure = nil
         let canvas = PackDeepRepair.Canvas.current
         let target = pack
+        let held = session
+        session = nil
         Task {
             do {
                 let result = try await Task.detached {
-                    try await PackDeepRepair.repair(target, canvas: canvas) { phase in
+                    // The held stock-take's tree when there is one —
+                    // the pack is not unpacked or scanned twice.
+                    if let held {
+                        do {
+                            return try await PackDeepRepair.repair(session: held) { phase in
+                                Task { @MainActor in progress = phase }
+                            }
+                        } catch {
+                            held.discard()
+                            throw error
+                        }
+                    }
+                    return try await PackDeepRepair.repair(target, canvas: canvas) { phase in
                         Task { @MainActor in progress = phase }
                     }
                 }.value

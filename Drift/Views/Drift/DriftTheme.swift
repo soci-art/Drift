@@ -5,12 +5,13 @@ import SwiftUI
 /// dark counterpart — the app follows the system appearance with no
 /// in-app switch (the user's call).
 enum DriftTheme {
-    /// Faint colour wash behind the pages, echoing the icon's drift bands.
-    static func washColors(scheme: ColorScheme) -> [Color] {
-        scheme == .dark
-            ? [Color(red: 0.10, green: 0.13, blue: 0.22), Color(red: 0.05, green: 0.16, blue: 0.14), Color(red: 0.07, green: 0.07, blue: 0.10)]
-            : [Color(red: 0.93, green: 0.95, blue: 1.0), Color(red: 0.90, green: 0.97, blue: 0.94), Color(red: 0.97, green: 0.97, blue: 0.98)]
-    }
+    /// The one page background (collection #304, Grace, 2026-11-13):
+    /// a flat pale grey-blue on every page — Home, Settings, every
+    /// second-level page; popups and sheets keep their own surfaces.
+    /// Her word for it: plain is better. The old gradient wash (and
+    /// the legacy path's grouped grey) are gone; dark mode stays pure
+    /// black per #274.
+    static let pageBackgroundLight = Color(red: 0.914, green: 0.929, blue: 0.949)
 
     /// The pre–Liquid Glass systems (collection #242, Grace 2026-11-12):
     /// iOS 17/18 have no Liquid Glass, so they get a plain surface
@@ -53,25 +54,35 @@ extension View {
 }
 
 extension View {
-    /// One liquid-glass slab (collection #286): real glass on iOS 26+,
-    /// the legacy solid card surface below it — the same split
-    /// `driftCard` makes, minus the padding (the caller pads its own
-    /// contents; a slab frames a group, not a single card's text).
+    /// One framed slab (collection #286): the cards' material on
+    /// iOS 26+, the legacy solid card surface below it — the same
+    /// split `driftCard` makes, minus the padding (the caller pads
+    /// its own contents; a slab frames a group, not a single card's
+    /// text).
     ///
-    /// Collection #290 (Grace, 2026-11-13): the glass is drawn in the
-    /// BACKGROUND, never on the container itself. With the glass on
-    /// the container, 3.0.14's Home bars answered only taps that
+    /// Collection #290 (Grace, 2026-11-13): the surface is drawn in
+    /// the BACKGROUND, never on the container itself. With the glass
+    /// on the container, 3.0.14's Home bars answered only taps that
     /// landed exactly on their text — the container's glass surface
     /// swallowed every other touch inside the frame. A background
     /// layer renders the same and sits outside the hit path entirely.
+    ///
+    /// Collection #302 (Grace, 2026-11-13): the frame's surface is
+    /// the SAME material as every card (`driftCard`'s
+    /// ultraThinMaterial), not real Liquid Glass — the glass slab
+    /// rendered whiter and brighter than the cards above and below
+    /// it, with a showier edge, and the page read as two different
+    /// materials. One material everywhere now.
     @ViewBuilder
     func driftGlassSlab(cornerRadius: CGFloat = 26) -> some View {
         if #available(iOS 26.0, *), !DriftTheme.legacyUI {
             self.background {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(.clear)
-                    .glassEffect(.regular,
-                                 in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+                    )
             }
         } else {
             self
@@ -84,22 +95,17 @@ extension View {
         }
     }
 
-    /// A capsule of tinted liquid glass (collection #286) — the Home
-    /// bars' surface on iOS 26+; a solid tint capsule below it. Also
-    /// background-drawn, for the #290 reason above; the label's own
-    /// content shape is the whole capsule, so the whole bar is the
-    /// tap target, not just its text.
-    @ViewBuilder
+    /// A capsule bar in a flat solid tint — the Home bars' surface.
+    /// It was tinted liquid glass (#286); the glass-unification round
+    /// (Grace, 2026-11-13, her pick of render ②) made the frame's
+    /// insides plain solid fills like every legacy system already
+    /// had: the frame keeps the one shared material, the bars are
+    /// flat colour. Also background-drawn, for the #290 reason
+    /// above; the label's own content shape is the whole capsule,
+    /// so the whole bar is the tap target, not just its text.
     func driftGlassCapsule(tint: Color) -> some View {
-        if #available(iOS 26.0, *), !DriftTheme.legacyUI {
-            self.background {
-                Capsule().fill(.clear)
-                    .glassEffect(.regular.tint(tint), in: Capsule())
-            }
+        self.background(tint, in: Capsule())
             .contentShape(Capsule())
-        } else {
-            self.background(tint, in: Capsule())
-        }
     }
 }
 
@@ -113,25 +119,20 @@ extension View {
     }
 }
 
-/// Page background: the colour wash on iOS 26+; the flat grouped
-/// background on the legacy systems (#242).
+/// Page background: the one flat colour (#304), on the glass and
+/// legacy paths alike.
 ///
 /// Collection #274 (Grace, 2026-11-13): in dark mode the page
-/// background is PURE BLACK — the blue-green gradient wash is gone.
-/// Cards keep whatever surface they already have; only the page
-/// behind them changes, on both the glass and legacy paths.
+/// background is PURE BLACK. Cards keep whatever surface they
+/// already have; only the page behind them changes.
 struct DriftBackground: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         if scheme == .dark {
             Color.black.ignoresSafeArea()
-        } else if DriftTheme.legacyUI {
-            Color(.systemGroupedBackground).ignoresSafeArea()
         } else {
-            LinearGradient(colors: DriftTheme.washColors(scheme: scheme),
-                           startPoint: .topLeading, endPoint: .bottomTrailing)
-                .ignoresSafeArea()
+            DriftTheme.pageBackgroundLight.ignoresSafeArea()
         }
     }
 }

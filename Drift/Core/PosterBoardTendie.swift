@@ -328,20 +328,21 @@ struct LegacyConvertPrompt: Identifiable {
     static var asIsTitle: String { String(localized: "Install as is") }
 }
 
-/// The conversion explanation, worded once and shown wherever the question
-/// comes up — the pack detail page, the About page, and (in its shorter
-/// form above) the convert prompt itself (feedback #22: the three places
-/// must not drift into three different stories).
-enum LegacyConversionCopy {
-    /// Why conversion exists at all: the WWDC22 layout is unreadable to
-    /// iOS 27's store, and the failure mode is silence, not an error.
-    static var why: String {
-        String(localized: "Legacy packs use the WWDC22 layout. iOS 27's wallpaper library cannot read that layout: installed unconverted, a pack raises no error and simply never appears. Converting rewrites the pack into the modern layout iOS 27 reads.")
-    }
 
-    /// Which systems need it: the major version only.
-    static var versions: String {
-        String(localized: "Whether conversion is needed depends only on the major version: every iOS 26 release reads legacy packs as they are — no conversion, and the question is never asked; every iOS 27 release and later needs the conversion. Minor versions and build numbers do not matter. Below iOS 26 is not supported.")
+/// A cheap identity for a file on disk: size + modification time.
+///
+/// The pack caches (the import list, the legacy-family scan) key on this
+/// instead of re-opening archives. A stat is microseconds; opening a
+/// 70 MB zip and walking its entries is not, and the walk was being paid
+/// again on every screen appearance and every selection tap. Any write
+/// to the file — a repair swapping its contents, a re-import — moves
+/// the mtime and so misses the cache on its own.
+enum PackFileFingerprint {
+    static func of(_ url: URL) -> String {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let size = (attrs?[.size] as? NSNumber)?.int64Value ?? -1
+        let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? -1
+        return "\(size)|\(mtime)"
     }
 }
 
@@ -390,54 +391,98 @@ enum PosterBoardImports {
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
 
-        if let format = archiveFormat(of: source) {
-            throw DriftError("这个文件是 \(format) 压缩包，Drift 打不开这种格式。"
-                + "请先把它解压开，再导入里面的 .tendies 文件；或者直接导入 .tendies，不要隔着这一层压缩。")
-        }
-        let data = try unwrappedPackData(from: source)
-        if let format = archiveFormat(ofData: data) {
+        if let format = archiveFormat(of: source) ?? archiveFormat(ofFile: source) {
             throw DriftError("这个文件是 \(format) 压缩包，Drift 打不开这种格式。"
                 + "请先把它解压开，再导入里面的 .tendies 文件；或者直接导入 .tendies，不要隔着这一层压缩。")
         }
 
         let started = Date()
-        AppLog.op("导入：收到 \(source.lastPathComponent)（\(data.count) 字节）")
+        // File-based throughout (cleanup round, 2026-11-13): the pick
+        // used to be read whole into memory — and a bag's every inner
+        // pack held at once — before anything was stored. A 70 MB
+        // pack (or a bag of them) now moves disk-to-disk; the only
+        // full read left is the base64 fallback below, which is
+        // text by definition and cannot be streamed.
+        let byteCount = ((try? FileManager.default.attributesOfItem(atPath: source.path))?[.size]
+            as? NSNumber)?.int64Value ?? 0
+        AppLog.op("导入：收到 \(source.lastPathComponent)（\(byteCount) 字节）")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
-        // The file itself is a pack, whatever it was called.
-        let packName = normalizedName(for: source.lastPathComponent)
-        var packError: Error?
-        do {
-            let tendie = try storePack(data: data, named: packName)
-            let result = finishImport(tendie)
-            AppLog.timing("导入 \(packName)", since: started)
-            return result
-        } catch {
-            packError = error
-        }
+        let first = attemptImport(from: source, sourceName: source.lastPathComponent,
+                                  since: started)
+        if let packs = first.packs { return packs }
 
-        // A bag: pull every .tendies out of it and import each one.
-        let inners = innerPacks(in: data)
-        if !inners.isEmpty {
-            var result: [PosterBoardTendie] = []
-            for inner in inners {
-                do {
-                    let tendie = try storePack(data: inner.data,
-                                                named: normalizedName(for: inner.name))
-                    result.append(contentsOf: finishImport(tendie))
-                } catch {
-                    AppLog.warn("导入：压缩包里的 \(inner.name) 不是能用的壁纸包，跳过")
-                }
-            }
-            if !result.isEmpty {
-                AppLog.op("导入：从 \(source.lastPathComponent) 里取出 \(result.count) 个壁纸包")
-                AppLog.timing("导入压缩包 \(source.lastPathComponent)", since: started)
-                return result
-            }
+        // A pack circulating as base64 text: decode it to a scratch
+        // file and try once more against the plain ZIP.
+        if let decoded = base64UnwrappedFile(from: source) {
+            defer { try? FileManager.default.removeItem(at: decoded) }
+            let second = attemptImport(from: decoded, sourceName: source.lastPathComponent,
+                                       since: started)
+            if let packs = second.packs { return packs }
+            throw second.packError ?? first.packError ?? DriftError("这个文件不是能用的壁纸包。")
         }
 
         // Neither a pack nor a bag of packs: the validator's own words.
-        throw packError ?? DriftError("这个文件不是能用的壁纸包。")
+        throw first.packError ?? DriftError("这个文件不是能用的壁纸包。")
+    }
+
+    /// One import attempt against a file on disk: as a pack first
+    /// (whatever it was called), then as a bag of packs. On failure
+    /// returns the pack attempt's error, which is the message the
+    /// validator would have given the user.
+    private static func attemptImport(from file: URL, sourceName: String,
+                                      since started: Date) -> (packs: [PosterBoardTendie]?, packError: Error?) {
+        let packName = normalizedName(for: sourceName)
+        do {
+            let tendie = try storePackCopying(from: file, named: packName)
+            let result = finishImport(tendie)
+            AppLog.timing("导入 \(packName)", since: started)
+            return (result, nil)
+        } catch {
+            let packError = error
+            let bagged = importBag(from: file)
+            if !bagged.isEmpty {
+                AppLog.op("导入：从 \(sourceName) 里取出 \(bagged.count) 个壁纸包")
+                AppLog.timing("导入压缩包 \(sourceName)", since: started)
+                return (bagged, nil)
+            }
+            return (nil, packError)
+        }
+    }
+
+    /// Every pack inside a bag archive, imported one at a time: each
+    /// entry is extracted to a scratch file and stored from there, so
+    /// a bag of large packs never holds more than one on disk outside
+    /// the library itself — and none of them in memory.
+    private static func importBag(from file: URL) -> [PosterBoardTendie] {
+        guard let archive = try? Archive(url: file, accessMode: .read) else { return [] }
+        let fm = FileManager.default
+        var result: [PosterBoardTendie] = []
+        for entry in archive where entry.type == .file
+            && entry.path.lowercased().hasSuffix(".tendies") {
+            let entryName = (entry.path as NSString).lastPathComponent
+            let scratch = fm.temporaryDirectory
+                .appendingPathComponent("drift-inner-\(UUID().uuidString).tendies")
+            defer { try? fm.removeItem(at: scratch) }
+            guard (try? archive.extract(entry, to: scratch)) != nil,
+                  isZIPFile(scratch) else { continue }
+            do {
+                let tendie = try storePackCopying(from: scratch,
+                                                  named: normalizedName(for: entryName))
+                result.append(contentsOf: finishImport(tendie))
+            } catch {
+                AppLog.warn("导入：压缩包里的 \(entryName) 不是能用的壁纸包，跳过")
+            }
+        }
+        return result
+    }
+
+    /// Whether a file starts with the ZIP signature ("PK").
+    private static func isZIPFile(_ file: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return false }
+        defer { try? handle.close() }
+        let head = (try? handle.read(upToCount: 2)) ?? nil
+        return head?.starts(with: [0x50, 0x4B]) ?? false
     }
 
     /// rar / 7z by file name — the two formats this app cannot open.
@@ -449,10 +494,14 @@ enum PosterBoardImports {
         }
     }
 
-    /// The same check by magic bytes, for archives wearing a wrong name.
-    private static func archiveFormat(ofData data: Data) -> String? {
-        if data.starts(with: [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]) { return "7Z" }
-        if data.starts(with: [0x52, 0x61, 0x72, 0x21]) { return "RAR" }
+    /// The same check by magic bytes, for archives wearing a wrong
+    /// name — reads only the file's first bytes, never the whole file.
+    private static func archiveFormat(ofFile file: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? handle.close() }
+        guard let head = (try? handle.read(upToCount: 6)) ?? nil else { return nil }
+        if head.starts(with: [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]) { return "7Z" }
+        if head.starts(with: [0x52, 0x61, 0x72, 0x21]) { return "RAR" }
         return nil
     }
 
@@ -464,13 +513,13 @@ enum PosterBoardImports {
         return (base.isEmpty ? "壁纸包" : base) + ".tendies"
     }
 
-    /// Write one pack's bytes under `name` and validate them. A failed
+    /// Copy one pack file in under `name` and validate it. A failed
     /// validation removes the file again — nothing half-imported is
     /// left behind for the next launch to trip over.
-    private static func storePack(data: Data, named name: String) throws -> PosterBoardTendie {
+    private static func storePackCopying(from file: URL, named name: String) throws -> PosterBoardTendie {
         let destination = uniqueDestination(for: name)
         do {
-            try data.write(to: destination, options: .atomic)
+            try FileManager.default.copyItem(at: file, to: destination)
         } catch {
             throw DriftError("无法把 \(name) 拷贝进应用：" + error.localizedDescription)
         }
@@ -480,29 +529,6 @@ enum PosterBoardImports {
             try? FileManager.default.removeItem(at: destination)
             throw error
         }
-    }
-
-    /// Every `.tendies` inside a zip's data, wherever in the folder
-    /// tree they sit. Empty when the data is not a readable zip or the
-    /// zip carries no packs.
-    private static func innerPacks(in data: Data) -> [(name: String, data: Data)] {
-        let tmp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("drift-bag-\(UUID().uuidString).zip")
-        defer { try? FileManager.default.removeItem(at: tmp) }
-        guard (try? data.write(to: tmp)) != nil,
-              let archive = try? Archive(url: tmp, accessMode: .read) else { return [] }
-        var found: [(name: String, data: Data)] = []
-        for entry in archive where entry.type == .file
-            && entry.path.lowercased().hasSuffix(".tendies") {
-            var bytes = Data()
-            do {
-                _ = try archive.extract(entry) { bytes.append($0) }
-            } catch { continue }
-            if bytes.starts(with: [0x50, 0x4B]) {
-                found.append((name: (entry.path as NSString).lastPathComponent, data: bytes))
-            }
-        }
-        return found
     }
 
     /// The steps every stored pack goes through before it joins the
@@ -519,11 +545,13 @@ enum PosterBoardImports {
         // same repair the detail flow offered by hand. Best-effort —
         // a failed repair keeps the pack and the log says so; the
         // caller still checks for blocking issues afterwards.
-        if !PackRepair.inspect(clean).isEmpty {
+        let importIssues = PackRepair.inspect(clean)
+        if !importIssues.isEmpty {
             let version = DeviceIdentityMonitor.shared.current.version.isEmpty
                 ? WorseQueryEscape.processVersion
                 : DeviceIdentityMonitor.shared.current.version
-            if let repaired = try? PackRepair.repair(clean, deviceVersion: version,
+            if let repaired = try? PackRepair.repair(clean, issues: importIssues,
+                                                     deviceVersion: version,
                                                      progress: { _ in }) {
                 // #291 (Grace, 2026-11-13): an import-time repair is
                 // invisible in the list — the repaired pack REPLACES
@@ -553,7 +581,7 @@ enum PosterBoardImports {
         return result
     }
 
-    /// The pack's bytes, unwrapped first if they arrive encoded.
+    /// A base64-wrapped pack, decoded into a scratch file.
     ///
     /// Some packs circulate as base64 *text* wearing a `.tendies` name — the
     /// whole ZIP is in there, encoded (verified on Grace's real packs,
@@ -562,30 +590,48 @@ enum PosterBoardImports {
     /// it). What is stored is always the plain ZIP, so every later reader —
     /// unpack, previews, apply — sees the one true form.
     ///
-    /// The order matters: a normal pack costs one prefix test, and a decode
-    /// is accepted only when it lands on a ZIP header. A file that is
-    /// neither passes through untouched and keeps the archive reader's own
-    /// error, so a genuinely bad pack fails exactly as it did before.
-    private static func unwrappedPackData(from source: URL) throws -> Data {
-        let data: Data
-        do {
-            data = try Data(contentsOf: source)
-        } catch {
-            throw DriftError("无法把 \(source.lastPathComponent) 拷贝进应用："
-                + error.localizedDescription)
-        }
-        if data.starts(with: [0x50, 0x4B]) { return data } // "PK": a plain ZIP
-        if let decoded = Data(base64Encoded: data, options: .ignoreUnknownCharacters),
-           decoded.starts(with: [0x50, 0x4B]) {
-            return decoded
-        }
-        return data
+    /// A decode is accepted only when it lands on a ZIP header, and
+    /// plain ZIPs never reach this function (the first attempt already
+    /// took them) — so a nil here means "not base64 either" and the
+    /// first attempt's error stands, exactly as before.
+    private static func base64UnwrappedFile(from source: URL) -> URL? {
+        guard let data = try? Data(contentsOf: source),
+              !data.starts(with: [0x50, 0x4B]),
+              let decoded = Data(base64Encoded: data, options: .ignoreUnknownCharacters),
+              decoded.starts(with: [0x50, 0x4B]) else { return nil }
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("drift-b64-\(UUID().uuidString).tendies")
+        guard (try? decoded.write(to: scratch)) != nil else { return nil }
+        return scratch
     }
 
     /// Every imported pack, newest last, in file-name order.
+    ///
+    /// Cached (cleanup round, 2026-11-13): the directory fingerprint —
+    /// names, sizes, mtimes — is re-stat'ed on every call, which is
+    /// cheap, and the expensive part (opening every archive) only
+    /// reruns when the fingerprint moved. Callers used to pay a full
+    /// rescan per call: the Home page's initial state, every import's
+    /// finish step, the deep-repair lookup that wants one pack by name.
+    private static var loadCache: (fingerprint: String, packs: [PosterBoardTendie])?
+    private static let loadCacheLock = NSLock()
+
     static func load() -> [PosterBoardTendie] {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-        return names.sorted().compactMap { try? PosterBoardTendie(url: directory.appendingPathComponent($0)) }
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []).sorted()
+        let fingerprint = names
+            .map { "\($0)=\(PackFileFingerprint.of(directory.appendingPathComponent($0)))" }
+            .joined(separator: ";")
+        loadCacheLock.lock()
+        if let cache = loadCache, cache.fingerprint == fingerprint {
+            loadCacheLock.unlock()
+            return cache.packs
+        }
+        loadCacheLock.unlock()
+        let packs = names.compactMap { try? PosterBoardTendie(url: directory.appendingPathComponent($0)) }
+        loadCacheLock.lock()
+        loadCache = (fingerprint, packs)
+        loadCacheLock.unlock()
+        return packs
     }
 
     static func remove(_ tendie: PosterBoardTendie) {

@@ -82,6 +82,9 @@ struct DriftSettingsView: View {
             .frame(maxWidth: .infinity)
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.large)
+            // #304: the one flat page background, like every page.
+            .scrollContentBackground(.hidden)
+            .background { DriftBackground() }
             // UIKit picker, not SwiftUI `fileImporter` — see
             // `DocumentPicker` for why.
             .sheet(isPresented: $importingPairing) {
@@ -1109,6 +1112,8 @@ struct DriftLogView: View {
         }
         .navigationTitle("运行日志")
         .navigationBarTitleDisplayMode(.inline)
+        .scrollContentBackground(.hidden)
+        .background { DriftBackground() }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("清空") { RunLog.shared.clear() }

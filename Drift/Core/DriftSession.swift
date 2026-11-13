@@ -95,10 +95,14 @@ final class DriftSession: ObservableObject {
     /// start the core. Idempotent: safe to call from every appearance.
     func bootstrap() {
         DriftEngine.shared.onLog = { line in RunLog.shared.append(line) }
+        // Coalesced (cleanup round, 2026-11-13): the engine reports
+        // per descriptor; the cover reads at most ten updates a second.
+        let coverProgressCoalescer = ProgressCoalescer<Double?>(interval: 0.1) { value in
+            DriftSession.shared.coverProgress = value
+        }
         DriftEngine.shared.onProgress = { percent in
-            Task { @MainActor in
-                DriftSession.shared.coverProgress = percent.isNaN ? nil : percent / 100
-            }
+            let value = percent.isNaN ? nil : percent / 100
+            Task { @MainActor in coverProgressCoalescer.offer(value) }
         }
         guard !didBootstrap else { return }
         didBootstrap = true

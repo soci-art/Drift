@@ -85,6 +85,9 @@ struct AppUpdateView: View {
         }
         .navigationTitle("检查更新")
         .navigationBarTitleDisplayMode(.inline)
+        // #304: the one flat page background, like every page.
+        .scrollContentBackground(.hidden)
+        .background { DriftBackground() }
         .task {
             if checker.latest == nil && !checker.checking {
                 await checker.refresh()

@@ -123,6 +123,17 @@ struct PackListView: View {
             }
         }
         .task(id: selectionKey) { await refreshLegacyInfo() }
+        // Warm the legacy-family memo off the main thread (cleanup
+        // round, 2026-11-13): the first tap on a pack used to open its
+        // archive synchronously in `toggle`, and the selection refresh
+        // re-opened every selected pack. With the memo warm, both are
+        // stat-cheap lookups.
+        .task(id: importsWarmKey) {
+            let packs = imports
+            await Task.detached(priority: .utility) {
+                for pack in packs { _ = try? pack.legacyFamilies() }
+            }.value
+        }
         .onAppear { AppLog.op("打开壁纸包页（已导入 \(imports.count) 个包）") }
     }
 
@@ -308,6 +319,12 @@ struct PackListView: View {
         selection.tendies.map { $0.url.path }.joined(separator: "|")
     }
 
+    /// Changes whenever the import list's membership or any pack's
+    /// bytes change, so the warm-up task reruns exactly then.
+    private var importsWarmKey: String {
+        imports.map { $0.url.path + "@" + PackFileFingerprint.of($0.url) }.joined(separator: "|")
+    }
+
     private func refreshLegacyInfo() async {
         var found: Set<URL> = []
         for pack in selection.tendies {
@@ -428,13 +445,14 @@ struct PackListView: View {
             var repairedNames: [String] = []
             var noNeed = 0
             for (index, target) in targets.enumerated() {
-                if PackRepair.inspect(target).isEmpty {
+                let issues = PackRepair.inspect(target)
+                if issues.isEmpty {
                     noNeed += 1
                     continue
                 }
                 do {
                     let repaired = try await Task.detached {
-                        try PackRepair.repair(target, deviceVersion: version) { phase in
+                        try PackRepair.repair(target, issues: issues, deviceVersion: version) { phase in
                             let overall = (Double(index) + phase) / Double(targets.count)
                             Task { @MainActor in DriftSession.shared.coverProgress = overall }
                         }
@@ -561,10 +579,13 @@ private struct PackListRow: View {
                     in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .contentShape(Rectangle())
         .task(id: pack.url) {
-            let url = await Task.detached { PosterBoardPreview.cover(for: pack) }.value
-            if let url {
-                cover = PosterBoardPreview.coverImage(at: url, maxPixelSize: 180)
-            }
+            // Decode off the main actor too (cleanup round, 2026-11-13):
+            // the fetch was detached but the decode landed back here.
+            cover = await Task.detached {
+                PosterBoardPreview.cover(for: pack).flatMap {
+                    PosterBoardPreview.coverImage(at: $0, maxPixelSize: 180)
+                }
+            }.value
         }
     }
 }
@@ -610,10 +631,15 @@ private struct PackCoverPreview: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .task {
-            let urls = await Task.detached {
-                PosterBoardPreview.previews(for: pack) ?? []
+            // Decode off the main actor, downsampled through the same
+            // cache the rows use (cleanup round, 2026-11-13): the page
+            // used to decode every preview at full size on the main
+            // thread, one after another, while the sheet animated in.
+            images = await Task.detached {
+                PosterBoardPreview.previews(for: pack).compactMap {
+                    PosterBoardPreview.coverImage(at: $0, maxPixelSize: 1400)
+                }
             }.value
-            images = urls.compactMap { UIImage(contentsOfFile: $0.path) }
             loaded = true
         }
     }

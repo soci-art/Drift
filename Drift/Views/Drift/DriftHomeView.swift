@@ -333,8 +333,9 @@ struct DriftHomeView: View {
     }
 
     /// The shared shape of Home's two long bars (#266/#280): the
-    /// usable-state blue, white centred content, no chevron. Since
-    /// #286 the blue is a tinted liquid-glass capsule, not a flat fill.
+    /// usable-state blue, white centred content, no chevron. A flat
+    /// fill again since the glass-unification round (2026-11-13) —
+    /// the tinted liquid glass of #286 is gone.
     private func homeBarLabel(icon: String, title: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
@@ -348,14 +349,14 @@ struct DriftHomeView: View {
     }
 
     /// Collection #286 (Grace, 2026-11-13): the packs bar, the flash
-    /// section and the manager bar live inside ONE liquid-glass frame,
-    /// all three the same width. Before, the two bars ran full-bleed
-    /// while the flash section sat inside its own card, so the three
-    /// read as mismatched lengths (her screenshot: both blue bars
-    /// poking out past the card's edges). Inside one padded frame the
-    /// equal width is structural, and the three are glass themselves:
-    /// tinted-glass bars, the prominent glass flash button, all inside
-    /// the frame's glass slab.
+    /// section and the manager bar live inside ONE frame, all three
+    /// the same width. Before, the two bars ran full-bleed while the
+    /// flash section sat inside its own card, so the three read as
+    /// mismatched lengths (her screenshot: both blue bars poking out
+    /// past the card's edges). Inside one padded frame the equal
+    /// width is structural. The frame's surface is the cards' own
+    /// material and the bars inside are flat fills since the
+    /// glass-unification round (#302, render ②, 2026-11-13).
     private var actionFrame: some View {
         VStack(spacing: 12) {
             packsBar

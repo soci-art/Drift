@@ -83,6 +83,45 @@ enum PackDeepRepair {
     // MARK: - Stock-take (#260 first, then the fit checks)
 
     static func analyze(_ pack: PosterBoardTendie, canvas: Canvas) async -> Report {
+        let session = await openSession(pack, canvas: canvas)
+        let report = session.report
+        session.discard()
+        return report
+    }
+
+    /// A held stock-take (cleanup round, 2026-11-13): the extracted
+    /// tree and its scan, kept alive so the repair run that follows
+    /// the report does not extract and scan the pack a second time —
+    /// for a store-snapshot pack that was a second full unpack of
+    /// tens of megabytes. The holder either runs `repair(session:)`
+    /// (which consumes the tree) or calls `discard()`.
+    final class Session {
+        let pack: PosterBoardTendie
+        let canvas: Canvas
+        let report: Report
+        fileprivate let work: URL?
+        fileprivate let scan: Scan?
+
+        fileprivate init(pack: PosterBoardTendie, canvas: Canvas, report: Report,
+                         work: URL?, scan: Scan?) {
+            self.pack = pack
+            self.canvas = canvas
+            self.report = report
+            self.work = work
+            self.scan = scan
+        }
+
+        /// Drop the held tree without running the repair. Safe to
+        /// call after the repair consumed it — the directory is
+        /// already gone then.
+        func discard() {
+            if let work { try? FileManager.default.removeItem(at: work) }
+        }
+    }
+
+    /// Take stock and hold the tree for a possible run: everything
+    /// `analyze` does, without throwing the extraction away.
+    static func openSession(_ pack: PosterBoardTendie, canvas: Canvas) async -> Session {
         var report = Report()
         // #254 (Grace, 2026-11-13): a container pack that actually
         // carries wallpapers is a patient now. Its descriptors sit
@@ -92,7 +131,9 @@ enum PackDeepRepair {
         // store snapshot on a 16 Pro Max reported「没有查到需要修复
         // 的毛病」while wearing a 393×852 canvas. A container
         // TEMPLATE (no descriptors by design) still returns at once.
-        guard !(pack.isContainer && pack.descriptorCount == 0) else { return report }
+        guard !(pack.isContainer && pack.descriptorCount == 0) else {
+            return Session(pack: pack, canvas: canvas, report: report, work: nil, scan: nil)
+        }
 
         // What the structural repair already did to this pack.
         report.priorRepairMark = PackRepair.isRepaired(pack)
@@ -109,16 +150,24 @@ enum PackDeepRepair {
         let fm = FileManager.default
         let work = fm.temporaryDirectory
             .appendingPathComponent("PackDeepCheck-\(UUID().uuidString)", isDirectory: true)
+        var heldWork: URL?
+        var heldScan: Scan?
         do {
             try fm.createDirectory(at: work, withIntermediateDirectories: true)
-            defer { try? fm.removeItem(at: work) }
-            try pack.extract(to: work)
-            let scan = await scanTree(work, canvas: canvas)
-            report.fixes = scan.fixLines
+            do {
+                try pack.extract(to: work)
+                let scan = await scanTree(work, canvas: canvas)
+                report.fixes = scan.fixLines
+                heldWork = work
+                heldScan = scan
+            } catch {
+                try? fm.removeItem(at: work)
+            }
         } catch {
             // An unextractable pack has nothing deep repair can say.
         }
-        return report
+        return Session(pack: pack, canvas: canvas, report: report,
+                       work: heldWork, scan: heldScan)
     }
 
     /// The tree-level findings, shared by the stock-take and the run
@@ -322,26 +371,59 @@ enum PackDeepRepair {
 
     // MARK: - The run
 
-    /// Deep-repair a pack and register the result as a new imported
-    /// pack. Returns the new pack and the lines of what was done.
-    static func repair(_ pack: PosterBoardTendie, canvas: Canvas,
-                       progress: @escaping (Double) -> Void) async throws -> (pack: PosterBoardTendie, done: [String]) {
+    /// The structural gate both run shapes share.
+    private static func preflightCheck(_ pack: PosterBoardTendie) throws {
         let preflight = PackRepair.inspect(pack).filter { $0.isBlocking }
         guard preflight.isEmpty else {
             throw DriftError("这个包还有结构问题没修："
                 + preflight.map { $0.describe }.joined(separator: "、")
                 + "。先用「壁纸修复」把结构修好，再来深度修复。")
         }
+    }
+
+    /// Deep-repair a pack and register the result as a new imported
+    /// pack. Returns the new pack and the lines of what was done.
+    static func repair(_ pack: PosterBoardTendie, canvas: Canvas,
+                       progress: @escaping (Double) -> Void) async throws -> (pack: PosterBoardTendie, done: [String]) {
+        try preflightCheck(pack)
 
         let fm = FileManager.default
         let work = fm.temporaryDirectory
             .appendingPathComponent("PackDeepRepair-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: work, withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: work) }
-
-        try pack.extract(to: work)
+        do {
+            try pack.extract(to: work)
+        } catch {
+            try? fm.removeItem(at: work)
+            throw error
+        }
         progress(0.1)
         let scan = await scanTree(work, canvas: canvas)
+        return try await repairScanned(pack, canvas: canvas, work: work, scan: scan,
+                                       progress: progress)
+    }
+
+    /// The same run on a held stock-take's tree (cleanup round,
+    /// 2026-11-13): no second extraction, no second scan. Consumes
+    /// the session's tree. A session that holds no tree (a container
+    /// template, an unextractable pack) falls back to the plain run.
+    static func repair(session: Session,
+                       progress: @escaping (Double) -> Void) async throws -> (pack: PosterBoardTendie, done: [String]) {
+        try preflightCheck(session.pack)
+        guard let work = session.work, let scan = session.scan else {
+            return try await repair(session.pack, canvas: session.canvas, progress: progress)
+        }
+        progress(0.1)
+        return try await repairScanned(session.pack, canvas: session.canvas,
+                                       work: work, scan: scan, progress: progress)
+    }
+
+    /// The run proper, on an extracted tree and its scan. Owns the
+    /// tree: the directory is removed whatever happens.
+    private static func repairScanned(_ pack: PosterBoardTendie, canvas: Canvas,
+                                      work: URL, scan: Scan,
+                                      progress: @escaping (Double) -> Void) async throws -> (pack: PosterBoardTendie, done: [String]) {
+        defer { try? FileManager.default.removeItem(at: work) }
         guard scan.canApplyWork else {
             throw DriftError("这个包没查到需要深度修复的地方。")
         }

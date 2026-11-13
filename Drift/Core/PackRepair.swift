@@ -68,8 +68,32 @@ enum PackRepair {
         }
     }
 
+    /// Memoised (cleanup round, 2026-11-13): the same pack was being
+    /// opened and read by the import finish step, the post-import
+    /// notice, the apply preflight and both repair flows — and then
+    /// opened once more inside `repair` itself. Keyed by the file
+    /// fingerprint, so a pack whose bytes change (a repair swap, a
+    /// re-import) misses on its own.
+    private static var inspectCache: [String: [Issue]] = [:]
+    private static let inspectCacheLock = NSLock()
+
     /// Every issue found in a pack, in fix order.
     static func inspect(_ pack: PosterBoardTendie) -> [Issue] {
+        let key = pack.url.path + "|" + PackFileFingerprint.of(pack.url)
+        inspectCacheLock.lock()
+        if let hit = inspectCache[key] {
+            inspectCacheLock.unlock()
+            return hit
+        }
+        inspectCacheLock.unlock()
+        let issues = inspectUncached(pack)
+        inspectCacheLock.lock()
+        inspectCache[key] = issues
+        inspectCacheLock.unlock()
+        return issues
+    }
+
+    private static func inspectUncached(_ pack: PosterBoardTendie) -> [Issue] {
         guard let archive = try? Archive(url: pack.url, accessMode: .read) else { return [] }
         if pack.isContainer {
             // #254: only a snapshot that actually carries wallpapers
@@ -157,7 +181,15 @@ enum PackRepair {
     /// flash does (conversion only exists on iOS 27+).
     static func repair(_ pack: PosterBoardTendie, deviceVersion: String,
                        progress: @escaping (Double) -> Void) throws -> PosterBoardTendie {
-        let issues = inspect(pack)
+        try repair(pack, issues: inspect(pack), deviceVersion: deviceVersion, progress: progress)
+    }
+
+    /// The same repair with the findings already in hand — callers
+    /// that just inspected the pack (the import finish step, the
+    /// list's repair run) pass theirs instead of paying for a second
+    /// inspection inside (cleanup round, 2026-11-13).
+    static func repair(_ pack: PosterBoardTendie, issues: [Issue], deviceVersion: String,
+                       progress: @escaping (Double) -> Void) throws -> PosterBoardTendie {
         guard !issues.isEmpty else {
             throw DriftError("这个包没查到需要修的毛病。")
         }

@@ -34,7 +34,7 @@ struct DriftShell: View {
         }
         .task {
             var restored = PosterBoardSelection()
-            restored.loadFromDisk()
+            restored.restorePickedFiles()
             selection.video = restored.video
             selection.thumbnail = restored.thumbnail
         }

@@ -404,7 +404,30 @@ enum PosterBoardConverter {
     /// `isModernPlane` parses the plist and looks for the key. Upstream does the
     /// same, and it means an index.xml that mentions the name in a comment counts
     /// as modern here and legacy there. Reproduced, not fixed.
+    /// Memoised (cleanup round, 2026-11-13): the pack-list page asked
+    /// this of **every already-selected pack** on every selection
+    /// change, and the answer cannot change while the file does not.
+    /// Keyed by the file fingerprint, so a repaired or re-imported
+    /// pack (same path, new bytes) misses on its own.
+    private static var legacyFamiliesCache: [String: [String]] = [:]
+    private static let legacyFamiliesCacheLock = NSLock()
+
     static func legacyFamilies(ofPack packURL: URL) throws -> [String] {
+        let key = packURL.path + "|" + PackFileFingerprint.of(packURL)
+        legacyFamiliesCacheLock.lock()
+        if let hit = legacyFamiliesCache[key] {
+            legacyFamiliesCacheLock.unlock()
+            return hit
+        }
+        legacyFamiliesCacheLock.unlock()
+        let families = try legacyFamiliesUncached(ofPack: packURL)
+        legacyFamiliesCacheLock.lock()
+        legacyFamiliesCache[key] = families
+        legacyFamiliesCacheLock.unlock()
+        return families
+    }
+
+    static func legacyFamiliesUncached(ofPack packURL: URL) throws -> [String] {
         let archive: Archive
         do {
             archive = try Archive(url: packURL, accessMode: .read)

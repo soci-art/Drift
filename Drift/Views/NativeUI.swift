@@ -37,25 +37,13 @@ struct NativeNote: View {
     }
 }
 
-/// A line that says what an action costs, in the system danger tone.
-struct NativeSafetyNote: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-
-    var body: some View {
-        Text(LocalizedStringKey(text))
-            .font(.footnote)
-            .foregroundStyle(.red)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-}
 
 /// A full-width prominent action, with an inline spinner while running.
 ///
-/// Uses the app's Liquid Glass prominent treatment
-/// (`driftGlassProminentButton` — the system glass look without the
-/// press swell, #285), so there is no gradient to keep in step with
-/// the OS.
+/// Uses the app's prominent button treatment
+/// (`driftGlassProminentButton` — a flat tint capsule since the
+/// glass-unification round, without the press swell, #285), so
+/// there is no gradient to keep in step with the OS.
 struct NativePrimaryButton: View {
     let title: String
     var systemImage: String?
@@ -81,55 +69,6 @@ struct NativePrimaryButton: View {
     }
 }
 
-/// A full-width destructive action, in the system's red prominent treatment.
-struct NativeDangerButton: View {
-    let title: String
-    var systemImage: String?
-    var disabled = false
-    let action: () -> Void
-
-    var body: some View {
-        Button(role: .destructive, action: action) {
-            HStack(spacing: 8) {
-                if let systemImage { Image(systemName: systemImage) }
-                Text(LocalizedStringKey(title)).font(.headline)
-            }
-            .frame(maxWidth: .infinity)
-        }
-        .driftGlassProminentButton(tint: .red)
-        .controlSize(.large)
-        .disabled(disabled)
-    }
-}
-
-/// A tappable list-section header that folds the section's rows away.
-///
-/// `Section(isExpanded:)` is the platform's own collapsible section, but in the
-/// tweaks/daemons `List`s it drew no visible affordance, so the fold was
-/// unreachable.  This header draws the chevron itself and toggles the same
-/// *collapsed* binding the page already keeps, so the fold state stays where it
-/// was and the caller emits the rows only while the section is open.
-struct NativeCollapsibleHeader: View {
-    let title: String
-    @Binding var collapsed: Bool
-
-    var body: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.2)) { collapsed.toggle() }
-        } label: {
-            HStack(spacing: 6) {
-                Text(LocalizedStringKey(title))
-                Spacer(minLength: 0)
-                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                    .flipsForRightToLeftLayoutDirection(true)
-                    .font(.caption.weight(.semibold))
-            }
-            .foregroundStyle(.secondary)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
 
 /// The app artwork at a chosen size, rounded like the home-screen icon.
 ///
@@ -303,14 +242,24 @@ struct DriftStaticGlassButtonStyle: ButtonStyle {
             .padding(.horizontal, horizontal)
             .padding(.vertical, vertical)
             .foregroundStyle(prominent ? Color.white : Color.primary)
-            // The glass is the label's background, not the label
-            // itself (#290, same lesson as the Home frame): glass on
-            // the view can swallow touches outside the drawn content,
-            // and a button must answer across its whole capsule.
+            // The surface is the label's background, not the label
+            // itself (#290, same lesson as the Home frame): a surface
+            // on the view can swallow touches outside the drawn
+            // content, and a button must answer across its whole
+            // capsule.
+            //
+            // Glass-unification round (#303, Grace, 2026-11-13): no
+            // real Liquid Glass here any more — the prominent button
+            // is a flat tint capsule and the plain one wears the same
+            // ultraThinMaterial as the cards, so a button sitting on
+            // a card no longer renders whiter and brighter than the
+            // card around it.
             .background {
-                Capsule().fill(.clear)
-                    .glassEffect(prominent ? .regular.tint(tint) : .regular,
-                                 in: Capsule())
+                if prominent {
+                    Capsule().fill(tint)
+                } else {
+                    Capsule().fill(.ultraThinMaterial)
+                }
             }
             .contentShape(Capsule())
             .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.45)

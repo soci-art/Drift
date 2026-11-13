@@ -270,43 +270,35 @@ struct FirstRunView: View {
         }
     }
 
-    /// Slide 1: the tunnel. `Tunnel.requirements` is the same string the home
-    /// page's diagnostics print, so the two cannot disagree.
+    /// Slide 1: the tunnel.
+    ///
+    /// Collection #301 (Grace, 2026-11-13, layout from her approved
+    /// renders): the values card and the copy button are gone —
+    /// everyone uses LocalDevVPN, whose defaults are already right,
+    /// so there is nothing to copy and nothing to change. The page
+    /// is the one guidance sentence (which stands where the old
+    /// bottom hint stood, moved up), the status pill, and — only
+    /// while unconnected — the re-check button. `Tunnel.requirements`
+    /// itself still exists for the diagnostics print, which is log
+    /// territory, not page copy.
     private var tunnelSlide: some View {
         SlideLayout(
             art: { FirstRunTunnelArt(ready: tunnel.isReady, active: page == 1) },
             title: "1 · 隧道",
-            subtitle: "装好 LocalDevVPN（或同类隧道 App），填入下面的值并保持开启——两条隧道通道（免注销直刷 / 注销直刷）需要它；本机直刷不需要。")
+            subtitle: tunnel.isReady
+                ? "隧道已连接，点「继续」。"
+                : "没有检测到隧道。打开 LocalDevVPN 点「连接」，并连上 Wi-Fi，再点「再检测一次」。")
         {
             VStack(alignment: .leading, spacing: 12) {
                 statusPill(done: tunnel.isReady, working: tunnel == .peerUnreachable,
                            text: tunnel.shortText)
-                Text(Tunnel.requirements)
-                    .font(.footnote.monospaced())
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
-                    .background(Color(.secondarySystemBackground),
-                                in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                HStack(spacing: 10) {
-                    Button {
-                        UIPasteboard.general.string = Tunnel.requirements
-                    } label: {
-                        Text("把这些值抄进隧道 App")
-                    }
-                    .driftGlassButton()
+                if !tunnel.isReady {
                     Button {
                         Task { await probe() }
                     } label: {
                         Label("再检测一次", systemImage: "arrow.clockwise")
                     }
                     .driftGlassButton()
-                }
-                if tunnel == .interfaceMissing {
-                    NativeNote("没有接口带 \(Tunnel.ifaceIP) 这个地址——隧道 App 可能连错了网络，或者隧道 IP 还留着默认值。")
-                }
-                if Tunnel.isCustomised {
-                    NativeSafetyNote("当前用的是自定义隧道地址——必须和 LocalDevVPN 里填的一致。")
                 }
             }
         }
@@ -651,13 +643,10 @@ private struct SlideLayout<Art: View, Content: View>: View {
 /// nothing rather than to a fixed colour, so dark mode needs no second version.
 private struct FirstRunBackground: View {
     var body: some View {
-        ZStack {
-            Color(.systemBackground)
-            LinearGradient(colors: [Color.accentColor.opacity(0.10), .clear],
-                           startPoint: .top,
-                           endPoint: UnitPoint(x: 0.5, y: 0.6))
-        }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
+        // #304 (Grace, 2026-11-13): the wizard wears the same one
+        // flat page background as the rest of the app — the accent
+        // gradient tint it had is gone.
+        DriftBackground()
+            .allowsHitTesting(false)
     }
 }

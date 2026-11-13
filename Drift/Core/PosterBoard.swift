@@ -277,6 +277,18 @@ struct PosterBoardSelection {
         video = PosterBoard.storedFile(in: PosterBoard.videoDirectory)
         thumbnail = PosterBoard.storedFile(in: PosterBoard.thumbnailDirectory)
     }
+
+    /// Only the two picked files, without the pack list.
+    ///
+    /// The shell restores exactly these two at launch and used to go
+    /// through `loadFromDisk()` for them — paying a full scan of every
+    /// imported pack and throwing the result away (cleanup round,
+    /// 2026-11-13). The pack selection itself is rebuilt by the pages
+    /// from the import list they already hold.
+    mutating func restorePickedFiles() {
+        video = PosterBoard.storedFile(in: PosterBoard.videoDirectory)
+        thumbnail = PosterBoard.storedFile(in: PosterBoard.thumbnailDirectory)
+    }
 }
 
 /// The one PosterBoard setting that survives a launch.

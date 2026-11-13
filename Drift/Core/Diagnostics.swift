@@ -218,6 +218,9 @@ enum Diagnostics {
 /// either way.
 enum LogPackage {
     static func build() async throws -> URL {
+        // The file sink buffers (cleanup round, 2026-11-13): push the
+        // tail out before anything reads the log file for the package.
+        AppLog.shared.flushFile()
         _ = await Diagnostics.report()
 
         let formatter = DateFormatter()

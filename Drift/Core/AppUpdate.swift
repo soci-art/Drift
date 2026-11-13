@@ -248,16 +248,20 @@ final class AppUpdateChecker: ObservableObject {
         // response carries no Content-Length (#226) — through the
         // accelerator it usually doesn't, and without a total the
         // progress never moved.
-        let bridge = DownloadBridge(fallbackTotal: Int64(info.assetSize)) { [weak self] downloaded, total in
+        // Coalesced (cleanup round, 2026-11-13): the delegate fires
+        // per chunk; the page reads at most ten updates a second.
+        let progress = ProgressCoalescer<DownloadSample>(interval: 0.1) { [weak self] sample in
+            guard let self, case .working = self.downloadPhase else { return }
+            let fraction = sample.total > 0
+                ? min(Double(sample.downloaded) / Double(sample.total), 1)
+                : nil
+            self.downloadPhase = .working(fraction: fraction,
+                                          downloadedBytes: sample.downloaded,
+                                          totalBytes: sample.total)
+        }
+        let bridge = DownloadBridge(fallbackTotal: Int64(info.assetSize)) { downloaded, total in
             Task { @MainActor in
-                if case .working = self?.downloadPhase ?? .idle {
-                    let fraction = total > 0
-                        ? min(Double(downloaded) / Double(total), 1)
-                        : nil
-                    self?.downloadPhase = .working(fraction: fraction,
-                                                   downloadedBytes: downloaded,
-                                                   totalBytes: total)
-                }
+                progress.offer(DownloadSample(downloaded: downloaded, total: total))
             }
         }
         let session = URLSession(configuration: .default, delegate: bridge, delegateQueue: nil)
@@ -288,6 +292,12 @@ final class AppUpdateChecker: ObservableObject {
 /// response has no expected length — the accelerator's usual shape —
 /// the caller's fallback total (the release metadata's asset size)
 /// stands in, and with neither, the page shows bytes alone.
+/// One download-progress reading, the coalescer's unit.
+private struct DownloadSample: Equatable {
+    let downloaded: Int64
+    let total: Int64
+}
+
 private final class DownloadBridge: NSObject, URLSessionDownloadDelegate {
     let fallbackTotal: Int64
     let onProgress: (Int64, Int64) -> Void

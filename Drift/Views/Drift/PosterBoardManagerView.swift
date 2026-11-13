@@ -85,6 +85,9 @@ struct PosterBoardManagerView: View {
         // now, and its entry lives on Home under the flash button.
         .navigationTitle("本机壁纸管理")
         .navigationBarTitleDisplayMode(.inline)
+        // #304: the one flat page background, like every page.
+        .scrollContentBackground(.hidden)
+        .background { DriftBackground() }
         .task {
             AppLog.op("打开本机壁纸管理")
             await load()

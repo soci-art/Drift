@@ -28,6 +28,19 @@ final class RotatingFileSink: LogSink, @unchecked Sendable {
     private let limit: UInt64
     private let lock = NSLock()
 
+    /// Buffered writer state (cleanup round, 2026-11-13). The sink used
+    /// to stat, open, seek, write and close the file **per line** — a
+    /// flash logs hundreds of lines, each paying four syscalls and a
+    /// directory lookup. Lines now gather in `buffer` and land in one
+    /// write through a handle that stays open; a flush is forced by
+    /// 4 KB of buffer or 100 ms of age, whichever comes first, so a
+    /// crash can still only lose the last fraction of a second.
+    private var handle: FileHandle?
+    private var buffer = Data()
+    private var bufferedSince = Date()
+    /// The file's size as this sink last knew it; nil = stat on flush.
+    private var knownSize: UInt64?
+
     init(url: URL, limit: UInt64 = RotatingFileSink.defaultLimit) {
         self.url = url
         self.limit = limit
@@ -37,27 +50,57 @@ final class RotatingFileSink: LogSink, @unchecked Sendable {
         guard let data = (line + "\n").data(using: .utf8) else { return }
         lock.lock()
         defer { lock.unlock() }
+        if buffer.isEmpty { bufferedSince = Date() }
+        buffer.append(data)
+        if buffer.count >= 4096 || Date().timeIntervalSince(bufferedSince) >= 0.1 {
+            flushLocked()
+        }
+    }
 
+    /// Write out whatever is buffered. Caller holds `lock`.
+    private func flushLocked() {
+        guard !buffer.isEmpty else { return }
         let fm = FileManager.default
         if !fm.fileExists(atPath: url.path) {
-            try? data.write(to: url)
+            try? buffer.write(to: url)
+            knownSize = UInt64(buffer.count)
+            buffer.removeAll()
             return
         }
-        let size = ((try? fm.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)
-            .map { $0.uint64Value } ?? 0
-        if size > limit, let existing = try? Data(contentsOf: url) {
+        if knownSize == nil {
+            knownSize = ((try? fm.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)
+                .map { $0.uint64Value } ?? 0
+        }
+        if let size = knownSize, size > limit, let existing = try? Data(contentsOf: url) {
             // Keep the newer half — a long run logs continuously and the tail is
             // the part that matters.
+            try? handle?.close()
+            handle = nil
             try? existing.suffix(Int(limit / 2)).write(to: url)
+            knownSize = limit / 2
         }
-        guard let handle = try? FileHandle(forWritingTo: url) else { return }
-        defer { try? handle.close() }
-        _ = try? handle.seekToEnd()
-        try? handle.write(contentsOf: data)
+        if handle == nil {
+            handle = try? FileHandle(forWritingTo: url)
+            _ = try? handle?.seekToEnd()
+        }
+        guard let handle else { buffer.removeAll(); return }
+        try? handle.write(contentsOf: buffer)
+        knownSize = (knownSize ?? 0) + UInt64(buffer.count)
+        buffer.removeAll()
+    }
+
+    /// Push the buffered lines out now — readers of the file (the
+    /// diagnostics bundle, the share labels) flush first so they never
+    /// miss the tail still sitting in the buffer.
+    func flush() {
+        lock.lock()
+        flushLocked()
+        lock.unlock()
     }
 
     /// Current size on disk, for the share-sheet labels.
     func size() -> UInt64 {
+        flush()
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
         return (attrs?[.size] as? NSNumber)?.uint64Value ?? 0
     }
@@ -135,6 +178,16 @@ final class AppLog: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Lines waiting for the UI handler, and whether a delivery is
+    /// already scheduled (cleanup round, 2026-11-13). The handler used
+    /// to get one main-queue hop **per line**; a burst now costs one
+    /// hop per 50 ms batch, lines still in order, none dropped.
+    private var uiPending: [String] = []
+    private var uiDeliveryScheduled = false
+
+    /// Flush the file sink — for readers about to open the log file.
+    func flushFile() { file.flush() }
+
     func log(_ line: String) {
         // Console first: if a sink below throws or a lock is held by a wedged
         // thread, the line still reaches the device console.
@@ -143,10 +196,23 @@ final class AppLog: @unchecked Sendable {
         memory.write(line)
         file.write(line)
         for sink in extraSinks { sink.write(line) }
-        let handler = uiHandler
+        guard uiHandler != nil else { lock.unlock(); return }
+        uiPending.append(line)
+        let needsSchedule = !uiDeliveryScheduled
+        uiDeliveryScheduled = true
         lock.unlock()
-        guard let handler else { return }
-        DispatchQueue.main.async { handler(line) }
+        guard needsSchedule else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            let batch = self.uiPending
+            self.uiPending.removeAll()
+            self.uiDeliveryScheduled = false
+            let current = self.uiHandler
+            self.lock.unlock()
+            guard let current else { return }
+            for pendingLine in batch { current(pendingLine) }
+        }
     }
 }
 
