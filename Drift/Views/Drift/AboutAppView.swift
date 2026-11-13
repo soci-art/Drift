@@ -11,6 +11,14 @@ import UIKit
 /// line for the tunnel core used to live in a small About section at
 /// the bottom of Settings; it moved here with everything else, and
 /// that section is gone.
+///
+/// Two fixes from Grace's 3.1.0 walk-through (2026-11-13): the header
+/// shows the current app icon, not the old `Logo` artwork `NativeLogo`
+/// still loads — the `AboutIcon` catalog set carries the redrawn
+/// masters and follows the colour scheme, light artwork in light
+/// mode, the black-backed one in dark mode (#298); and the author
+/// card opens straight with its one bold「作者」row — the card used
+/// to repeat the word as a section header above the row (#299).
 struct AboutAppView: View {
     @State private var showRewardLarge = false
     @State private var showQQCardLarge = false
@@ -53,7 +61,17 @@ struct AboutAppView: View {
 
     private var header: some View {
         VStack(spacing: 8) {
-            NativeLogo(size: 84)
+            // The current app icon (#298), not `NativeLogo`'s old
+            // `Logo@1x/@2x` artwork: the catalog set swaps light/dark
+            // with the colour scheme on its own. The masters fill
+            // their square edge to edge, so the clip gives the
+            // home-screen corner.
+            Image("AboutIcon")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 84, height: 84)
+                .clipShape(RoundedRectangle(cornerRadius: 84 * 0.22,
+                                            style: .continuous))
             Text("Drift").font(.title3.weight(.bold))
             Text("版本 \(Self.versionText)")
                 .font(.subheadline)
@@ -74,9 +92,10 @@ struct AboutAppView: View {
 
     private var authorCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("作者").font(.subheadline.weight(.semibold))
+            // One「作者」only (#299): the bold row label below is the
+            // card's heading and its first row in one.
             HStack {
-                Text("作者")
+                Text("作者").fontWeight(.bold)
                 Spacer()
                 Text("soci-art").foregroundStyle(.secondary)
             }
