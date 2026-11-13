@@ -725,7 +725,17 @@ enum DriftJudge {
             tunnelMissing = "隧道未连通（打开 LocalDevVPN 并连上 Wi-Fi）"
         } else if identity.version.isEmpty {
             tunnelMissing = "还没有读到设备系统版本"
-        } else if identity.buildVersion.isEmpty {
+        } else if identity.buildVersion.isEmpty,
+                  PosterBoard.compareVersion(identity.version, "27.2") == 0 {
+            // #294 (Grace, 2026-11-13): the build number only decides
+            // anything on 27.2 itself — both tunnel channels key their
+            // build lists to exactly that version and pass every other
+            // version on the version alone. The pre-check used to demand
+            // a build number for ALL versions, so a 17.0 device whose
+            // tunnel read came back without one (lockdownd refuses the
+            // key for some devices) had both tunnels condemned before
+            // their own gates ever ran. 27.2 stays fail-closed: its own
+            // gates reject an empty build on their own.
             tunnelMissing = "还没有读到设备构建号（27.2 的可用范围按构建号判断）"
         }
 
