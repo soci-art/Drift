@@ -92,6 +92,10 @@ jobs:
       # drift apart.
       - name: Build IPA
         shell: bash
+        env:
+          # A [probe] commit compiles the temporary enumeration button in.
+          # Ordinary pushes leave the flag empty, so the button is absent.
+          PROBE_BUILD: ${{ contains(github.event.head_commit.message, '[probe]') && '1' || '0' }}
         run: |
           set -o pipefail
           # GitHub runs bash with -e; the build is expected to fail on the
@@ -128,6 +132,41 @@ jobs:
           name: Drift
           path: build/Drift.ipa
           if-no-files-found: error
+
+      # Probe-only publish: replace the IPA attachment on the existing
+      # pre-release, without creating a release or touching its title, notes,
+      # tag or any non-IPA asset. Build 44 makes the new attachment name
+      # distinct from the old 43 one, so the old IPA is removed first.
+      - name: Replace the pre-release IPA with the probe build
+        if: >-
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          contains(github.event.head_commit.message, '[probe]')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*//p' project.yml | tr -d '\"' | head -1)"
+          BUILD="$(sed -n 's/^[[:space:]]*CURRENT_PROJECT_VERSION:[[:space:]]*//p' project.yml | tr -d '\"' | head -1)"
+          if [ -z "$VERSION" ] || [ -z "$BUILD" ]; then
+            echo "error: VERSION or BUILD missing from project.yml" >&2
+            exit 1
+          fi
+          TAG="v$VERSION"
+          ASSET="build/Drift-$VERSION-$BUILD-unsigned.ipa"
+          cp build/Drift.ipa "$ASSET"
+          if [ "$(gh release view "$TAG" --json isPrerelease --jq '.isPrerelease')" != "true" ]; then
+            echo "error: $TAG is not a pre-release; refusing to replace its IPA" >&2
+            exit 1
+          fi
+          gh release view "$TAG" --json assets --jq '.assets[].name' |
+            while IFS= read -r old; do
+              case "$old" in
+                *.ipa) gh release delete-asset "$TAG" "$old" -y ;;
+              esac
+            done
+          gh release upload "$TAG" "$ASSET"
 
       # Publish a curated release, but only when the pushed commit says so:
       # an ordinary push still just produces the artifact above. The tag and

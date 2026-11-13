@@ -331,4 +331,43 @@ enum WorseQueryEscape {
               let inode = attributes[.systemFileNumber] as? NSNumber else { return [] }
         return pathleak(directory, inode.uint64Value) ?? []
     }
+
+    // MARK: - Enumeration probe
+
+    /// One timed parallel enumeration. `paths` is the merged, inode-ordered
+    /// result; `milliseconds` is measured around the C call only.
+    struct PathleakProbeMeasurement {
+        let paths: [String]
+        let milliseconds: Double
+    }
+
+    /// The directory the probe walks (the same applications root as the
+    /// normal leak fallback).
+    static var pathleakProbeDirectory: String { PosterBoardLocal.pathleakProbeDirectory }
+
+    /// Create the probe's upper-bound file once and return its inode.
+    ///
+    /// The caller must invoke `cleanup` when the whole probe run is over; the
+    /// file is deliberately kept for every round so 1/4, full and cross-check
+    /// all use the same `max_inode`.
+    static func pathleakInodeUpperBound() -> (maxInode: UInt64, cleanup: () -> Void)? {
+        let manager = FileManager.default
+        let probe = manager.temporaryDirectory
+            .appendingPathComponent(".drift-enum-probe-\(UUID().uuidString)")
+        guard (try? Data("x".utf8).write(to: probe)) != nil else { return nil }
+        guard let attributes = try? manager.attributesOfItem(atPath: probe.path),
+              let inode = attributes[.systemFileNumber] as? NSNumber else {
+            try? manager.removeItem(at: probe)
+            return nil
+        }
+        return (inode.uint64Value, { try? manager.removeItem(at: probe) })
+    }
+
+    /// Run `pathleak_parallel` over `1...limit` and time it.
+    static func measurePathleak(threads: Int, limit: UInt64) -> PathleakProbeMeasurement {
+        let started = Date()
+        let paths = pathleak_parallel(pathleakProbeDirectory, limit, UInt(max(1, threads))) as? [String] ?? []
+        return PathleakProbeMeasurement(paths: paths,
+                                        milliseconds: Date().timeIntervalSince(started) * 1000)
+    }
 }

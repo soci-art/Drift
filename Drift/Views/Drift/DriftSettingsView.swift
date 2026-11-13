@@ -43,6 +43,10 @@ struct DriftSettingsView: View {
     @State private var showAnnouncement = false
     @State private var uploading = false
     @State private var confirmUpload = false
+    #if DRIFT_ENUM_PROBE
+    @State private var probeRunning = false
+    @State private var probeStatus = ""
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -50,6 +54,9 @@ struct DriftSettingsView: View {
                 announcementSection
                 connectionSection
                 localRouteSection
+                #if DRIFT_ENUM_PROBE
+                probeSection
+                #endif
                 restoreSealedSection
                 historySection
                 recordsSection
@@ -277,6 +284,111 @@ struct DriftSettingsView: View {
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
+
+    #if DRIFT_ENUM_PROBE
+    // MARK: - Enumeration probe
+
+    /// Temporary probe UI. The compile condition is empty in every normal
+    /// build, so this section and its button do not exist there at all.
+    private var probeSection: some View {
+        Section("枚举测速（探针）") {
+            Text("插电、前台、屏幕常亮，中途不要操作。点一次会依次跑 1→2→4→6 线程：先扫 max_inode 的前 1/4，再扫全范围，最后补跑一次 1 线程交叉复核。")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("只枚举路径：不 consume、不探身份、不清缓存、不写壁纸；临时上限文件跑完删除。")
+                .font(.caption).foregroundStyle(.secondary)
+            Button {
+                startEnumerationProbe()
+            } label: {
+                Label(probeRunning ? "正在测速…" : "枚举测速", systemImage: "speedometer")
+            }
+            .disabled(probeRunning)
+            if !probeStatus.isEmpty {
+                Text(probeStatus)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text("每档写一行日志：线程数、max_inode 原值、实际扫描数、命中数、耗时 ms、每秒扫描数，以及与本轮 1 线程名单是否一致。")
+                .font(.caption2).foregroundStyle(.tertiary)
+        }
+    }
+
+    private func startEnumerationProbe() {
+        guard !probeRunning else { return }
+        probeRunning = true
+        probeStatus = "正在跑 1→2→4→6 线程，先 1/4 再全范围…"
+        Task {
+            let outcome = await Task.detached(priority: .userInitiated) {
+                Self.runEnumerationProbe()
+            }.value
+            probeStatus = outcome
+            probeRunning = false
+        }
+    }
+
+    private static func runEnumerationProbe() -> String {
+        guard let bound = WorseQueryEscape.pathleakInodeUpperBound() else {
+            AppLog.failure("枚举探针：无法创建 inode 上限临时文件")
+            return "没有跑成：建不了临时上限文件。详情见日志。"
+        }
+        defer { bound.cleanup() }
+
+        let maxInode = bound.maxInode
+        let quarter = max(1, maxInode / 4)
+        AppLog.write("枚举探针：开始 max_inode=\(maxInode)，1/4 范围 1...\(quarter)，全范围 1...\(maxInode)")
+
+        _ = runProbeRound(label: "1/4", limit: quarter, maxInode: maxInode)
+        let fullBaseline = runProbeRound(label: "全范围", limit: maxInode, maxInode: maxInode)
+
+        // The after-run single-thread pass exists so a hot device slowing the
+        // later parallel rounds cannot be mistaken for a parallel regression.
+        let check = WorseQueryEscape.measurePathleak(threads: 1, limit: maxInode)
+        logProbeLine(label: "全范围复核", threads: 1, maxInode: maxInode,
+                     scannedInodes: maxInode, hitCount: check.paths.count,
+                     milliseconds: check.milliseconds,
+                     comparison: compare(check.paths, to: fullBaseline))
+
+        AppLog.write("枚举探针：完成 max_inode=\(maxInode)")
+        return "跑完了：max_inode=\(maxInode)，日志里每档一行。"
+    }
+
+    @discardableResult
+    private static func runProbeRound(label: String, limit: UInt64, maxInode: UInt64) -> [String] {
+        var baseline: [String] = []
+        for threads in [1, 2, 4, 6] {
+            let sample = WorseQueryEscape.measurePathleak(threads: threads, limit: limit)
+            if threads == 1 { baseline = sample.paths }
+            logProbeLine(label: label, threads: threads, maxInode: maxInode,
+                         scannedInodes: limit, hitCount: sample.paths.count,
+                         milliseconds: sample.milliseconds,
+                         comparison: threads == 1
+                            ? "基准（本轮 1 线程）"
+                            : compare(sample.paths, to: baseline))
+        }
+        return baseline
+    }
+
+    private static func logProbeLine(label: String, threads: Int, maxInode: UInt64,
+                                     scannedInodes: UInt64, hitCount: Int,
+                                     milliseconds: Double, comparison: String) {
+        let seconds = milliseconds / 1000
+        let perSecond = seconds > 0 ? Double(scannedInodes) / seconds : 0
+        AppLog.write(String(format: "枚举探针 %@：线程=%d max_inode原值=%llu 实际扫描=%llu 命中=%d 耗时=%.1fms 每秒=%.0f 名单%@",
+                            label, threads, maxInode, scannedInodes, hitCount,
+                            milliseconds, perSecond, comparison))
+    }
+
+    private static func compare(_ candidate: [String], to baseline: [String]) -> String {
+        if candidate == baseline {
+            return "一致（条数 \(candidate.count)/\(baseline.count)，逐条相同）"
+        }
+        let candidateSet = Set(candidate)
+        let baselineSet = Set(baseline)
+        let missing = baselineSet.subtracting(candidateSet).count
+        let extra = candidateSet.subtracting(baselineSet).count
+        let duplicates = candidate.count - candidateSet.count
+        let orderOnly = candidate.count == baseline.count && candidateSet == baselineSet
+        return "不一致（条数 \(candidate.count)/\(baseline.count)，少 \(missing)，多 \(extra)，重复 \(duplicates)\(orderOnly ? "，顺序不同" : "")）"
+    }
+    #endif
 
     private func deleteReceipt(_ receipt: PosterBoardLocalReceipt) async {
         do {

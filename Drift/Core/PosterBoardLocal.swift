@@ -96,6 +96,10 @@ enum PosterBoardLocal {
     /// has to be the path the kernel will resolve.
     private static let applicationsRoot = "/private/var/mobile/Containers/Data/Application"
 
+    /// The same root the normal path enumerates, exposed only to the
+    /// probe build's timing page.
+    static var pathleakProbeDirectory: String { applicationsRoot }
+
     /// Cached container path. A cache, not a fact: re-verified against the
     /// container's own identifier before it is trusted, and cleared on failure.
     private static let containerKey = "PosterBoardLocalContainer"

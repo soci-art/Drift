@@ -13,6 +13,11 @@ cd "$(dirname "$0")/.."
 
 CONFIG="Release"
 CLEAN=0
+PROBE_BUILD="${PROBE_BUILD:-0}"
+XCODE_PROBE_SETTINGS=()
+if [[ "$PROBE_BUILD" == "1" ]]; then
+  XCODE_PROBE_SETTINGS+=(DRIFT_PROBE_FLAG=DRIFT_ENUM_PROBE)
+fi
 for arg in "$@"; do
   case "$arg" in
     Debug|Release) CONFIG="$arg" ;;
@@ -42,6 +47,7 @@ xcodebuild -project Drift.xcodeproj \
   -configuration "$CONFIG" \
   -destination 'generic/platform=iOS' \
   -derivedDataPath "$DERIVED" \
+  "${XCODE_PROBE_SETTINGS[@]}" \
   CODE_SIGNING_ALLOWED=NO build
 
 APP_PATH="$DERIVED/Build/Products/${CONFIG}-iphoneos/Drift.app"

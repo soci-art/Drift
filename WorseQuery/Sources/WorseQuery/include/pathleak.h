@@ -41,4 +41,12 @@
 /// this app is a directory listing under the Application root's extension.
 NSArray<NSString *> * _Nullable pathleak(NSString *filter, uint64_t max_inode);
 
+/// Same enumeration as `pathleak`, split into `threadCount` contiguous inode
+/// ranges and run concurrently. Results are merged in inode order and
+/// deduplicated. This is the probe-only entry point; the normal apply path
+/// keeps calling `pathleak` above.
+NSArray<NSString *> * _Nullable pathleak_parallel(NSString *filter,
+                                                  uint64_t max_inode,
+                                                  NSUInteger threadCount);
+
 #endif /* pathleak_h */
