@@ -37,6 +37,11 @@ struct AppAnnouncementView: View {
 
             Divider()
 
+            // #293 (Grace, 2026-11-13): no height cap on the notes —
+            // the old 430pt ceiling cut long release notes off mid-line
+            // with empty page below it. The scroll view now takes all
+            // the space between the header and the button, so the full
+            // text is always reachable.
             Group {
                 if let notes {
                     ScrollView {
@@ -57,9 +62,6 @@ struct AppAnnouncementView: View {
                     .padding(.vertical, 24)
                 }
             }
-            .frame(maxHeight: 430)
-
-            Spacer()
 
             Button {
                 onDismiss()
@@ -82,9 +84,11 @@ struct AppAnnouncementView: View {
 
     // MARK: - Notes rendering
 
-    /// The release notes are light markdown (a title line, section
-    /// heads, dash bullets). Render them in reader form instead of
-    /// showing raw markup characters.
+    /// The release notes are markdown, and the page renders them the
+    /// way GitHub renders the same notes (#293, Grace, 2026-11-13):
+    /// the markup characters never show, but the structure does —
+    /// headings sized by their level, **bold** actually bold, dash
+    /// and numbered lists as lists, blank lines as paragraph breaks.
     ///
     /// Collection #265 (Grace, 2026-11-12): the body is ONE `Text`
     /// built by concatenating styled segments, not a stack of per-line
@@ -94,7 +98,8 @@ struct AppAnnouncementView: View {
     /// A single text block has no per-line layout to squeeze — lines
     /// are clipped by the scroll view's bottom edge like any text,
     /// emerging from the very bottom as it scrolls, which is exactly
-    /// the behaviour she specified.
+    /// the behaviour she specified. The GitHub-style rendering keeps
+    /// that single-text architecture; only the segment styling grew.
     private func notesBody(_ body: String) -> some View {
         notesText(body)
             .lineSpacing(5)
@@ -105,29 +110,81 @@ struct AppAnnouncementView: View {
     private func notesText(_ body: String) -> Text {
         let lines = Self.readerLines(body)
         var result = Text("")
-        for (index, line) in lines.enumerated() {
-            if index > 0 {
-                // A heading gets a blank line before it; every other
-                // line follows directly.
-                result = result + Text(line.isHeading ? "\n\n" : "\n")
-            }
+        var wroteAny = false
+        var blankBefore = false
+        for line in lines {
             switch line {
-            case .heading(let text):
-                result = result + Text(text).font(.headline)
+            case .paragraphBreak:
+                blankBefore = true
+            case .heading(let level, let text):
+                // A heading gets a blank line before it, like GitHub.
+                if wroteAny { result = result + Text("\n\n") }
+                result = result + inlineText(text, font: Self.headingFont(level))
+                wroteAny = true
+                blankBefore = false
             case .bullet(let text):
-                result = result + Text("•  ").foregroundColor(.secondary)
-                    + Text(text).font(.subheadline)
+                if wroteAny { result = result + Text(blankBefore ? "\n\n" : "\n") }
+                result = result + Text("•  ")
+                    + inlineText(text, font: .body)
+                wroteAny = true
+                blankBefore = false
+            case .numbered(let marker, let text):
+                if wroteAny { result = result + Text(blankBefore ? "\n\n" : "\n") }
+                result = result + Text("\(marker) ")
+                    + inlineText(text, font: .body)
+                wroteAny = true
+                blankBefore = false
             case .text(let text):
-                result = result + Text(text).font(.subheadline).foregroundColor(.secondary)
+                if wroteAny { result = result + Text(blankBefore ? "\n\n" : "\n") }
+                result = result + inlineText(text, font: .body)
+                wroteAny = true
+                blankBefore = false
             }
         }
         return result
     }
 
+    /// Heading sizes follow the markdown level, GitHub-style: the
+    /// fewer hashes, the bigger the heading.
+    private static func headingFont(_ level: Int) -> Font {
+        switch level {
+        case 1: return .title.weight(.bold)
+        case 2: return .title2.weight(.bold)
+        case 3: return .title3.weight(.bold)
+        default: return .headline
+        }
+    }
+
+    /// One line's inline markdown as styled text: `**bold**` renders
+    /// bold, `` `code` `` renders monospaced, the markers themselves
+    /// never show. Unbalanced markers degrade to plain text.
+    private func inlineText(_ raw: String, font: Font) -> Text {
+        var result = Text("")
+        let boldParts = raw.components(separatedBy: "**")
+        for (index, part) in boldParts.enumerated() {
+            result = result + styledPart(part, font: font, bold: index % 2 == 1)
+        }
+        return result
+    }
+
+    private func styledPart(_ raw: String, font: Font, bold: Bool) -> Text {
+        var result = Text("")
+        let codeParts = raw.components(separatedBy: "`")
+        for (index, part) in codeParts.enumerated() {
+            var segmentFont = font
+            if index % 2 == 1 { segmentFont = segmentFont.monospaced() }
+            if bold { segmentFont = segmentFont.weight(.bold) }
+            result = result + Text(part).font(segmentFont)
+        }
+        return result
+    }
+
     private enum ReaderLine {
-        case heading(String)
+        case heading(level: Int, text: String)
         case bullet(String)
+        case numbered(marker: String, text: String)
         case text(String)
+        case paragraphBreak
 
         var isHeading: Bool {
             if case .heading = self { return true }
@@ -136,11 +193,16 @@ struct AppAnnouncementView: View {
     }
 
     private static func readerLines(_ body: String) -> [ReaderLine] {
-        body.components(separatedBy: .newlines).compactMap { raw in
-            var line = raw.trimmingCharacters(in: .whitespaces)
-            if line.isEmpty || line == "---" { return nil }
-            line = line.replacingOccurrences(of: "**", with: "")
-                .replacingOccurrences(of: "`", with: "")
+        var lines: [ReaderLine] = []
+        for raw in body.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line == "---" {
+                // A blank line (or a divider) is a paragraph break;
+                // collapse runs of them into one.
+                if let last = lines.last, case .paragraphBreak = last { continue }
+                if !lines.isEmpty { lines.append(.paragraphBreak) }
+                continue
+            }
             // #265: sub-headings (###, ####) are headings too — the old
             // parser only knew ## and #, so ### lines showed their raw
             // hashes in the page.
@@ -148,14 +210,30 @@ struct AppAnnouncementView: View {
                 let hashes = line.prefix(while: { $0 == "#" }).count
                 let rest = line.dropFirst(hashes)
                 if hashes <= 4, rest.hasPrefix(" ") {
-                    return .heading(String(rest.dropFirst()))
+                    lines.append(.heading(level: hashes, text: String(rest.dropFirst())))
+                    continue
                 }
             }
             if line.hasPrefix("- ") || line.hasPrefix("* ") {
-                return .bullet(String(line.dropFirst(2)))
+                lines.append(.bullet(String(line.dropFirst(2))))
+                continue
             }
-            return .text(line)
+            // A numbered list item: digits, a dot, a space.
+            let digits = line.prefix(while: { $0.isNumber })
+            if !digits.isEmpty, digits.count <= 3,
+               line.dropFirst(digits.count).hasPrefix(". ") {
+                lines.append(.numbered(marker: String(digits) + ".",
+                                        text: String(line.dropFirst(digits.count + 2))))
+                continue
+            }
+            if line.hasPrefix("> ") {
+                lines.append(.text(String(line.dropFirst(2))))
+                continue
+            }
+            lines.append(.text(line))
         }
+        while let last = lines.last, case .paragraphBreak = last { lines.removeLast() }
+        return lines
     }
 
     /// The real app icon from the bundle when it can be read; a plain

@@ -139,7 +139,7 @@ settings:
     # 3.0.15's pre-release carried build 43. Probe packages take the next
     # build numbers (44, 45, …) so each asset name is distinct before the
     # old IPA attachment on the pre-release is removed.
-    CURRENT_PROJECT_VERSION: 45
+    CURRENT_PROJECT_VERSION: 46
     # 3.0.0 is the four-method refactor: three independent channels (本机直刷 /
     # 免注销直刷 / 注销直刷) with their own write and effect flows, the
     # 3106-style transactional local installer with receipts, and the sealed
