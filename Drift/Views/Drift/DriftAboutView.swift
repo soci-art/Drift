@@ -8,11 +8,10 @@ import UIKit
 /// it has to read the same offline, unpaired and mid-failure.
 ///
 /// Collection #270 (Grace, 2026-11-13) cut the page down to the sealed
-/// restore row, the version table and the reward code (#271) — nothing
-/// else is left below the table.
+/// restore row and the version table — nothing else is left below the
+/// table. (The reward code that once ended the page lives on the
+/// About page now; see AboutAppView.)
 struct DriftAboutView: View {
-    @State private var showRewardLarge = false
-
     var body: some View {
         NavigationStack {
             ZStack {
@@ -30,12 +29,12 @@ struct DriftAboutView: View {
                         rangeTable
                         // Collection #270 (Grace, 2026-11-13): the
                         // eight fact rows that used to follow the table
-                        // are gone — the page ends with the table and
-                        // the reward code below. (The AirCard-iOS/MIT
-                        // attribution also lives in the repo-root
-                        // NOTICE and in Settings' About section, so
-                        // deleting the 「基于」 row loses nothing.)
-                        rewardCard
+                        // are gone — the page ends with the table.
+                        // The reward code that #271 put below it moved
+                        // to the About page (AboutAppView) with the
+                        // #295/#297 merge, and the AirCard-iOS/MIT
+                        // attribution lives there and in the repo-root
+                        // NOTICE.
                     }
                     .padding(16)
                     .driftPageWidth()
@@ -43,42 +42,8 @@ struct DriftAboutView: View {
             }
             .navigationTitle("说明")
             .navigationBarTitleDisplayMode(.large)
-            .sheet(isPresented: $showRewardLarge) {
-                RewardCodeView()
-            }
             .onAppear { AppLog.op("打开说明页") }
         }
-    }
-
-    /// Collection #271 (Grace, 2026-11-13): her WeChat reward code,
-    /// after the version table — users asked to tip, so the code sits
-    /// at the very end of the page. Tapping opens it large: a code on
-    /// the user's own screen cannot be scanned by that same phone, so
-    /// the large view can save it to the photo library for WeChat to
-    /// recognise from the album.
-    private var rewardCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("赞赏码").font(.subheadline.weight(.semibold))
-            if let image = Self.rewardImage {
-                Button { showRewardLarge = true } label: {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
-                .buttonStyle(.plain)
-            }
-            Text("点开看大图，可以存到相册，再用微信扫一扫识别。")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .driftCard()
-    }
-
-    static var rewardImage: UIImage? {
-        guard let url = Bundle.main.url(forResource: "RewardCode", withExtension: "jpg")
-        else { return nil }
-        return UIImage(contentsOfFile: url.path)
     }
 
     /// The coverage table (collection #237, Grace 2026-11-12: a real table
@@ -163,62 +128,5 @@ struct DriftAboutView: View {
         Text(usable ? "✓" : "—")
             .font(.subheadline.weight(.bold))
             .foregroundStyle(usable ? Color.green : Color.secondary.opacity(0.55))
-    }
-}
-
-/// The reward code, large (#271): the image as big as the screen
-/// allows, plus the one action that makes it usable — saving it to
-/// the photo library, so WeChat can recognise the code from the album
-/// (the phone cannot scan its own screen).
-private struct RewardCodeView: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var savedNote: String?
-    @State private var showSaved = false
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 18) {
-                if let image = DriftAboutView.rewardImage {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                }
-                Button {
-                    saveToPhotos()
-                } label: {
-                    Label("存到相册", systemImage: "square.and.arrow.down")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                }
-                .driftGlassProminentButton()
-                Text("存好后打开微信扫一扫，选相册里的这张图就能识别。")
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-            }
-            .padding(20)
-            .navigationTitle("赞赏码")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("完成") { dismiss() }
-                }
-            }
-            .driftActionSheet(isPresented: $showSaved, title: savedNote ?? "",
-                              actions: [DriftSheetAction("知道了") {}])
-        }
-    }
-
-    private func saveToPhotos() {
-        guard let image = DriftAboutView.rewardImage else { return }
-        AppLog.op("说明页：把赞赏码存到相册")
-        PHPhotoLibrary.shared().performChanges {
-            PHAssetChangeRequest.creationRequestForAsset(from: image)
-        } completionHandler: { ok, _ in
-            DispatchQueue.main.async {
-                savedNote = ok ? "已存到相册" : "没存成，去系统设置里给 Drift 相册权限再试。"
-                showSaved = true
-            }
-        }
     }
 }

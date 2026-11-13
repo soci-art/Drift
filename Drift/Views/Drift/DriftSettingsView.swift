@@ -66,6 +66,7 @@ struct DriftSettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                aboutEntrySection
                 announcementSection
                 connectionSection
                 localRouteSection
@@ -76,7 +77,6 @@ struct DriftSettingsView: View {
                 historySection
                 recordsSection
                 appSection
-                aboutSection
             }
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
@@ -215,6 +215,24 @@ struct DriftSettingsView: View {
         exportPopupTitle = title
         exportPopupMessage = message
         showExportPopup = true
+    }
+
+    // MARK: - About entry
+
+    /// The About page's entry (Grace, 2026-11-13, #295/#297 merged):
+    /// pinned at the very top of Settings, above even the announcement
+    /// row. The author, the GitHub links, the QQ group card, the
+    /// reward code and the tunnel-core credit all live on that page
+    /// now — the small About section that used to sit at the bottom
+    /// of this list is gone, its contents moved there.
+    private var aboutEntrySection: some View {
+        Section {
+            NavigationLink {
+                AboutAppView()
+            } label: {
+                Label("关于此 App", systemImage: "info.circle")
+            }
+        }
     }
 
     // MARK: - Announcement
@@ -1024,7 +1042,7 @@ struct DriftSettingsView: View {
         }
     }
 
-    // MARK: - About
+    // MARK: - App
 
     private var appSection: some View {
         Section("应用") {
@@ -1073,18 +1091,6 @@ struct DriftSettingsView: View {
         // this file; the measurement stays here where its data lives.
     }
 
-    private var aboutSection: some View {
-        Section("关于") {
-            HStack {
-                Text("版本")
-                Spacer()
-                Text("Drift \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0")")
-                    .foregroundStyle(.secondary)
-            }
-            Text("独立应用，只保留刷壁纸功能。设备写入核心源自 AirCard-iOS（Mak5er 著，MIT 许可证）的隧道写入核心（回环隧道、配对、同步写入、注入）；免注销生效、商店枚举与本机直刷通道、界面为 Drift 自有部分（AGPL-3.0）。")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-    }
 }
 
 /// The run log as its own page (the cards on the wallpaper/video pages show

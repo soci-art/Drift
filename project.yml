@@ -136,16 +136,16 @@ settings:
     # does not exist in the binary at all.
     DRIFT_PROBE_FLAG: ""
     SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) $(DRIFT_PROBE_FLAG)"
-    # 3.0.15's pre-release carried build 43; probe packages took 44–46. The
-    # formal handover build is 47, so its asset name is distinct before the
-    # previous IPA attachment is removed.
-    CURRENT_PROJECT_VERSION: 47
+    # 3.0.15's pre-release carried builds 43–47 (43 formal candidate,
+    # 44–46 probe/assistant rounds, 47 the outsourced handover). 3.0.16
+    # is the next formal release; its first build is 48.
+    CURRENT_PROJECT_VERSION: 48
     # 3.0.0 is the four-method refactor: three independent channels (本机直刷 /
     # 免注销直刷 / 注销直刷) with their own write and effect flows, the
     # 3106-style transactional local installer with receipts, and the sealed
     # restore route. The CI release step reads MARKETING_VERSION, so the tag,
     # the release notes and the built IPA stay in step.
-    MARKETING_VERSION: 3.0.15
+    MARKETING_VERSION: 3.0.16
     # The app icon is an Icon Composer document (`Assets.xcassets/AppIcon.icon`),
     # not loose PNGs: it layers one glass image over an `automatic-gradient`
     # fill, and actool expands that into the light/dark/tintable renditions the
@@ -230,6 +230,12 @@ targets:
       # to the photo library. Shipped like the film — a loose bundle
       # resource loaded by name.
       - path: layout/Applications/Drift.app/RewardCode.jpg
+        buildPhase: resources
+      # Grace's QQ group card (collection #297): shown on the About
+      # page under the author links, tappable to the same large view
+      # as the reward code. Shipped like the reward code — a loose
+      # bundle resource loaded by name.
+      - path: layout/Applications/Drift.app/QQGroupCard.png
         buildPhase: resources
       # NO loose AppIcon*.png here, on purpose.  actool can emit them itself
       # (`standalone-icon-behavior`, set to `none` below) and a loose light-only
