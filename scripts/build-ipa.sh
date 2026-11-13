@@ -85,6 +85,26 @@ cp -R "$APP_PATH" build/Payload/Drift.app
 # code moved into the asset catalog), so an icon hunt there finds
 # nothing it could mistake for the app icon.
 
+# Dedicated preview image for name-based icon readers (#317, build 54).
+#
+# Source research (2026-11-14, SideSign + AltSign read directly): the
+# AltStore / SideStore / SideSign family never scans the bundle and never
+# reads Assets.car; it resolves ONE icon name from Info.plist —
+# CFBundlePrimaryIcon's CFBundleIconFiles, else the top-level
+# CFBundleIconFiles, else CFBundleIconFile — and loads "<name>@3x.png",
+# "<name>@2x.png" or "<name>.png" from the bundle root.  Drift declares
+# only CFBundleIconName, so that resolution came up empty and those tools
+# showed no icon at all.  The layout Info.plist now also declares a
+# top-level CFBundleIconFiles = [DriftPreview] (deliberately NOT inside
+# CFBundlePrimaryIcon, so the system's catalog path stays exactly as it
+# was), and the two renders below give that name something to find.  The
+# file name is not a system icon name, so SpringBoard's loose-icon
+# shadowing (#316) is not expected to engage; the light master is the
+# right artwork because these tools show a single static icon.
+ICON_MASTER="layout/Applications/Drift.app/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png"
+sips -z 180 180 "$ICON_MASTER" --out build/Payload/Drift.app/DriftPreview@3x.png >/dev/null
+sips -z 120 120 "$ICON_MASTER" --out build/Payload/Drift.app/DriftPreview@2x.png >/dev/null
+
 # Strip symbol tables out of the *copy* we are about to package, not out of
 # DerivedData — the unstripped product stays available for debugging.  This
 # build is unsigned (CODE_SIGNING_ALLOWED=NO above, the sideloader signs

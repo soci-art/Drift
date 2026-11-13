@@ -138,7 +138,7 @@ settings:
     # is the next formal release; its first build is 48. (Shipped
     # briefly as 3.0.16, renamed to 3.1.0 the same day at Grace's
     # word — a major update earns a major number.)
-    CURRENT_PROJECT_VERSION: 53
+    CURRENT_PROJECT_VERSION: 54
     # 3.0.0 is the four-method refactor: three independent channels (本机直刷 /
     # 免注销直刷 / 注销直刷) with their own write and effect flows, the
     # 3106-style transactional local installer with receipts, and the sealed

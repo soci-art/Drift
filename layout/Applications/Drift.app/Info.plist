@@ -53,6 +53,20 @@
 			<string>AppIcon</string>
 		</dict>
 	</dict>
+	<!-- Preview image for name-based icon readers (#317, build 54): the
+	     AltStore / SideStore / SideSign family resolves an icon name from
+	     CFBundleIconFiles (inside CFBundlePrimaryIcon first, then this
+	     top-level key) and loads that loose PNG from the bundle root; it
+	     never reads Assets.car.  Declared at the top level only, so the
+	     system's catalog icon path above stays exactly as it was, and the
+	     file name is not a system icon name, so it does not shadow the
+	     catalog's light/dark renditions on the Home Screen (#316).  The
+	     build script renders DriftPreview@3x/@2x.png from the light
+	     AppIcon master into the bundle root at packaging time. -->
+	<key>CFBundleIconFiles</key>
+	<array>
+		<string>DriftPreview</string>
+	</array>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
