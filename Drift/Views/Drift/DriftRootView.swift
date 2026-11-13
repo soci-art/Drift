@@ -33,6 +33,11 @@ struct DriftRootView: View {
             // see DriftLaunchTasks. Before bootstrap(), so vendor
             // logging is on when the tunnel core starts.
             DriftLaunchTasks.runAfterFirstFrame()
+            // Item 3: spend the cold-location bill now, while the user is
+            // reading the guide or importing packs. The method itself is a
+            // no-op when the in-process route is unavailable or a container
+            // is already cached.
+            PosterBoardLocal.startPrewarmIfNeeded()
             session.bootstrap()
             startLiveDetection()
             runPermissionPass()

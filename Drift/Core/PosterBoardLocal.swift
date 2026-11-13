@@ -109,6 +109,42 @@ enum PosterBoardLocal {
         set { UserDefaults.standard.set(newValue, forKey: containerKey) }
     }
 
+    // MARK: - Warm location
+
+    /// Locate PosterBoard in the background once per process launch, after the
+    /// first frame, only when the in-process route is usable and no container
+    /// is cached. The work is the same `openContainer` the apply flow uses;
+    /// this method deliberately never writes, flashes or changes selection.
+    static func startPrewarmIfNeeded() {
+        guard WorseQueryEscape.isAvailable(deviceVersion: WorseQueryEscape.processVersion,
+                                           buildVersion: WorseQueryEscape.processBuildVersion) else {
+            return
+        }
+
+        locationCondition.lock()
+        if prewarmStarted {
+            locationCondition.unlock()
+            return
+        }
+        prewarmStarted = true
+        let cacheEmpty = cachedContainer.isEmpty
+        locationCondition.unlock()
+        guard cacheEmpty else { return }
+
+        AppLog.write("预热定位：开始（触发时缓存为空）")
+        let started = DispatchTime.now()
+        Task.detached(priority: .utility) {
+            do {
+                let opened = try openContainerForPrewarm(log: { AppLog.write($0) })
+                WorseQueryEscape.release(opened.handle)
+                AppLog.write(String(format: "预热定位：完成（总耗时 %.0f ms，缓存已写入）",
+                                    millis(since: started)))
+            } catch {
+                AppLog.write("预热定位：失败（\(error.localizedDescription)）")
+            }
+        }
+    }
+
     // MARK: - Apply
 
     /// Inject the selected packs, then hand the user the activation step.
