@@ -84,7 +84,15 @@ enum PackDeepRepair {
 
     static func analyze(_ pack: PosterBoardTendie, canvas: Canvas) async -> Report {
         var report = Report()
-        guard !pack.isContainer else { return report }
+        // #254 (Grace, 2026-11-13): a container pack that actually
+        // carries wallpapers is a patient now. Its descriptors sit
+        // deep inside the store snapshot, and every check below
+        // already walks the whole extracted tree — the guard that
+        // used to turn container packs away unread is why a 15 Pro
+        // store snapshot on a 16 Pro Max reported「没有查到需要修复
+        // 的毛病」while wearing a 393×852 canvas. A container
+        // TEMPLATE (no descriptors by design) still returns at once.
+        guard !(pack.isContainer && pack.descriptorCount == 0) else { return report }
 
         // What the structural repair already did to this pack.
         report.priorRepairMark = PackRepair.isRepaired(pack)

@@ -23,8 +23,15 @@ import ZIPFoundation
 ///
 /// What it cannot fix, and says so instead: genuinely missing files and
 /// true container-template packs (no descriptors by design — those
-/// belong to the sealed restore route). Container packs are not
-/// patients here at all.
+/// belong to the sealed restore route, and stay untouched).
+///
+/// Container packs that DO carry wallpapers became patients with
+/// #254 (Grace, 2026-11-13): the wallpapers inside a store snapshot
+/// went completely unchecked — the black-bar pack that prompted the
+/// item is one. Inside a snapshot the layout is the store's own and
+/// already correct, so "repair" there means only the depth-agnostic
+/// parts: the junk sweep and the per-descriptor conversion, never a
+/// reshuffle and never the nested-pack swap.
 ///
 /// Repair never touches the original: it produces a NEW pack named
 /// `name(patched).tendies` in the imports folder, and the detail page
@@ -63,8 +70,17 @@ enum PackRepair {
 
     /// Every issue found in a pack, in fix order.
     static func inspect(_ pack: PosterBoardTendie) -> [Issue] {
-        guard !pack.isContainer else { return [] }
         guard let archive = try? Archive(url: pack.url, accessMode: .read) else { return [] }
+        if pack.isContainer {
+            // #254: only a snapshot that actually carries wallpapers
+            // is a patient, and inside it only the junk check maps —
+            // the layout checks below read a plain pack's top level,
+            // and a nested archive inside a snapshot is part of the
+            // store copy, not a pack in a pack.
+            guard pack.descriptorCount > 0 else { return [] }
+            let paths = archive.map { $0.path }
+            return inspect(paths: paths).filter { $0 == .junk }
+        }
         return inspect(paths: archive.map { $0.path })
     }
 
@@ -161,7 +177,10 @@ enum PackRepair {
             if case .nestedPack(_) = issue { return true }
             return false
         }
-        if hasNested {
+        // #254: a container snapshot's tree is never swapped out or
+        // reshuffled — its layout is the store's own. Only the junk
+        // sweep and the conversion below apply inside it.
+        if hasNested && !pack.isContainer {
             if let inner = findNestedArchive(in: work) {
                 let innerData = try Data(contentsOf: inner)
                 let staging = work.appendingPathComponent("__inner", isDirectory: true)
@@ -187,8 +206,11 @@ enum PackRepair {
 
         // Phase 2: normalise the layout, sweep junk, and run the bundled
         // conversion under the pack's own answer (default: convert).
+        // A container snapshot skips the normalising (#254): its
+        // descriptors are converted in place by `convertTree`, which
+        // walks the whole tree at any depth.
         sweepJunk(in: work)
-        try normalizeLayout(in: work)
+        if !pack.isContainer { try normalizeLayout(in: work) }
         let wantsConvert = pack.autoConvert ?? true
         if wantsConvert,
            let atLeast27 = PosterBoard.compareVersion(deviceVersion, "27"), atLeast27 >= 0 {

@@ -33,16 +33,38 @@ enum PackIdentity {
     }
 
     /// The descriptor folder ids a pack carries, from its archive
-    /// listing: the `<id>` in `descriptors/<id>/…` entries.
+    /// listing: the `<id>` in any `descriptors/<id>/…` entry, at any
+    /// depth. A plain pack keeps them at the top; a container pack
+    /// (#254, Grace 2026-11-13) carries a whole store snapshot, so
+    /// its descriptors sit deep inside
+    /// `Container/…/Extensions/<provider>/descriptors/<id>/…` — the
+    /// swap has to reach those too, or a snapshot's shared ids sail
+    /// through import untouched.
     static func descriptorIDs(in archive: Archive) -> [String] {
         var ids: [String] = []
         for entry in archive {
             let parts = entry.path.split(separator: "/").map(String.init)
-            guard parts.count >= 2, parts[0].lowercased() == "descriptors" else { continue }
-            let id = parts[1]
-            if UUID(uuidString: id) != nil, !ids.contains(id) { ids.append(id) }
+            guard parts.count >= 2 else { continue }
+            for index in parts.indices.dropLast() where parts[index].lowercased() == "descriptors" {
+                let id = parts[index + 1]
+                if UUID(uuidString: id) != nil, !ids.contains(id) { ids.append(id) }
+            }
         }
         return ids
+    }
+
+    /// Every directory named `descriptors` in an extracted tree —
+    /// the roots the folder renames below have to visit. One for a
+    /// plain pack, one per provider inside a container snapshot.
+    private static func descriptorsRoots(in root: URL) -> [URL] {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey]) else { return [] }
+        var roots: [URL] = []
+        for case let url as URL in enumerator {
+            let isDir = ((try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory) ?? false
+            if isDir, url.lastPathComponent.lowercased() == "descriptors" { roots.append(url) }
+        }
+        return roots
     }
 
     /// Normalise the just-imported pack stored at `url`, in place.
@@ -51,7 +73,10 @@ enum PackIdentity {
     /// too. Best-effort by design: every failure path returns quietly
     /// with the stored file as it was.
     static func normalizeStoredPack(at url: URL, siblings: [URL]) {
-        guard let pack = try? PosterBoardTendie(url: url), !pack.isContainer,
+        // #254: container packs are normalised too — a template
+        // container carries no descriptors at all, so the `ownIDs`
+        // guard below still leaves it completely alone.
+        guard let pack = try? PosterBoardTendie(url: url),
               let archive = try? Archive(url: url, accessMode: .read) else { return }
         let ownIDs = descriptorIDs(in: archive)
         guard !ownIDs.isEmpty else { return }
@@ -77,12 +102,18 @@ enum PackIdentity {
             defer { try? fm.removeItem(at: work) }
             try pack.extract(to: work)
 
-            let descriptorsRoot = work.appendingPathComponent("descriptors", isDirectory: true)
+            // Rename under EVERY descriptors root in the tree (one
+            // at the top for a plain pack, deep inside the snapshot
+            // for a container pack), then byte-replace the id
+            // strings across the whole tree as before.
+            let roots = descriptorsRoots(in: work)
             for swap in swaps {
-                let oldDir = descriptorsRoot.appendingPathComponent(swap.old, isDirectory: true)
-                let newDir = descriptorsRoot.appendingPathComponent(swap.new, isDirectory: true)
-                if fm.fileExists(atPath: oldDir.path) {
-                    try fm.moveItem(at: oldDir, to: newDir)
+                for descriptorsRoot in roots {
+                    let oldDir = descriptorsRoot.appendingPathComponent(swap.old, isDirectory: true)
+                    let newDir = descriptorsRoot.appendingPathComponent(swap.new, isDirectory: true)
+                    if fm.fileExists(atPath: oldDir.path) {
+                        try fm.moveItem(at: oldDir, to: newDir)
+                    }
                 }
                 try replaceID(swap.old, with: swap.new, in: work)
             }
