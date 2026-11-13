@@ -158,5 +158,3 @@ struct AppUpdateView: View {
         }
     }
 }
-
-}

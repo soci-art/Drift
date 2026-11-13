@@ -822,8 +822,6 @@ private struct SharePackageItem: Identifiable {
     var id: String { url.path }
 }
 
-}
-
 
 /// One row of the merged apply history: either an operation record or a
 /// write receipt. The two underlying stores are not migrated or combined.
