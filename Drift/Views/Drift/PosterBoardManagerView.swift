@@ -12,6 +12,9 @@ struct PosterBoardManagerView: View {
     @ObservedObject private var tunnelMonitor = TunnelMonitor.shared
 
     @State private var entries: [PosterBoardManagement.ManagedEntry] = []
+    /// The receipt journal, for the #307 pack-name chip and the
+    /// #306 by-channel deletion routing.
+    @State private var receipts: [PosterBoardLocalReceipt] = []
     @State private var sourceLabel: String = ""
     @State private var loadError: String?
     @State private var loading = false
@@ -93,7 +96,10 @@ struct PosterBoardManagerView: View {
             await load()
         }
         .driftActionSheet(isPresented: $confirmDelete, title: "确认删除这些壁纸？",
-                          message: selectedEntries.map { "· \($0.name)（\($0.provider) / \($0.uuid)）" }.joined(separator: "\n")
+                          message: selectedEntries.map { entry in
+                            "· \(entry.name)（\(entry.provider) / \(entry.uuid)）"
+                                + (receipt(for: entry).map { " · 来自导入的包：\($0.pack)" } ?? "")
+                          }.joined(separator: "\n")
                             + "\n如果删的正是当前正在使用的壁纸，生效后系统会换回默认壁纸。",
                           actions: [
                             DriftSheetAction("删除", destructive: true) {
@@ -170,6 +176,7 @@ struct PosterBoardManagerView: View {
                 if !entry.packageName.isEmpty {
                     Text("包名：\(entry.packageName)").font(.caption2).foregroundStyle(.secondary)
                 }
+                packChip(for: entry)
             }
             Spacer()
             // #288 (Grace, 2026-11-13): no category label here — the
@@ -177,6 +184,36 @@ struct PosterBoardManagerView: View {
             // The #275 labels that briefly sat at this edge are gone.
         }
         .padding(.vertical, 2)
+    }
+
+    /// The receipt that proves Drift flashed this entry, if any
+    /// (#307): matched on provider / folder / generation, the same
+    /// key the activation prompt below has always used; the newest
+    /// receipt wins when a descriptor was flashed more than once.
+    /// This is not the #275/#288 judgement call — no origin is
+    /// inferred from package names; an entry either matches the
+    /// app's own write journal or it does not.
+    private func receipt(for entry: PosterBoardManagement.ManagedEntry) -> PosterBoardLocalReceipt? {
+        let key = "\(entry.provider)/\(entry.uuid)/\(entry.generation)"
+        return receipts.last {
+            "\($0.extensionID)/\($0.folderName)/\($0.generation)" == key
+        }
+    }
+
+    /// The #307 chip: the file name of the pack this wallpaper was
+    /// imported from, shown only on entries the journal proves are
+    /// Drift's own.
+    @ViewBuilder
+    private func packChip(for entry: PosterBoardManagement.ManagedEntry) -> some View {
+        if let receipt = receipt(for: entry) {
+            Text("来自导入的包：\(receipt.pack)")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(Color.blue)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2.5)
+                .background(Color.blue.opacity(0.12), in: Capsule())
+                .padding(.top, 1)
+        }
     }
 
     private func load() async {
@@ -188,6 +225,7 @@ struct PosterBoardManagerView: View {
             DriftEngine.shared.log(line)
         }
         entries = result.entries
+        receipts = PosterBoardLocalReceipts.load()
         sourceLabel = result.source
         loadError = result.reason
         if let reason = result.reason {
@@ -205,12 +243,25 @@ struct PosterBoardManagerView: View {
         var succeeded: [PosterBoardManagement.ManagedEntry] = []
         for entry in targets {
             do {
-                let outcome = try await PosterBoardManagement.deleteManagedEntry(
-                    entry, tunnelReady: tunnelReady,
-                    identityVersion: identity.version) { line in
-                    DriftEngine.shared.log(line)
+                if let receipt = receipt(for: entry) {
+                    // #306 (Grace, 2026-11-13): 怎么刷的怎么删 — an
+                    // entry the journal proves is Drift's is deleted
+                    // through the channel that flashed it, never
+                    // rerouted. This is the flow that used to hang
+                    // off Settings' records; it lives here now.
+                    let outcome = try await PosterBoardManagement.delete(
+                        receipt, tunnelReady: tunnelReady) { line in
+                        DriftEngine.shared.log(line)
+                    }
+                    messages.append(outcome.message)
+                } else {
+                    let outcome = try await PosterBoardManagement.deleteManagedEntry(
+                        entry, tunnelReady: tunnelReady,
+                        identityVersion: identity.version) { line in
+                        DriftEngine.shared.log(line)
+                    }
+                    messages.append(outcome.message)
                 }
-                messages.append(outcome.message)
                 succeeded.append(entry)
             } catch {
                 session.errorText = error.localizedDescription
@@ -223,11 +274,11 @@ struct PosterBoardManagerView: View {
             // their receipts), not by the route the deletion took. Unknown
             // origin → respring (Grace's ruling); a mixed batch takes the
             // strongest action present.
-            let receipts = PosterBoardLocalReceipts.load()
+            let freshReceipts = PosterBoardLocalReceipts.load()
             func flashedChannel(of entry: PosterBoardManagement.ManagedEntry)
                 -> PosterBoardReceiptChannel? {
                 let key = "\(entry.provider)/\(entry.uuid)/\(entry.generation)"
-                return receipts.first {
+                return freshReceipts.last {
                     "\($0.extensionID)/\($0.folderName)/\($0.generation)" == key
                 }?.resolvedChannel
             }

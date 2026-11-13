@@ -27,6 +27,37 @@ enum PosterBoardReconcileState: Equatable {
     }
 }
 
+/// Collects the lines one deletion emits, so the deletion's history
+/// record can carry that run's own log slice (collection #308,
+/// Grace, 2026-11-13). A deletion record used to export with nothing
+/// but its own text — no log slice, no pack — while a flash record
+/// exports all three; the sink tees every line into this buffer and
+/// forwards it to the caller's log unchanged.
+final class DeletionLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lines: [String] = []
+    private let forward: @Sendable (String) -> Void
+
+    init(forward: @escaping @Sendable (String) -> Void) {
+        self.forward = forward
+    }
+
+    var sink: @Sendable (String) -> Void {
+        { line in
+            self.lock.lock()
+            self.lines.append(line)
+            self.lock.unlock()
+            self.forward(line)
+        }
+    }
+
+    var text: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+}
+
 /// What one management deletion established.
 struct PosterBoardDeletionOutcome {
     /// True only when the deletion was verified: the local directory is gone,
@@ -140,11 +171,16 @@ enum PosterBoardManagement {
     static func delete(_ receipt: PosterBoardLocalReceipt,
                        tunnelReady: Bool,
                        log: @escaping @Sendable (String) -> Void) async throws -> PosterBoardDeletionOutcome {
+        // #308: the lines this deletion emits become its record's
+        // log slice, like a flash run's.
+        let collected = DeletionLog(forward: log)
+        let log = collected.sink
         switch receipt.resolvedChannel {
         case .local:
             try await PosterBoardLocal.delete(receipt: receipt, log: log)
             record(receipt, success: true,
-                   verification: "本机删除后：目录已不在商店")
+                   verification: "本机删除后：目录已不在商店",
+                   logSlice: collected.text)
             return PosterBoardDeletionOutcome(
                 confirmed: true,
                 message: "已删除并在本机核验：\(receipt.pack) 的描述符已不在商店里。打开应用切换器，向上轻扫关闭 PosterBoard 后生效。",
@@ -170,26 +206,30 @@ enum PosterBoardManagement {
             guard let data = json.data(using: .utf8),
                   let reply = try? JSONDecoder().decode(StoreDeleteReply.self, from: data) else {
                 record(receipt, success: false,
-                       verification: "删除返回无法解析")
+                       verification: "删除返回无法解析",
+                       logSlice: collected.text)
                 throw DriftError("商店删除的返回无法解析，没有确认删除。")
             }
             guard let item = reply.results.first(where: { $0.uuid == receipt.folderName }),
                   item.ok else {
                 record(receipt, success: false,
-                       verification: "商店没有确认删除：\(reply.failed) 项失败")
+                       verification: "商店没有确认删除：\(reply.failed) 项失败",
+                       logSlice: collected.text)
                 throw DriftError("商店没有确认删除这个描述符（可能已不在册，请重新核对）。")
             }
             if reply.commitAudit {
                 PosterBoardLocalReceipts.forget(id: receipt.id)
                 record(receipt, success: true,
-                       verification: "隧道删除后复核：描述符已不在册")
+                       verification: "隧道删除后复核：描述符已不在册",
+                       logSlice: collected.text)
                 return PosterBoardDeletionOutcome(
                     confirmed: true,
                     message: "已删除并核验不在册：\(receipt.pack) 的描述符已从设备商店移除。可以点「刷新 PosterBoard」让它重新读取商店，或手动注销。",
                     channel: receipt.resolvedChannel)
             }
             record(receipt, success: false,
-                   verification: "已删除、未确认：提交复核不可用，回执保留")
+                   verification: "已删除、未确认：提交复核不可用，回执保留",
+                   logSlice: collected.text)
             return PosterBoardDeletionOutcome(
                 confirmed: false,
                 message: "已删除、未确认：商店的提交复核没有完成，回执先保留，下次对账再确认。不要把它当成已确认删除。",
@@ -301,6 +341,12 @@ enum PosterBoardManagement {
         identityVersion: String,
         log: @escaping @Sendable (String) -> Void
     ) async throws -> (confirmed: Bool, message: String, channelLabel: String) {
+        // #308: same log-slice treatment as the receipt path — the
+        // lines this deletion emits ride along into its record. An
+        // entry with no receipt has no original pack to name; the
+        // exporter declares that missing, as before.
+        let collected = DeletionLog(forward: log)
+        let log = collected.sink
         let tunnelAvailable = tunnelReady && !identityVersion.isEmpty
         let localAvailable = WorseQueryEscape.isAvailable(
             deviceVersion: WorseQueryEscape.processVersion,
@@ -329,7 +375,8 @@ enum PosterBoardManagement {
                                     channel: "隧道",
                                     provider: entry.provider,
                                     verification: "隧道删除后复核：描述符已不在册",
-                                    packName: entry.name)
+                                    packName: entry.name,
+                                    logSliceText: collected.text)
             } else {
                 ApplyHistory.record(mode: "删除壁纸 · \(entry.name)",
                                     success: false,
@@ -338,7 +385,8 @@ enum PosterBoardManagement {
                                     channel: "隧道",
                                     provider: entry.provider,
                                     verification: "已删除、未确认：提交复核不可用",
-                                    packName: entry.name)
+                                    packName: entry.name,
+                                    logSliceText: collected.text)
             }
             let message = confirmed
                 ? "已删除并核验不在册：\(entry.name) 的描述符已从设备商店移除。"
@@ -359,7 +407,8 @@ enum PosterBoardManagement {
                                 channel: "本机",
                                 provider: entry.provider,
                                 verification: "本机删除后：目录已不在商店",
-                                packName: entry.name)
+                                packName: entry.name,
+                                logSliceText: collected.text)
             return (true, "已删除并在本机核验：\(entry.name) 的描述符已不在商店里。", "本机")
         }
 
@@ -370,7 +419,8 @@ enum PosterBoardManagement {
     /// the channel and what was actually established.
     private static func record(_ receipt: PosterBoardLocalReceipt,
                                success: Bool,
-                               verification: String) {
+                               verification: String,
+                               logSlice: String? = nil) {
         // #186 red line (Grace, 2026-11-11): a record's system version is
         // always a real value — the tunnel-read device version when there
         // is one, this device's own version otherwise. Never empty:
@@ -379,6 +429,10 @@ enum PosterBoardManagement {
         let ios = receipt.resolvedChannel == .local
             ? WorseQueryEscape.processVersion
             : (tunnelVersion.isEmpty ? WorseQueryEscape.processVersion : tunnelVersion)
+        // #308: the record names the pack file the wallpaper came
+        // from, so its export bundle can carry the original pack
+        // like a flash record's does (the exporter still declares
+        // it missing when the pack has left the library).
         ApplyHistory.record(mode: "删除壁纸 · \(receipt.pack)",
                             success: success,
                             error: success ? "" : verification,
@@ -386,7 +440,9 @@ enum PosterBoardManagement {
                             channel: receipt.channelLabel,
                             provider: receipt.extensionID,
                             verification: verification,
-                            packName: receipt.pack)
+                            packName: receipt.pack,
+                            packFiles: [receipt.pack],
+                            logSliceText: logSlice)
     }
 
     private struct StoreDeleteReply: Decodable {

@@ -20,10 +20,6 @@ struct DriftSettingsView: View {
     @State private var recordsNote: String?
     @State private var showSealedNotice = false
     @State private var receipts: [PosterBoardLocalReceipt] = PosterBoardLocalReceipts.load()
-    @State private var receiptToDelete: PosterBoardLocalReceipt?
-    @State private var showDeleteActivation = false
-    @State private var deleteActivationKind: ActivationKind = .respring
-    @State private var deleteActivationMessage = ""
     @State private var confirmClearHistory = false
     @State private var exportTarget: ApplyHistory.Record?
     @State private var exportBundle: RecordExport.Bundle?
@@ -124,26 +120,6 @@ struct DriftSettingsView: View {
             .onChange(of: wirelessPair.pin) { _, _ in
                 refreshNotificationStatus()
             }
-            .driftActionSheet(isPresented: Binding(
-                get: { receiptToDelete != nil },
-                set: { if !$0 { receiptToDelete = nil } }),
-                              title: "删除这张壁纸？",
-                              message: receiptToDelete.map {
-                                "「\($0.pack)」将被删除。如果删的正是当前正在用的壁纸，生效后系统会换回默认壁纸。"
-                              },
-                              // #262 (Grace, 2026-11-12): the action must
-                              // carry the receipt it was presented for.
-                              // The sheet dismisses BEFORE running its
-                              // handler, and dismissal clears
-                              // receiptToDelete — a handler that re-read
-                              // it found nothing and silently did
-                              // nothing, so the delete never ran.
-                              actions: receiptToDelete.map { receipt in
-                                [DriftSheetAction("删除", destructive: true) {
-                                    receiptToDelete = nil
-                                    Task { await deleteReceipt(receipt) }
-                                }]
-                              } ?? [])
             // #293: presented from the root, not from the app section —
             // see the note at the clear-cache `.task` in `appSection`.
             .driftActionSheet(isPresented: $confirmClearCache, title: "清除这些缓存？",
@@ -166,17 +142,6 @@ struct DriftSettingsView: View {
                                     ApplyHistory.clear()
                                     history = []
                                     recordsNote = "刷入记录已清空；回执没有动，管理页仍能认出已刷的壁纸。"
-                                },
-                              ])
-            // #262 (Grace, 2026-11-12): the post-delete activation ask
-            // wears the same bottom-sheet UI as the confirmation before
-            // it — same layout family, the sheet's 取消 standing in for
-            // 「稍后再说」. Wording and choices are unchanged.
-            .driftActionSheet(isPresented: $showDeleteActivation, title: "删除完成",
-                              message: deleteActivationMessage + "\n\n" + deleteActivationKind.needText,
-                              actions: [
-                                DriftSheetAction(deleteActivationKind.actionTitle) {
-                                    runDeleteActivation()
                                 },
                               ])
             .alert("恢复刷已封存", isPresented: $showSealedNotice) {
@@ -572,61 +537,11 @@ struct DriftSettingsView: View {
     }
     #endif
 
-    private func deleteReceipt(_ receipt: PosterBoardLocalReceipt) async {
-        do {
-            let outcome = try await PosterBoardManagement.delete(
-                receipt, tunnelReady: tunnelReady) { line in
-                DriftEngine.shared.log(line)
-            }
-            receipts = PosterBoardLocalReceipts.load()
-            history = ApplyHistory.load()
-            if outcome.confirmed {
-                // #161 applies here too: prompt by the channel the
-                // receipt says flashed it; the tap executes at once.
-                deleteActivationKind = switch receipt.resolvedChannel {
-                case .local: .endPosterBoard
-                case .direct: .restartPosterBoard
-                case .airlift: .respring
-                }
-                deleteActivationMessage = outcome.message
-                showDeleteActivation = true
-            } else {
-                recordsNote = outcome.message
-            }
-        } catch {
-            receipts = PosterBoardLocalReceipts.load()
-            history = ApplyHistory.load()
-            session.errorText = error.localizedDescription
-        }
-    }
 
-    /// Execute the post-deletion activation the user tapped (#161,
-    /// Settings path). Feedback lands in the records note, like every
-    /// other Settings deletion outcome.
-    private func runDeleteActivation() {
-        switch deleteActivationKind {
-        case .endPosterBoard:
-            let opened = PosterBoardLaunch.open()
-            recordsNote = opened
-                ? "已打开 PosterBoard：请从应用切换器中关闭它，然后检查锁定屏幕壁纸选择器，删掉的壁纸就没了。"
-                : "没能自动打开 PosterBoard：请打开锁定屏幕壁纸选择器来刷新；如果删掉的壁纸还在，从应用切换器关闭 PosterBoard 后再看。"
-        case .restartPosterBoard:
-            Task {
-                let result = await session.restartPosterBoardUnderCover()
-                recordsNote = result.status.explanation + (result.confirmed
-                    ? "。删掉的壁纸已经生效移除。"
-                    : "。可以连上隧道再试，或改用注销。")
-            }
-        case .respring:
-            session.respringUnderCover()
-        }
-    }
-
-    /// The tunnel premises the management deletion needs, read live from the
-    /// session and the monitor rather than from a snapshot.
-    private var tunnelReady: Bool {
-        session.paired && tunnelMonitor.status == .ready
-    }
+    // Collection #306 (Grace, 2026-11-13): deleting a wallpaper from
+    // a record lived here until today. It moved to the management
+    // page on Home — records are a ledger now, nothing on this page
+    // touches the device store.
 
     @ViewBuilder
     private var wirelessPairingRows: some View {
@@ -744,7 +659,11 @@ struct DriftSettingsView: View {
             // #256 (Grace, 2026-11-12): no standing status line here any
             // more — export outcomes arrive as a popup at action time.
             // The explanatory footnote below stays, at her explicit word.
-            Text("带「删除」的条目删的是设备上的壁纸；点「导出」可以把某次刷入的记录、那次的日志和壁纸包打包。")
+            // #306 (Grace, 2026-11-13): the footnote tells the new
+            // truth — records are a ledger; wallpaper deletion lives
+            // in 本机壁纸管理 now. (The #256 ruling keeps a footnote
+            // here; its text follows the move.)
+            Text("这里只是刷入的流水账，删记录不会删掉设备上的壁纸。要删壁纸，去主页的「本机壁纸管理」。点「导出」可以把某次刷入的记录、那次的日志和壁纸包打包。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -851,6 +770,12 @@ struct DriftSettingsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
         case .receipt(let receipt):
+            // #306 (Grace, 2026-11-13): a receipt row is display-only
+            // now. Its 删除 button used to delete the wallpaper on the
+            // device; that job moved to 本机壁纸管理. The receipt
+            // itself stays — it is the proof the management page
+            // matches a store entry against (#307), so nothing here
+            // offers to remove it either.
             HStack(spacing: 8) {
                 Image(systemName: "square.and.arrow.down.fill")
                     .foregroundStyle(.blue)
@@ -860,12 +785,6 @@ struct DriftSettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button(role: .destructive) {
-                    receiptToDelete = receipt
-                } label: {
-                    Text("删除").font(.caption)
-                }
-                .buttonStyle(.borderless)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

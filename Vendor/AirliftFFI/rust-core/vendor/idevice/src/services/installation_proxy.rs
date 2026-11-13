@@ -111,6 +111,43 @@ impl InstallationProxyClient {
         }
     }
 
+    /// Lookup with an explicit `ReturnAttributes` list (Drift #309).
+    ///
+    /// `get_apps` asks for every attribute the device holds. Some
+    /// systems — iOS 17.0's installation_proxy, observed in the
+    /// field — drop the connection on exactly that ask while
+    /// answering a narrower one, so the caller can name just the
+    /// attributes it needs. `None` omits the key entirely, which is
+    /// the full-attribute behaviour `get_apps` has always had.
+    pub async fn get_apps_with_attributes(
+        &mut self,
+        application_type: Option<&str>,
+        bundle_identifiers: Option<Vec<String>>,
+        return_attributes: Option<Vec<String>>,
+    ) -> Result<HashMap<String, plist::Value>, IdeviceError> {
+        let application_type = application_type.unwrap_or("Any");
+
+        let req = crate::plist!({
+            "Command": "Lookup",
+            "ClientOptions": {
+                "ApplicationType": application_type,
+                "BundleIDs":? bundle_identifiers,
+                "ReturnAttributes":? return_attributes,
+            }
+        });
+        self.idevice.send_plist(req).await?;
+
+        let mut res = self.idevice.read_plist().await?;
+        match res.remove("LookupResult") {
+            Some(plist::Value::Dictionary(res)) => {
+                Ok(res.into_iter().collect::<HashMap<String, plist::Value>>())
+            }
+            _ => Err(IdeviceError::UnexpectedResponse(
+                "missing LookupResult dictionary in response".into(),
+            )),
+        }
+    }
+
     /// Installs an application package on the device
     ///
     /// # Arguments

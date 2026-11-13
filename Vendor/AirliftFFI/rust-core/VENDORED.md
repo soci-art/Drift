@@ -391,3 +391,23 @@ Drift 2.0.0 transplant note (2026-11-11)
   was refused by the safety policy. This deviates from checklist
   §3.3's "five declarations" wording; only the two poster_store
   declarations are added, and this note is the record of record.
+
+---
+
+Drift local change, 2026-11-13 (collection #309, Grace-approved:
+iOS 17 container-lookup fallback chain)
+----------------------------------------
+- `vendor/idevice/src/services/installation_proxy.rs` — pure
+  addition: `get_apps_with_attributes`, a Lookup variant that can
+  name a `ReturnAttributes` list in ClientOptions. `get_apps`
+  itself is byte-unchanged.
+- `src/exploit.rs` — `exploit_find_container` now walks five
+  question shapes (historical Lookup/Any/all-attributes first,
+  then narrower Lookup shapes, then a Browse pass), each on a
+  fresh installation_proxy connection, each outcome logged; the
+  container extraction and /private/var normalisation are the
+  original code, moved into the per-attempt helper
+  `find_container_attempt`. No other function changed. Reason:
+  iOS 17.0's installation_proxy deterministically drops the
+  connection on the historical ask (field logs, seven attempts);
+  iOS 18 and 26/27 answer shape 0 and never reach the fallbacks.
