@@ -129,8 +129,12 @@ struct DriftRootView: View {
                     }
                     .padding(.horizontal, 36)
                     .padding(.vertical, 28)
-                    .background(.regularMaterial,
-                                in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .background {
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .fill(DriftTheme.legacyUI
+                                  ? AnyShapeStyle(Color(.secondarySystemBackground))
+                                  : AnyShapeStyle(.regularMaterial))
+                    }
                 }
                 .transition(.opacity)
             }

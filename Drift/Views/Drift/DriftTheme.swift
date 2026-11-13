@@ -66,7 +66,7 @@ extension View {
     /// layer renders the same and sits outside the hit path entirely.
     @ViewBuilder
     func driftGlassSlab(cornerRadius: CGFloat = 26) -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *), !DriftTheme.legacyUI {
             self.background {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(.clear)
@@ -91,7 +91,7 @@ extension View {
     /// tap target, not just its text.
     @ViewBuilder
     func driftGlassCapsule(tint: Color) -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *), !DriftTheme.legacyUI {
             self.background {
                 Capsule().fill(.clear)
                     .glassEffect(.regular.tint(tint), in: Capsule())

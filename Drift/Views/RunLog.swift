@@ -161,7 +161,10 @@ struct RunLogCard: View {
                             .labelStyle(.titleAndIcon)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
-                            .background(.thickMaterial, in: Capsule())
+                            .background(DriftTheme.legacyUI
+                                        ? AnyShapeStyle(Color(.secondarySystemBackground))
+                                        : AnyShapeStyle(.thickMaterial),
+                                        in: Capsule())
                     }
                     .buttonStyle(.plain)
                     .padding(8)

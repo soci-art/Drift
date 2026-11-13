@@ -146,7 +146,9 @@ struct NativeLogo: View {
                     .scaledToFill()
             } else {
                 RoundedRectangle(cornerRadius: size * 0.2, style: .continuous)
-                    .fill(.thinMaterial)
+                    .fill(DriftTheme.legacyUI
+                          ? AnyShapeStyle(Color(.secondarySystemBackground))
+                          : AnyShapeStyle(.thinMaterial))
                     .overlay(
                         Image(systemName: "shippingbox.fill")
                             .font(.system(size: size * 0.4))
