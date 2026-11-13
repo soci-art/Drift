@@ -133,15 +133,17 @@ jobs:
           path: build/Drift.ipa
           if-no-files-found: error
 
-      # Probe-only publish: replace the IPA attachment on the existing
-      # pre-release, without creating a release or touching its title, notes,
-      # tag or any non-IPA asset. Build 44 makes the new attachment name
-      # distinct from the old 43 one, so the old IPA is removed first.
-      - name: Replace the pre-release IPA with the probe build
+      # Replace the IPA attachment on the existing pre-release, without
+      # creating a release or touching its title, notes, tag or any non-IPA
+      # asset. [probe] builds the timing package; [preview] builds the formal
+      # handover package without the probe switch. Both leave the tag as a
+      # pre-release and only swap the IPA.
+      - name: Replace the pre-release IPA with this build
         if: >-
           github.event_name == 'push' &&
           github.ref == 'refs/heads/main' &&
-          contains(github.event.head_commit.message, '[probe]')
+          (contains(github.event.head_commit.message, '[probe]') ||
+           contains(github.event.head_commit.message, '[preview]'))
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
