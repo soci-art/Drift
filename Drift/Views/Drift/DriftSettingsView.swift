@@ -141,6 +141,21 @@ struct DriftSettingsView: View {
                                     Task { await deleteReceipt(receipt) }
                                 }]
                               } ?? [])
+            // #293: presented from the root, not from the app section —
+            // see the note at the clear-cache `.task` in `appSection`.
+            .driftActionSheet(isPresented: $confirmClearCache, title: "清除这些缓存？",
+                              message: cacheBreakdown.map {
+                                "预览图 \(AppCache.format($0.previews))、目录缓存 \(AppCache.format($0.catalogCache))、临时文件 \(AppCache.format($0.fetchScratch))、日志 \(AppCache.format($0.logs))、下载的安装包 \(AppCache.format($0.updates))，共 \(AppCache.format($0.total))。"
+                              },
+                              actions: [
+                                DriftSheetAction("清除", destructive: true) {
+                                    Task {
+                                        let freed = await Task.detached { AppCache.clear() }.value
+                                        cacheBreakdown = await Task.detached { AppCache.measure() }.value
+                                        cacheNote = "已清除，省出约 \(AppCache.format(freed))。"
+                                    }
+                                },
+                              ])
             .driftActionSheet(isPresented: $confirmClearHistory, title: "清空全部刷入记录？",
                               message: "记录清空后无法恢复。此操作只清记录，不会删除设备上已刷入的壁纸——要删壁纸请用主页的「本机壁纸管理」。",
                               actions: [
@@ -1047,19 +1062,15 @@ struct DriftSettingsView: View {
         .task {
             cacheBreakdown = await Task.detached { AppCache.measure() }.value
         }
-        .driftActionSheet(isPresented: $confirmClearCache, title: "清除这些缓存？",
-                          message: cacheBreakdown.map {
-                            "预览图 \(AppCache.format($0.previews))、目录缓存 \(AppCache.format($0.catalogCache))、临时文件 \(AppCache.format($0.fetchScratch))、日志 \(AppCache.format($0.logs))、下载的安装包 \(AppCache.format($0.updates))，共 \(AppCache.format($0.total))。"
-                          },
-                          actions: [
-                            DriftSheetAction("清除", destructive: true) {
-                                Task {
-                                    let freed = await Task.detached { AppCache.clear() }.value
-                                    cacheBreakdown = await Task.detached { AppCache.measure() }.value
-                                    cacheNote = "已清除，省出约 \(AppCache.format(freed))。"
-                                }
-                            },
-                          ])
+        // #293 (Grace, 2026-11-13): the clear-cache confirmation sheet
+        // used to hang off THIS section. On a cold launch the section's
+        // own `.task` above lands its `cacheBreakdown` write right
+        // around the user's first tap, the section's view is rebuilt,
+        // and a sheet presented from inside the section is torn down
+        // with it — the dialog flashed and vanished, and only the
+        // second tap (nothing left in flight) held. The sheet now
+        // hangs off the root view like every other confirmation in
+        // this file; the measurement stays here where its data lives.
     }
 
     private var aboutSection: some View {
