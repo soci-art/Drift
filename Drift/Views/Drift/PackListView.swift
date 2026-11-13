@@ -55,6 +55,7 @@ struct PackListView: View {
                     }
                 }
                 .padding(16)
+                .driftPageWidth()
             }
         }
         .navigationTitle("壁纸包")
@@ -201,53 +202,71 @@ struct PackListView: View {
                 Text("选中的包里有容器包：只能走恢复刷，恢复刷已封存，目前刷不了。")
                     .font(.caption).foregroundStyle(.red)
             }
-            HStack(spacing: 12) {
-                Button(role: .destructive) {
-                    confirmDelete = true
-                } label: {
-                    Label("删除", systemImage: "trash")
-                }
-                .driftGlassButton()
-                .disabled(selectedPacks.isEmpty)
-                Button {
-                    runRepairSelected()
-                } label: {
-                    Label("壁纸修复", systemImage: "wrench.and.screwdriver")
-                }
-                .driftGlassButton()
-                .disabled(selectedPacks.isEmpty)
-                if !selectedPacks.isEmpty
-                    && selectedPacks.allSatisfy({ PackDeepRepair.isDeepRepaired($0) }) {
-                    Label("已深度修复", systemImage: "checkmark.circle")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                } else {
-                    Button {
-                        deepRepairTarget = selectedPacks.first {
-                            !PackDeepRepair.isDeepRepaired($0)
-                        } ?? selectedPacks.first
-                    } label: {
-                        Label("深度修复", systemImage: "wand.and.stars")
-                    }
-                    .buttonStyle(DeepRepairPillStyle())
-                    .disabled(selectedPacks.isEmpty)
-                }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { bottomActionButtons }
+                VStack(alignment: .leading, spacing: 10) { bottomActionButtons }
             }
         }
         .padding(.horizontal, 12)
         .padding(.top, 10)
         .padding(.bottom, 10)
-        .background {
-            // Collection #283 (Grace, 2026-11-13): the panel's top
-            // corners are rounded — it sits on the page like a slab
-            // with a finished edge instead of a strip glued straight
-            // across. The rounded edge is the separation now, so the
-            // old divider line is gone.
-            UnevenRoundedRectangle(cornerRadii: .init(topLeading: 20, topTrailing: 20),
-                                   style: .continuous)
-                .fill(.ultraThinMaterial)
+        .frame(maxWidth: 720)
+        .frame(maxWidth: .infinity)
+        .background { bottomZoneBackground }
+    }
+
+    @ViewBuilder
+    private var bottomActionButtons: some View {
+        Button(role: .destructive) {
+            confirmDelete = true
+        } label: {
+            Label("删除", systemImage: "trash")
+        }
+        .driftGlassButton()
+        .fixedSize(horizontal: true, vertical: false)
+        .disabled(selectedPacks.isEmpty)
+        Button {
+            runRepairSelected()
+        } label: {
+            Label("壁纸修复", systemImage: "wrench.and.screwdriver")
+        }
+        .driftGlassButton()
+        .fixedSize(horizontal: true, vertical: false)
+        .disabled(selectedPacks.isEmpty)
+        if !selectedPacks.isEmpty
+            && selectedPacks.allSatisfy({ PackDeepRepair.isDeepRepaired($0) }) {
+            Label("已深度修复", systemImage: "checkmark.circle")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .fixedSize(horizontal: true, vertical: false)
+        } else {
+            Button {
+                deepRepairTarget = selectedPacks.first {
+                    !PackDeepRepair.isDeepRepaired($0)
+                } ?? selectedPacks.first
+            } label: {
+                Label("深度修复", systemImage: "wand.and.stars")
+            }
+            .buttonStyle(DeepRepairPillStyle())
+            .fixedSize(horizontal: true, vertical: false)
+            .disabled(selectedPacks.isEmpty)
+        }
+    }
+
+    @ViewBuilder
+    private var bottomZoneBackground: some View {
+        // Collection #283: rounded top edge. On iOS 17/18 this is a solid
+        // panel, not a material, so the legacy surface stays consistent.
+        let shape = UnevenRoundedRectangle(cornerRadii: .init(topLeading: 20, topTrailing: 20),
+                                           style: .continuous)
+        if DriftTheme.legacyUI {
+            shape.fill(Color(.secondarySystemBackground))
+                .ignoresSafeArea(edges: .bottom)
+                .shadow(color: .black.opacity(0.10), radius: 10, y: -3)
+        } else {
+            shape.fill(.ultraThinMaterial)
                 .ignoresSafeArea(edges: .bottom)
                 .shadow(color: .black.opacity(0.10), radius: 10, y: -3)
         }
@@ -565,28 +584,31 @@ private struct PackCoverPreview: View {
     @State private var loaded = false
 
     var body: some View {
-        VStack(spacing: 12) {
-            Text(pack.url.lastPathComponent)
-                .font(.headline)
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-            HStack(spacing: 6) {
-                DriftPill(text: "\(pack.descriptorCount) 张")
-                DriftPill(text: pack.posterType.label)
-                if PackDeepRepair.isDeepRepaired(pack) {
-                    DriftPill(text: "深度修复版", tint: .blue)
-                } else if PackRepair.isRepaired(pack) {
-                    DriftPill(text: "修复版", tint: .blue)
+        GeometryReader { geo in
+            let stageHeight = max(220, min(500, geo.size.height - 180))
+            VStack(spacing: 12) {
+                Text(pack.url.lastPathComponent)
+                    .font(.headline)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                HStack(spacing: 6) {
+                    DriftPill(text: "\(pack.descriptorCount) 张")
+                    DriftPill(text: pack.posterType.label)
+                    if PackDeepRepair.isDeepRepaired(pack) {
+                        DriftPill(text: "深度修复版", tint: .blue)
+                    } else if PackRepair.isRepaired(pack) {
+                        DriftPill(text: "修复版", tint: .blue)
+                    }
                 }
+                stage(height: stageHeight, width: geo.size.width)
+                Text("下滑关闭")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
             }
-            stage
-            Text("下滑关闭")
-                .font(.caption).foregroundStyle(.secondary)
-            Spacer(minLength: 0)
+            .padding(.horizontal, 22)
+            .padding(.top, 20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .padding(.horizontal, 22)
-        .padding(.top, 20)
-        .frame(maxWidth: .infinity)
         .task {
             let urls = await Task.detached {
                 PosterBoardPreview.previews(for: pack) ?? []
@@ -597,17 +619,17 @@ private struct PackCoverPreview: View {
     }
 
     @ViewBuilder
-    private var stage: some View {
+    private func stage(height: CGFloat, width: CGFloat) -> some View {
         if images.count > 1 {
             TabView {
                 ForEach(Array(images.enumerated()), id: \.offset) { _, image in
-                    stageImage(image)
+                    stageImage(image, maxHeight: height)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .automatic))
-            .frame(height: 500)
+            .frame(height: height)
         } else if let image = images.first {
-            stageImage(image)
+            stageImage(image, maxHeight: height)
         } else if loaded {
             // A pack with no still anywhere (pure animation): the
             // same placeholder the row shows, at stage size.
@@ -615,19 +637,19 @@ private struct PackCoverPreview: View {
                            startPoint: .topLeading, endPoint: .bottomTrailing)
                 .overlay(Text(String(pack.url.lastPathComponent.prefix(1)))
                     .font(.largeTitle).foregroundStyle(.secondary))
-                .frame(width: 250, height: 500)
+                .frame(width: max(180, min(250, width * 0.72)), height: height)
                 .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         } else {
             ProgressView()
-                .frame(height: 500)
+                .frame(height: height)
         }
     }
 
-    private func stageImage(_ image: UIImage) -> some View {
+    private func stageImage(_ image: UIImage, maxHeight: CGFloat) -> some View {
         Image(uiImage: image)
             .resizable()
             .scaledToFit()
-            .frame(maxHeight: 500)
+            .frame(maxHeight: maxHeight)
             .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
             .shadow(color: .black.opacity(0.22), radius: 18, y: 8)
     }

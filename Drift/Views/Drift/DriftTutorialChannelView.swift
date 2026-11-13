@@ -31,6 +31,7 @@ struct DriftTutorialChannelView: View {
                     section("常见问题") { faqCard(items: faqs) }
                 }
                 .padding(16)
+                .driftPageWidth()
             }
         }
         .navigationTitle(channel.title)
@@ -175,11 +176,19 @@ struct DriftTutorialChannelView: View {
     }
 
     private var prepareCards: some View {
-        HStack(alignment: .top, spacing: 11) {
-            prepareCard(icon: "link", tint: .blue, title: "配对",
-                        text: "在主界面点「导入配对文件」，或用无线配对。配一次就行。")
-            prepareCard(icon: "wifi", tint: .green, title: "隧道",
-                        text: "打开 LocalDevVPN 连上，手机保持连着 Wi-Fi 不要断。")
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 11) {
+                prepareCard(icon: "link", tint: .blue, title: "配对",
+                            text: "在主界面点「导入配对文件」，或用无线配对。配一次就行。")
+                prepareCard(icon: "wifi", tint: .green, title: "隧道",
+                            text: "打开 LocalDevVPN 连上，手机保持连着 Wi-Fi 不要断。")
+            }
+            VStack(spacing: 11) {
+                prepareCard(icon: "link", tint: .blue, title: "配对",
+                            text: "在主界面点「导入配对文件」，或用无线配对。配一次就行。")
+                prepareCard(icon: "wifi", tint: .green, title: "隧道",
+                            text: "打开 LocalDevVPN 连上，手机保持连着 Wi-Fi 不要断。")
+            }
         }
     }
 

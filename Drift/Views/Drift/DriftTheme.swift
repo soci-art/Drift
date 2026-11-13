@@ -103,6 +103,16 @@ extension View {
     }
 }
 
+extension View {
+    /// Keep a page's content readable on iPad without changing phone
+    /// layouts: below the cap the frame is unchanged; above it the content
+    /// is centred instead of stretching edge to edge.
+    func driftPageWidth(_ maxWidth: CGFloat = 720) -> some View {
+        frame(maxWidth: maxWidth)
+            .frame(maxWidth: .infinity)
+    }
+}
+
 /// Page background: the colour wash on iOS 26+; the flat grouped
 /// background on the legacy systems (#242).
 ///

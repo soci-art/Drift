@@ -38,6 +38,7 @@ struct DriftAboutView: View {
                         rewardCard
                     }
                     .padding(16)
+                    .driftPageWidth()
                 }
             }
             .navigationTitle("说明")

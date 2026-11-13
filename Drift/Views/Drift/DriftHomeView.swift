@@ -73,6 +73,7 @@ struct DriftHomeView: View {
                         // Settings; it just isn't displayed here.
                     }
                     .padding(16)
+                    .driftPageWidth()
                 }
             }
             .navigationTitle("Drift")
@@ -134,10 +135,17 @@ struct DriftHomeView: View {
             // The premises are listed per route, not as one global gate: the
             // in-process route only needs the app's own version and a granted
             // App Group, so pairing and the tunnel must not sit in front of it.
-            HStack(spacing: 8) {
-                DriftPill(text: localReady ? "本机直刷可用" : "本机直刷不可用",
-                          tint: localReady ? .green : .orange)
-                DriftPill(text: "本机 \(SystemVersionName.display(version: localVersion, build: localBuild))")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    DriftPill(text: localReady ? "本机直刷可用" : "本机直刷不可用",
+                              tint: localReady ? .green : .orange)
+                    DriftPill(text: "本机 \(SystemVersionName.display(version: localVersion, build: localBuild))")
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    DriftPill(text: localReady ? "本机直刷可用" : "本机直刷不可用",
+                              tint: localReady ? .green : .orange)
+                    DriftPill(text: "本机 \(SystemVersionName.display(version: localVersion, build: localBuild))")
+                }
             }
             Text(headerSubtitle)
                 .font(.subheadline)
@@ -147,19 +155,9 @@ struct DriftHomeView: View {
                                                     build: localBuild))
                     .font(.caption).foregroundStyle(.secondary)
             }
-            HStack(spacing: 8) {
-                DriftPill(text: "走隧道通道需要", tint: .secondary)
-                DriftPill(text: session.paired ? "已配对" : "未配对",
-                          tint: session.paired ? .green : .orange)
-                DriftPill(text: tunnelMonitor.status == .ready ? "隧道已连通"
-                          : tunnelMonitor.status == .interfaceUp ? "隧道等待对端"
-                          : "隧道未连接",
-                          tint: tunnelMonitor.status == .ready ? .green : .orange)
-                if identity.version.isEmpty {
-                    DriftPill(text: "隧道设备信息未读到", tint: .orange)
-                } else {
-                    DriftPill(text: "设备 \(SystemVersionName.display(version: identity.version, build: identity.buildVersion))")
-                }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { tunnelPills }
+                VStack(alignment: .leading, spacing: 6) { tunnelPills }
             }
             if !session.paired {
                 Button { importingPairing = true } label: {
@@ -170,6 +168,22 @@ struct DriftHomeView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
+    }
+
+    @ViewBuilder
+    private var tunnelPills: some View {
+        DriftPill(text: "走隧道通道需要", tint: .secondary)
+        DriftPill(text: session.paired ? "已配对" : "未配对",
+                  tint: session.paired ? .green : .orange)
+        DriftPill(text: tunnelMonitor.status == .ready ? "隧道已连通"
+                  : tunnelMonitor.status == .interfaceUp ? "隧道等待对端"
+                  : "隧道未连接",
+                  tint: tunnelMonitor.status == .ready ? .green : .orange)
+        if identity.version.isEmpty {
+            DriftPill(text: "隧道设备信息未读到", tint: .orange)
+        } else {
+            DriftPill(text: "设备 \(SystemVersionName.display(version: identity.version, build: identity.buildVersion))")
+        }
     }
 
     private var judgeCard: some View {

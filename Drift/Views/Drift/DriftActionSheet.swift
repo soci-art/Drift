@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // DriftActionSheet.swift
 // ─────────────────────────────────────────────────────────────────────────
@@ -42,7 +43,8 @@ struct DriftActionSheetView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(spacing: 10) {
+        ScrollView {
+            VStack(spacing: 10) {
             Text(title)
                 .font(.headline)
                 .multilineTextAlignment(.center)
@@ -92,8 +94,12 @@ struct DriftActionSheetView: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 12)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
+            .frame(maxWidth: 560)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollBounceBehavior(.basedOnSize)
     }
 }
 
@@ -107,10 +113,15 @@ extension View {
     func driftActionSheet(isPresented: Binding<Bool>, title: String,
                           message: String? = nil,
                           actions: [DriftSheetAction]) -> some View {
-        // One fixed height for every dialog (option A): uniformity
-        // over hugging the content. 400 fits the tallest case (a
-        // capped long message, or three actions) with room to spare.
-        let height: CGFloat = 400
+        // Uniform 400 on every normal screen, but capped by the screen
+        // height on short/landscape screens so the sheet cannot grow past
+        // the top safe area. The content itself scrolls when it does not fit.
+        let scenes = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+        let window = scenes.first?.windows.first
+        let screenHeight = window?.screen.bounds.height ?? UIScreen.main.bounds.height
+        let topInset = window?.safeAreaInsets.top ?? 0
+        let height = min(400, max(220, screenHeight - topInset - 24))
         return sheet(isPresented: isPresented) {
             DriftActionSheetView(title: title, message: message, actions: actions)
                 .presentationDetents([.height(height)])

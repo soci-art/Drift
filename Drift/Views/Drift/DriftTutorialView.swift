@@ -35,6 +35,7 @@ struct DriftTutorialView: View {
                     }
                 }
                 .padding(16)
+                .driftPageWidth()
             }
         }
         .navigationTitle("使用教程")

@@ -78,6 +78,8 @@ struct DriftSettingsView: View {
                 appSection
                 aboutSection
             }
+            .frame(maxWidth: 760)
+            .frame(maxWidth: .infinity)
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.large)
             // UIKit picker, not SwiftUI `fileImporter` — see

@@ -36,6 +36,7 @@ struct DriftVideoView: View {
                         // as the wallpaper page.
                     }
                     .padding(16)
+                    .driftPageWidth()
                 }
             }
             .navigationTitle("视频壁纸")

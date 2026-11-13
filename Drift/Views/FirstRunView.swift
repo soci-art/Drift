@@ -639,7 +639,8 @@ private struct SlideLayout<Art: View, Content: View>: View {
                 content()
                     .padding(.horizontal, 24)
                     .padding(.bottom, 16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: 640, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
         }
     }
