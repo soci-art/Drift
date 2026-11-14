@@ -80,9 +80,11 @@ struct ExperimentalFeaturesView: View {
             isPresented: $confirmKernelOn,
             title: "打开内核直刷？",
             message: "该功能还在试验阶段，确定要打开吗？",
+            // Only the affirmative action is listed: the sheet always
+            // appends its own 「取消」 below the actions, so a listed
+            // 取消 would show twice (Grace's catch, 2026-11-14).
             actions: [
                 DriftSheetAction("确定") { kernelEnabled = true },
-                DriftSheetAction("取消") {},
             ])
         .driftActionSheet(
             isPresented: $restoreNotice,
