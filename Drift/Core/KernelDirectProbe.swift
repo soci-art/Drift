@@ -330,9 +330,10 @@ enum KernelDirectProbe {
     private static let applicationsRoot = "/private/var/mobile/Containers/Data/Application"
     private static let posterBoardBundleID = "com.apple.PosterBoard"
 
-    /// Three-level container discovery. The later probe stage performs a
-    /// create/write/read/delete test in the returned store. `timedOut`
-    /// distinguishes a deadline from a completed negative scan.
+    /// Cached path → shared pathleak → metadata identity → store-directory
+    /// fallback. The later probe stage performs a create/write/read/delete
+    /// test in the returned store. `timedOut` distinguishes a deadline from
+    /// a completed negative scan.
     private static func locateStore(deadline: Date,
                                     log: (String) -> Void) -> (store: LocatedStore?, timedOut: Bool) {
         let manager = FileManager.default
@@ -348,7 +349,7 @@ enum KernelDirectProbe {
         }
         if !known.isEmpty {
             log("[内核探针] 5/5 找法一（应用快照）：\(known.count) 个已知容器路径")
-            for container in known {
+            for container in known where isApplicationContainerPath(container) {
                 if let store = storeIn(container: container) {
                     log("[内核探针] 5/5 找法一命中：\(container)")
                     return (LocatedStore(container: container,
@@ -361,6 +362,40 @@ enum KernelDirectProbe {
             log("[内核探针] 5/5 找法一（应用快照）：没有缓存路径")
         }
 
+        // Match 本机直刷's cold-start locator: segmented pathleak discovery
+        // finds direct child container paths without first enumerating the
+        // entire Applications directory. The kernel backend validates each
+        // candidate by checking PosterBoard's real store directory.
+        let pathleak = PosterBoardContainerLocator.scanPathleak(
+            deadline: deadline,
+            log: log
+        ) { candidates, segment in
+            for candidate in candidates where isApplicationContainerPath(candidate) {
+                if storeIn(container: candidate) != nil {
+                    log("[内核探针] pathleak 第 \(segment) 段命中 PosterBoard 容器")
+                    PosterBoardLocal.cachedContainer = candidate
+                    return candidate
+                }
+            }
+            return nil
+        }
+        if pathleak.timedOut {
+            return (nil, true)
+        }
+        if let container = pathleak.foundPath, let store = storeIn(container: container) {
+            log("[内核探针] pathleak 命中：停在第 \(pathleak.segments) 段，"
+                + "扫描 \(pathleak.scannedInodes)/\(pathleak.maxInode) 个 inode，"
+                + "候选 \(pathleak.candidates) 个，枚举耗时 "
+                + String(format: "%.0f ms", pathleak.enumerationMilliseconds))
+            return (LocatedStore(container: container, store: store,
+                                 structureVersions: structureVersions(in: store)), false)
+        }
+        if pathleak.available {
+            log("[内核探针] pathleak 未命中：扫描 \(pathleak.scannedInodes)/\(pathleak.maxInode) 个 inode，"
+                + "候选 \(pathleak.candidates) 个，枚举耗时 "
+                + String(format: "%.0f ms", pathleak.enumerationMilliseconds))
+        }
+
         guard let entries = try? manager.contentsOfDirectory(atPath: applicationsRoot) else {
             log("[内核探针] 5/5 列不出 \(applicationsRoot)")
             return (nil, false)
@@ -369,7 +404,7 @@ enum KernelDirectProbe {
 
         // Level 2 — the container-manager query: read each container's own
         // metadata and match PosterBoard's bundle identifier.
-        for (index, entry) in entries.enumerated() {
+        for (index, entry) in entries.enumerated() where UUID(uuidString: entry) != nil {
             if pastDeadline(deadline) {
                 log("[内核探针] 5/5 找法二因超过总时限停下（已查 \(index)/\(entries.count) 个容器）")
                 return (nil, true)
@@ -381,6 +416,7 @@ enum KernelDirectProbe {
             guard containerHasPosterBoardIdentity(container) else { continue }
             if let store = storeIn(container: container) {
                 log("[内核探针] 5/5 找法二命中（容器管理查询）：\(container)")
+                PosterBoardLocal.cachedContainer = container
                 return (LocatedStore(container: container,
                                      store: store,
                                      structureVersions: structureVersions(in: store)), false)
@@ -390,7 +426,7 @@ enum KernelDirectProbe {
 
         // Level 3 — the metadata scan fallback: look for the store directory
         // itself in every container.
-        for entry in entries {
+        for entry in entries where UUID(uuidString: entry) != nil {
             if pastDeadline(deadline) {
                 log("[内核探针] 5/5 找法三因超过总时限停下")
                 return (nil, true)
@@ -398,6 +434,7 @@ enum KernelDirectProbe {
             let container = (applicationsRoot as NSString).appendingPathComponent(entry)
             if let store = storeIn(container: container) {
                 log("[内核探针] 5/5 找法三命中（商店目录扫描）：\(container)")
+                PosterBoardLocal.cachedContainer = container
                 return (LocatedStore(container: container,
                                      store: store,
                                      structureVersions: structureVersions(in: store)), false)
@@ -405,6 +442,13 @@ enum KernelDirectProbe {
         }
         log("[内核探针] 5/5 找法三没有命中")
         return (nil, false)
+    }
+
+
+    private static func isApplicationContainerPath(_ path: String) -> Bool {
+        let prefix = applicationsRoot + "/"
+        guard path.hasPrefix(prefix) else { return false }
+        return UUID(uuidString: (path as NSString).lastPathComponent) != nil
     }
 
     private static func containerHasPosterBoardIdentity(_ container: String) -> Bool {
