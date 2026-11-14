@@ -84,9 +84,13 @@ enum KernelDirectWriter {
         log("[内核写入] 商店目录：\(storePath)")
         log("[内核写入] 采用结构版本：\(generation)")
 
+        log("[内核写入] 计划统计开始：\(sources.count) 个包")
+        let planningStarted = Date()
         let planned = max(1, sources.reduce(0) {
             $0 + PosterBoardAirlift.countDescriptors(inArchiveAt: $1.url)
         })
+        log(String(format: "[内核写入] 计划统计完成：预计 %d 个描述符，耗时 %.2f 秒",
+                   planned, Date().timeIntervalSince(planningStarted)))
         var completed = 0
         var placed: [Placed] = []
 
@@ -100,12 +104,20 @@ enum KernelDirectWriter {
                                             withIntermediateDirectories: true)
                 defer { try? manager.removeItem(at: stage) }
 
+                let extractStarted = Date()
+                log("[内核写入] 解包开始：\(source.name)")
                 try source.extract(stage)
+                log(String(format: "[内核写入] 解包完成：\(source.name)，耗时 %.2f 秒",
+                           Date().timeIntervalSince(extractStarted)))
+                let discoveryStarted = Date()
+                log("[内核写入] 描述符枚举开始：\(source.name)")
                 let descriptors = PosterBoardAirlift.findDescriptors(
                     in: stage,
                     defaultExtension: source.defaultExtension,
                     log: { log("[内核写入] " + $0) }
                 )
+                log(String(format: "[内核写入] 描述符枚举完成：\(source.name)，找到 %d 个，耗时 %.2f 秒",
+                           descriptors.count, Date().timeIntervalSince(discoveryStarted)))
                 guard !descriptors.isEmpty else {
                     throw DriftError("在「\(source.name)」中没有找到壁纸描述文件。")
                 }
@@ -141,10 +153,14 @@ enum KernelDirectWriter {
                         numericID: numericID,
                         extensionID: descriptor.extensionID
                     )
+                    let installStarted = Date()
+                    log("[内核写入] 落盘开始：\(descriptor.extensionID)/\(folderName)")
                     try install(folder: descriptor.url,
                                 parent: parent,
                                 name: folderName,
                                 log: log)
+                    log(String(format: "[内核写入] 落盘完成：\(descriptor.extensionID)/\(folderName)，耗时 %.2f 秒",
+                               Date().timeIntervalSince(installStarted)))
 
                     placed.append(Placed(
                         extensionID: descriptor.extensionID,
@@ -170,6 +186,8 @@ enum KernelDirectWriter {
             throw DriftError("没有写入任何 PosterBoard 描述文件。")
         }
 
+        log("[内核写入] 写后核验开始：\(placed.count) 个目标目录")
+        let verificationStarted = Date()
         var confirmed: Set<String> = []
         for item in placed {
             let destination = item.parent + "/" + item.folderName
@@ -179,7 +197,9 @@ enum KernelDirectWriter {
             }
             confirmed.insert(item.key)
         }
-        log("[内核写入] 写后核验：在册 \(confirmed.count)/\(placed.count)")
+        log(String(format: "[内核写入] 写后核验结束：在册 %d/%d，耗时 %.2f 秒",
+                   confirmed.count, placed.count,
+                   Date().timeIntervalSince(verificationStarted)))
 
         let providers = Set(placed.map(\.extensionID))
         let verification = PosterStoreVerification(
