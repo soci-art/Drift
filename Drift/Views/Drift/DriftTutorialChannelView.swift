@@ -70,6 +70,9 @@ struct DriftTutorialChannelView: View {
         case .groupBlocked:
             return ("你的系统在范围内，但签名没有能用的组，本机直刷用不了",
                     .orange, "exclamationmark.triangle.fill")
+        case .notEnabled:
+            return ("这种方式还没打开",
+                    .orange, "exclamationmark.triangle.fill")
         }
     }
 
@@ -90,12 +93,19 @@ struct DriftTutorialChannelView: View {
                 "系统在 iOS 18.0 到 iOS 27.1 正式版之间；iOS 27.2 只支持 beta 1 / beta 2，iOS 27.2 正式版用不了",
                 "签名不限：哪种签名装的都行",
             ]
+        case .kernel:
+            return [
+                "先在「设置 → 实验性功能」里打开「内核直刷」开关（打开之后，主页的刷入方式里才会出现这一项）",
+                "系统在 iOS 17.0 到 iOS 18.7.1 之间",
+                "不用配对、不用隧道，也不用连 Wi-Fi",
+                "签名不限：哪种签名装的都行",
+            ]
         }
     }
 
     private var flashSteps: [String] {
         let third = switch channel {
-        case .noRespring, .local:
+        case .noRespring, .local, .kernel:
             "点「刷入」，等它写完（手机保持解锁，别切走）"
         case .respring:
             "点「刷入」，等它写完（手机保持解锁，别切走；写完会提示你注销）"
@@ -142,6 +152,16 @@ struct DriftTutorialChannelView: View {
                 pickWallpaper,
                 ("每次刷都要配对吗？",
                  "不用。配对一次、文件导进来之后，一直能用。"),
+            ]
+        case .kernel:
+            return [
+                ("在刷入方式里找不到「内核直刷」？",
+                 "先去「设置 → 实验性功能」里把「内核直刷」打开，主页的刷入方式里才会出现这一项。"),
+                ("提示用不了？",
+                 "这个方式只支持 iOS 17 / 18：系统不在这个范围用不了，机型不在支持表里也用不了。"),
+                ("刷完了，壁纸没变？",
+                 "多半是只回了桌面、没划掉壁纸界面。按上面那一步，在后台里把它甩掉再看。"),
+                pickWallpaper,
             ]
         }
     }
@@ -277,6 +297,28 @@ struct DriftTutorialChannelView: View {
                         "系统会自己重新打开壁纸界面、读入新壁纸",
                         "长按锁屏（或打开「设置 → 墙纸」），在列表里选刚刷的这张，设成当前壁纸",
                     ], tint: .blue)
+                    Text("只滑回桌面不算关掉——它还留在后台，壁纸不会换。一定要在后台里把它甩掉。")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        case .kernel:
+            heroCard(tint: .orange, icon: "hand.tap.fill",
+                     title: "把壁纸界面从后台划掉") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("刷完后，壁纸界面会自动打开，就是锁屏那个界面。接下来：")
+                        .font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                    LoopingVideoView(resource: "PosterCloseGesture")
+                        .frame(width: 200, height: 359)
+                        .frame(maxWidth: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    numberedSteps([
+                        "从屏幕最下面往上滑，滑到一半停住别松手，会看到一排打开过的界面",
+                        "找到壁纸那张卡片，把它往上甩出去",
+                        "系统会自己重新打开壁纸界面、读入新壁纸",
+                        "长按锁屏（或打开「设置 → 墙纸」），在列表里选刚刷的这张，设成当前壁纸",
+                    ], tint: .orange)
                     Text("只滑回桌面不算关掉——它还留在后台，壁纸不会换。一定要在后台里把它甩掉。")
                         .font(.subheadline.weight(.semibold)).foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)

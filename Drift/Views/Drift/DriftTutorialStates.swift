@@ -14,24 +14,40 @@ enum DriftTutorialStates {
                                       selection: PosterBoardSelection(),
                                       pick: .auto, tunnelReady: tunnelReady)
         var states: [TutorialChannel: TutorialChannelState] = [:]
-        for channel in TutorialChannel.allCases {
+        for channel in TutorialChannel.allCases where channel != .kernel {
             states[channel] = state(of: channel, judged: judged, identity: identity)
         }
+        states[.kernel] = kernelState()
         return states
     }
 
-    private static func mode(of channel: TutorialChannel) -> PosterBoardApplyMode {
+    /// The kernel channel's standing (#319/#329): it has no mode in
+    /// the judgement, so it is read straight from its own premises —
+    /// the user's switch first, then the band + offset-table check on
+    /// this device.
+    private static func kernelState() -> TutorialChannelState {
+        guard KernelDirectPremise.isEnabled else { return .notEnabled }
+        let evaluation = KernelDirectPremise.evaluate(
+            version: WorseQueryEscape.processVersion)
+        return evaluation.ready ? .ready : .systemBlocked
+    }
+
+    /// The channel's mode in the judgement; the kernel channel has
+    /// none — its state comes from `kernelState()` instead.
+    private static func mode(of channel: TutorialChannel) -> PosterBoardApplyMode? {
         switch channel {
         case .noRespring: return .direct
         case .respring: return .airlift
         case .local: return .worseQuery
+        case .kernel: return nil
         }
     }
 
     private static func state(of channel: TutorialChannel,
                               judged: DriftModeJudgement,
                               identity: DeviceIdentity) -> TutorialChannelState {
-        guard let option = judged.options.first(where: { $0.mode == mode(of: channel) }) else {
+        guard let mode = mode(of: channel),
+              let option = judged.options.first(where: { $0.mode == mode }) else {
             return .systemBlocked
         }
         if option.available { return .ready }
@@ -49,7 +65,7 @@ enum DriftTutorialStates {
             case .respring:
                 Airlift.isSupported(deviceVersion: identity.version,
                                     buildVersion: identity.buildVersion)
-            case .local:
+            case .local, .kernel:
                 true
             }
             if !gateOpen { return .systemBlocked }
