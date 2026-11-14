@@ -22,6 +22,23 @@ enum PosterBoardContainerLocator {
         let enumerationMilliseconds: Double
     }
 
+    private final class SegmentResultBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: [String]?
+
+        func store(_ newValue: [String]) {
+            lock.lock()
+            value = newValue
+            lock.unlock()
+        }
+
+        func load() -> [String]? {
+            lock.lock()
+            defer { lock.unlock() }
+            return value
+        }
+    }
+
     /// Enumerate the applications root in contiguous inode ranges. The caller
     /// inspects each segment and returns a path as soon as it identifies the
     /// PosterBoard container. The temporary inode-bound file is always removed.
@@ -30,13 +47,18 @@ enum PosterBoardContainerLocator {
         log: (String) -> Void,
         inspect: ([String], Int) -> String?
     ) -> PathleakResult {
+        let limitStarted = DispatchTime.now()
+        log("[pathleak] inode 上限探测开始")
         guard let limit = WorseQueryEscape.pathleakScanLimit() else {
-            log("pathleak：无法建立 inode 上限临时文件")
+            let elapsed = Double(DispatchTime.now().uptimeNanoseconds - limitStarted.uptimeNanoseconds) / 1_000_000
+            log(String(format: "[pathleak] inode 上限探测失败（%.0f ms）：无法建立临时文件", elapsed))
             return PathleakResult(foundPath: nil, available: false, timedOut: false,
                                   maxInode: 0, scannedInodes: 0, segments: 0,
                                   candidates: 0, enumerationMilliseconds: 0)
         }
         defer { limit.cleanup() }
+        let limitElapsed = Double(DispatchTime.now().uptimeNanoseconds - limitStarted.uptimeNanoseconds) / 1_000_000
+        log(String(format: "[pathleak] inode 上限探测完成：maxInode=%llu（%.0f ms）", limit.maxInode, limitElapsed))
 
         var scanned: UInt64 = 0
         var segments = 0
@@ -55,13 +77,42 @@ enum PosterBoardContainerLocator {
             let start = scanned + 1
             let end = scanned + min(segmentSize, limit.maxInode - scanned)
             let started = DispatchTime.now()
-            let leaked = WorseQueryEscape.leakedChildren(in: applicationsRoot,
-                                                         from: start, to: end)
-            enumerationMilliseconds += Double(DispatchTime.now().uptimeNanoseconds - started.uptimeNanoseconds) / 1_000_000
+            let remaining = deadline.timeIntervalSinceNow
+            guard remaining > 0 else {
+                log("[pathleak] 段 \(segments + 1) 尚未开始：总时限已耗尽")
+                return PathleakResult(foundPath: nil, available: true, timedOut: true,
+                                      maxInode: limit.maxInode, scannedInodes: scanned,
+                                      segments: segments, candidates: candidates,
+                                      enumerationMilliseconds: enumerationMilliseconds)
+            }
+            log(String(format: "[pathleak] 段 %d 开始：inode %llu–%llu，剩余 %.1f 秒",
+                       segments + 1, start, end, remaining))
+
+            let resultBox = SegmentResultBox()
+            let finished = DispatchSemaphore(value: 0)
+            DispatchQueue.global(qos: .userInitiated).async {
+                let value = WorseQueryEscape.leakedChildren(in: applicationsRoot,
+                                                             from: start, to: end)
+                resultBox.store(value)
+                finished.signal()
+            }
+            if finished.wait(timeout: .now() + remaining) == .timedOut {
+                let elapsed = Double(DispatchTime.now().uptimeNanoseconds - started.uptimeNanoseconds) / 1_000_000
+                log(String(format: "[pathleak] 段 %d 超时：inode %llu–%llu，等待 %.0f ms；底层枚举线程无法强制终止，本轮停止继续扫描",
+                           segments + 1, start, end, elapsed))
+                return PathleakResult(foundPath: nil, available: true, timedOut: true,
+                                      maxInode: limit.maxInode, scannedInodes: scanned,
+                                      segments: segments, candidates: candidates,
+                                      enumerationMilliseconds: enumerationMilliseconds + elapsed)
+            }
+            let leaked = resultBox.load() ?? []
+            let elapsed = Double(DispatchTime.now().uptimeNanoseconds - started.uptimeNanoseconds) / 1_000_000
+            enumerationMilliseconds += elapsed
             scanned = end
             segments += 1
             candidates += leaked.count
-            log("pathleak 段 \(segments)：inode \(start)–\(end)，本段 \(leaked.count) 个候选，累计 \(candidates) 个")
+            log(String(format: "[pathleak] 段 %d 完成：inode %llu–%llu，本段 %d 个候选，累计 %d 个，耗时 %.0f ms",
+                       segments, start, end, leaked.count, candidates, elapsed))
 
             if let found = inspect(leaked, segments) {
                 return PathleakResult(foundPath: found, available: true, timedOut: false,
