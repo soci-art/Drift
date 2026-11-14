@@ -133,16 +133,18 @@ jobs:
           path: build/Drift.ipa
           if-no-files-found: error
 
-      # Replace the IPA attachment on the tag's pre-release. A formal
-      # release is never touched: if the tag exists and is not a
-      # pre-release the step fails rather than swapping a shipped IPA.
-      # The tag is created as an empty pre-release only when it does not
-      # exist at all (the first probe of a new version, e.g. v3.2.4 after
-      # v3.2.3 was promoted to Latest); its title, notes and non-IPA
-      # assets are never edited afterwards. [probe] builds the probe
-      # package; [preview] builds the formal handover package without the
-      # probe switch. Both leave the tag as a pre-release.
-      - name: Replace the pre-release IPA with this build
+      # Replace the IPA attachment on the rolling `nightly` pre-release
+      # (Grace, 2026-11-14, SideStore's shape): pre-releases carry no
+      # version — one fixed tag `nightly`, title just "Drift", asset
+      # `Drift-unsigned.ipa` — so test builds never consume a formal
+      # version number. A formal release is never touched: if `nightly`
+      # exists and is not a pre-release the step fails rather than
+      # swapping a shipped IPA. The release is created as an empty
+      # pre-release only when it does not exist at all; its title, notes
+      # and non-IPA assets are never edited afterwards. [probe] builds
+      # the probe package; [preview] builds the formal handover package
+      # without the probe switch.
+      - name: Replace the nightly pre-release IPA with this build
         if: >-
           github.event_name == 'push' &&
           github.ref == 'refs/heads/main' &&
@@ -159,8 +161,8 @@ jobs:
             echo "error: VERSION or BUILD missing from project.yml" >&2
             exit 1
           fi
-          TAG="v$VERSION"
-          ASSET="build/Drift-$VERSION-unsigned.ipa"
+          TAG="nightly"
+          ASSET="build/Drift-unsigned.ipa"
           cp build/Drift.ipa "$ASSET"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             echo "no release $TAG yet — creating it as an empty pre-release"
@@ -170,8 +172,8 @@ jobs:
             # on the public run page when it fails.
             RESP="$(mktemp)"
             ERR="$(mktemp)"
-            BODY="$(printf '{"tag_name":"%s","target_commitish":"%s","name":"Drift %s（预发行）","body":"预发行构建，供测试使用。未签名 IPA，安装者自行签名；不影响正式版。","prerelease":true}' \
-              "$TAG" "$GITHUB_SHA" "$VERSION")"
+            BODY="$(printf '{"tag_name":"%s","target_commitish":"%s","name":"Drift","body":"预发行构建（滚动更新），供测试使用。未签名 IPA，安装者自行签名；不影响正式版。","prerelease":true}' \
+              "$TAG" "$GITHUB_SHA")"
             CODE="$(curl -sS -o "$RESP" -w '%{http_code}' -X POST \
               -H "Authorization: Bearer $GH_TOKEN" \
               -H 'Accept: application/vnd.github+json' \
