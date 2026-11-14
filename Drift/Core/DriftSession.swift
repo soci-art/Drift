@@ -557,6 +557,40 @@ final class DriftSession: ObservableObject {
         }
     }
 
+    /// Phase one of the kernel direct channel (#319, construction order §4):
+    /// run the five-step probe and report what it found. **No wallpaper is
+    /// written**, and a failure never borrows another channel.
+    ///
+    /// The probe runs off the main thread under its own 60-second ceiling
+    /// (`KernelDirectProbe`). The blocking cover is the existing one; the
+    /// stage line is where the order's "may take 10–30 s, do not background or
+    /// lock the screen" warning is shown.
+    func runKernelProbe(identity: DeviceIdentity) async -> (ok: Bool, message: String) {
+        guard !InFlightCall.shared.hasLiveRun else {
+            return (false, "已有一轮刷入正在进行")
+        }
+        flashCover = true
+        flashStage = "内核探针运行中，可能要等 10–30 秒，期间不要切后台或锁屏"
+        defer { flashCover = false; flashStage = nil }
+        running = true
+        RunLog.shared.clear()
+        defer { running = false }
+
+        DriftEngine.shared.log("内核探针：开始（本机 \(KernelDirectPremise.modelIdentifier)，"
+            + "iOS \(WorseQueryEscape.processVersion)，构建 \(WorseQueryEscape.processBuildVersion)，"
+            + "设备读数 \(identity.describe)）")
+        let report = await KernelDirectProbe.run(log: { line in
+            DriftEngine.shared.log(line)
+        })
+        if report.passed {
+            DriftEngine.shared.log("内核探针：通过（零写入）")
+            return (true, "内核直刷探针通过：内核链、脱沙盒、读写删除和商店定位都正常，这次没有写入任何壁纸。")
+        }
+        let reason = report.failure ?? "未知原因"
+        DriftEngine.shared.log("内核探针：失败 —— \(reason)")
+        return (false, "内核探针失败：\(reason) 本次零写入，也没有改走其他方式；要重试需要重启 App。")
+    }
+
     /// Collection #219 (Grace, 2026-11-12): when a channel finds no
     /// descriptors at the top of the extracted pack, its error still
     /// carries a fixed suffix steering the user to the sealed restore
@@ -963,8 +997,18 @@ enum DriftJudge {
                 return blocked("你手动选了内核直刷：这台机型不在它的支持表里。手动选定后不会自动改走别的通道。",
                                notice: "这台机型不在内核直刷的支持表里。")
             }
-            return blocked("你手动选了内核直刷：通道正在接入，现在还刷不了。手动选定后不会自动改走别的通道。",
-                           notice: "内核直刷正在接入，现在还刷不了。")
+            // #319 phase one: the premises pass, so the pick is runnable.
+            // Until the write channel lands, 刷入 runs the verification
+            // probe instead of a flash — the judgement is not blocked, but
+            // it names no channel (`mode` is a placeholder there; Home
+            // branches on the pick before it reads `mode`).
+            return DriftModeJudgement(
+                pick: pick,
+                mode: .worseQuery,
+                reason: "已手动选择内核直刷：现在跑的是第一阶段探针，点「刷入」只验证内核链、脱沙盒和商店定位，不写入任何壁纸。",
+                blockedReason: nil,
+                options: rows,
+                expectedEffect: "")
         }
 
         if let channel = pick.channel {

@@ -32,6 +32,11 @@ let package = Package(
         // Objective-C, separately licensed (GPL-3.0, compatible with this
         // app's AGPL-3.0) and not part of the vendored golden-nugget stack.
         .package(path: "WorseQuery"),
+        // The iOS 17/18 kernel chain for 内核直刷 (#319): self-contained
+        // Objective-C, GPL-3.0 (compatible with this app's AGPL-3.0),
+        // sourced from QuinnTang74/3106. Its own package for the same
+        // licence-boundary reason as WorseQuery.
+        .package(path: "KernelDirect"),
     ],
     targets: [
         .target(
@@ -53,6 +58,8 @@ let package = Package(
                 // to write into PosterBoard's container without a pairing
                 // record or a tunnel.
                 .product(name: "WorseQuery", package: "WorseQuery"),
+                // The kernel direct channel's chain and sandbox escape.
+                .product(name: "KernelDirect", package: "KernelDirect"),
             ],
             path: ".",
             exclude: [
@@ -64,6 +71,10 @@ let package = Package(
                 // is the repository root, so without this SwiftPM treats the
                 // package's C sources as unhandled resources of the app.
                 "WorseQuery",
+                // Same rule as WorseQuery: its own local package, linked as
+                // a dependency; without this the ObjC sources would be
+                // treated as unhandled resources of the app target.
+                "KernelDirect",
                 // Build products are not sources or resources.  They have to be
                 // named: SwiftPM treats everything under the target path that is
                 // neither a source nor excluded as a resource, and a build tree

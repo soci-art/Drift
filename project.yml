@@ -96,6 +96,11 @@ packages:
   # the vendored golden-nugget stack under Vendor/.
   WorseQuery:
     path: WorseQuery
+  # The iOS 17/18 kernel chain for 内核直刷 (#319), taken from
+  # QuinnTang74/3106. Same shape as WorseQuery: a local, self-contained
+  # Objective-C package (GPL-3.0, compatible with this app's AGPL-3.0).
+  KernelDirect:
+    path: KernelDirect
 
 settings:
   base:
@@ -253,6 +258,12 @@ targets:
       # there is no framework to embed or re-sign.
       - package: WorseQuery
         product: WorseQuery
+      # Same C-module rule again: `import KernelDirect` needs this line as
+      # well as the one in Package.swift.
+      - package: KernelDirect
+        product: KernelDirect
+      # The kernel chain allocates IOSurfaces for its physical-page spray.
+      - sdk: IOSurface.framework
       - sdk: libsqlite3.tbd
       # NeoSpring resprings by loading a payload into a WKWebView
       # (Drift/Core/NeoSpring.swift), so WebKit has to be linked. It is a

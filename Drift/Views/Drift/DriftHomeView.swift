@@ -48,9 +48,13 @@ struct DriftHomeView: View {
     private var selectedDescriptors: Int { selection.tendies.reduce(0) { $0 + $1.descriptorCount } }
     private var overLimit: Bool { selectedDescriptors > PosterBoardImports.descriptorLimit }
     private var canApply: Bool {
+        // Phase one of the kernel channel (#319) is a probe, not a flash:
+        // it needs no pack selection, no pairing and no tunnel — only its
+        // own premises.
+        if manualPick == .kernel { return kernelReady && !session.running }
         // The in-process route is the one path that does not need a pairing
         // record; every other mode still does.
-        (session.paired || judgement.mode == .worseQuery)
+        return (session.paired || judgement.mode == .worseQuery)
             && !selection.tendies.isEmpty && !overLimit && !session.running
     }
     /// The kernel channel's premise, judged on this device alone.
@@ -62,7 +66,7 @@ struct DriftHomeView: View {
 
     private var headerSubtitle: String {
         if kernelReady {
-            return "内核直刷可用（本机 \(SystemVersionName.display(version: localVersion, build: localBuild))）：现在就能刷，不用配对，也不用开隧道。"
+            return "内核直刷探针可用（本机 \(SystemVersionName.display(version: localVersion, build: localBuild))）：点「刷入」只验证通道，不写入壁纸。"
         }
         if localReady {
             return "本机直刷可用（本机 \(SystemVersionName.display(version: localVersion, build: localBuild))）：现在就能刷，不用配对，也不用开隧道。"
@@ -553,6 +557,22 @@ struct DriftHomeView: View {
         var runSelection = selection
         runSelection.resetModes = []
         runSelection.fullReset = false
+        // #319 phase one: a kernel pick runs the verification probe, not a
+        // flash. No channel mode is involved, so the run funnel below is
+        // skipped on purpose.
+        if manualPick == .kernel {
+            Task {
+                defer { session.flashCover = false }
+                let outcome = await session.runKernelProbe(identity: identity)
+                if outcome.ok {
+                    statusLine = outcome.message
+                } else {
+                    statusLine = nil
+                    session.errorText = outcome.message
+                }
+            }
+            return
+        }
         Task {
             defer { session.flashCover = false }
             // Collection #228: judge once on the state already on

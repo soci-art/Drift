@@ -65,3 +65,23 @@ permission notice in all copies or substantial portions of the
 software. The software is provided "as is", without warranty of any
 kind. The full license text ships with the upstream project at
 https://github.com/Mak5er/AirCard-iOS/blob/main/LICENSE
+
+Kernel chain — vendored from 3106
+---------------------------------
+The iOS 17/18 kernel chain behind the 内核直刷 channel (#319) is the
+kexploit chain of the 3106 project, vendored verbatim into
+`KernelDirect/Sources/KernelDirect/`:
+
+  Project:  3106
+  Author:   QuinnTang74
+  Source:   https://github.com/QuinnTang74/3106
+  Path:     ThreeOneOSSix/kexploit/ (kexploit_opa334, krw, kutils,
+            offsets, sandbox_escape, vnode, machine_info, xpaci)
+  License:  GNU General Public License v3.0 (copy in
+            `KernelDirect/LICENSE`)
+
+The sources are unmodified. The sandbox-escape segment traces back to
+FilzaSlop (0xjohnnydev / CrazyMind90). 3106's longjmp failure path is
+kept: a failed chain returns to the caller instead of ending the
+process; Drift does not use 3105's or the unpatched FilzaSlop version.
+Drift is AGPL-3.0, which is compatible with the GPL-3.0 sources here.
