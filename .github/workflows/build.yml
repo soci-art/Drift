@@ -164,22 +164,29 @@ jobs:
           cp build/Drift.ipa "$ASSET"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             echo "no release $TAG yet — creating it as an empty pre-release"
-            # Created through the API rather than `gh release create`:
-            # the CLI's failure mode here was silent (an empty message),
-            # while the API's error body names the actual HTTP reason.
-            if ! OUT="$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
-                  --raw-field tag_name="$TAG" \
-                  --raw-field target_commitish="$GITHUB_SHA" \
-                  --raw-field name="Drift $VERSION（预发行）" \
-                  --raw-field body="预发行构建，供测试使用。未签名 IPA，安装者自行签名；不影响正式版。" \
-                  -F prerelease=true 2>&1)"; then
+            # Created with curl rather than gh: both `gh release create`
+            # and `gh api` failed here with an EMPTY message, so this form
+            # records the HTTP status and response body, which can be put
+            # on the public run page when it fails.
+            RESP="$(mktemp)"
+            ERR="$(mktemp)"
+            BODY="$(printf '{"tag_name":"%s","target_commitish":"%s","name":"Drift %s（预发行）","body":"预发行构建，供测试使用。未签名 IPA，安装者自行签名；不影响正式版。","prerelease":true}' \
+              "$TAG" "$GITHUB_SHA" "$VERSION")"
+            CODE="$(curl -sS -o "$RESP" -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases" \
+              --data-binary "$BODY" 2>"$ERR")" || CODE="${CODE:-000}"
+            if [ "$CODE" != "201" ]; then
               # The run page's log needs a sign-in; an annotation is the
               # only part of a failure a public reader can see, so the
               # reason goes there as well as into the log.
-              echo "::error::release create $TAG failed: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-900)"
-              echo "$OUT" >&2
+              echo "::error::release create $TAG failed: HTTP ${CODE}; $(head -c 400 "$RESP" | tr '\n' ' '); $(head -c 300 "$ERR" | tr '\n' ' ')"
+              head -c 2000 "$RESP" >&2; echo >&2; cat "$ERR" >&2
               exit 1
             fi
+            rm -f "$RESP" "$ERR"
           fi
           if [ "$(gh release view "$TAG" --json isPrerelease --jq '.isPrerelease')" != "true" ]; then
             echo "error: $TAG is not a pre-release; refusing to replace its IPA" >&2
