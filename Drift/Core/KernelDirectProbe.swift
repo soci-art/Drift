@@ -45,11 +45,16 @@ enum KernelDirectProbe {
     static func run(log: @escaping @Sendable (String) -> Void) async -> Report {
         let version = WorseQueryEscape.processVersion
         let model = KernelDirectPremise.modelIdentifier
+        log("[内核探针] run() 已进入：iOS \(version)，机型 \(model)")
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(returning: execute(version: version,
-                                                       model: model,
-                                                       log: log))
+                let started = Date()
+                log("[内核探针] 后台执行线程已启动")
+                let report = execute(version: version, model: model, log: log)
+                log(String(format: "[内核探针] execute() 返回：passed=%@，总耗时 %.2f 秒",
+                           report.passed ? "true" : "false",
+                           Date().timeIntervalSince(started)))
+                continuation.resume(returning: report)
             }
         }
     }
@@ -134,7 +139,10 @@ enum KernelDirectProbe {
         if pastDeadline(deadline) {
             return timeoutReport(log: log, step: "5/5")
         }
-        let probe = writeReadDelete(in: located.store)
+        let selfTestStarted = Date()
+        log("[内核探针] 5/5 自检：开始在真实 Store 创建临时文件")
+        let probe = writeReadDelete(in: located.store, log: log)
+        log(String(format: "[内核探针] 5/5 自检结束：耗时 %.2f 秒", Date().timeIntervalSince(selfTestStarted)))
         if let failure = probe.failure {
             log("[内核探针] 5/5 失败：\(failure)")
             return Report(passed: false, failure: "PosterBoard 容器写-读-删自检没有通过：\(failure)。")
@@ -272,11 +280,13 @@ enum KernelDirectProbe {
         let failure: String?
     }
 
-    private static func writeReadDelete(in directory: String) -> WriteReadDeleteResult {
+    private static func writeReadDelete(in directory: String,
+                                         log: (String) -> Void) -> WriteReadDeleteResult {
         let name = ".drift-kernel-probe-\(getpid())-\(UUID().uuidString)"
         let path = (directory as NSString).appendingPathComponent(name)
         let expected: UInt8 = 0x31
 
+        log("[内核探针] 自检子阶段：open(O_CREAT|O_EXCL)")
         let fd = path.withCString { open($0, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0o600) }
         guard fd >= 0 else {
             return WriteReadDeleteResult(path: nil,
@@ -289,6 +299,7 @@ enum KernelDirectProbe {
             if !deleted { _ = path.withCString { unlink($0) } }
         }
 
+        log("[内核探针] 自检子阶段：write 1 byte")
         var byte = expected
         let written = withUnsafeBytes(of: &byte) { write(fd, $0.baseAddress, 1) }
         // Capture errno now: close()/unlink() below would replace it, and a
@@ -296,12 +307,14 @@ enum KernelDirectProbe {
         // whoever reads the log later.
         let writeErrno = errno
         if written == 1, lseek(fd, 0, SEEK_SET) == 0 {
+            log("[内核探针] 自检子阶段：read back")
             var got: UInt8 = 0
             let readCount = withUnsafeMutableBytes(of: &got) { read(fd, $0.baseAddress, 1) }
             readBack = readCount == 1 && got == expected
             wrote = true
         }
         close(fd)
+        log("[内核探针] 自检子阶段：unlink 临时文件")
         deleted = path.withCString { unlink($0) } == 0
 
         guard wrote else {
@@ -348,24 +361,30 @@ enum KernelDirectProbe {
             if !known.contains(trimmed) { known.append(trimmed) }
         }
         if !known.isEmpty {
-            log("[内核探针] 5/5 找法一（应用快照）：\(known.count) 个已知容器路径")
-            for container in known where isApplicationContainerPath(container) {
+            log("[容器定位] 缓存快照检查开始：\(known.count) 个已知容器路径")
+            let cacheStarted = Date()
+            for (index, container) in known.enumerated() where isApplicationContainerPath(container) {
+                log("[容器定位] 缓存候选 \(index + 1)/\(known.count)：检查商店目录")
                 if let store = storeIn(container: container) {
+                    log(String(format: "[容器定位] 缓存命中，耗时 %.2f 秒", Date().timeIntervalSince(cacheStarted)))
                     log("[内核探针] 5/5 找法一命中：\(container)")
                     return (LocatedStore(container: container,
                                          store: store,
                                          structureVersions: structureVersions(in: store)), false)
                 }
             }
+            log(String(format: "[容器定位] 缓存快照未命中，耗时 %.2f 秒", Date().timeIntervalSince(cacheStarted)))
             log("[内核探针] 5/5 找法一没有命中")
         } else {
-            log("[内核探针] 5/5 找法一（应用快照）：没有缓存路径")
+            log("[容器定位] 缓存快照为空：没有可复用的容器路径")
         }
 
         // Match 本机直刷's cold-start locator: segmented pathleak discovery
         // finds direct child container paths without first enumerating the
         // entire Applications directory. The kernel backend validates each
         // candidate by checking PosterBoard's real store directory.
+        log("[容器定位] 开始 pathleak 分段枚举")
+        let pathleakStarted = Date()
         let pathleak = PosterBoardContainerLocator.scanPathleak(
             deadline: deadline,
             log: log
@@ -379,6 +398,11 @@ enum KernelDirectProbe {
             }
             return nil
         }
+        log(String(format: "[容器定位] pathleak 返回：available=%@，timedOut=%@，segments=%d，candidates=%d，耗时 %.2f 秒",
+                   pathleak.available ? "true" : "false",
+                   pathleak.timedOut ? "true" : "false",
+                   pathleak.segments, pathleak.candidates,
+                   Date().timeIntervalSince(pathleakStarted)))
         if pathleak.timedOut {
             return (nil, true)
         }
@@ -396,10 +420,15 @@ enum KernelDirectProbe {
                 + String(format: "%.0f ms", pathleak.enumerationMilliseconds))
         }
 
+        log("[容器定位] pathleak 未命中，开始读取 Applications 根目录")
+        let directoryStarted = Date()
         guard let entries = try? manager.contentsOfDirectory(atPath: applicationsRoot) else {
+            log(String(format: "[容器定位] Applications 根目录读取失败，耗时 %.2f 秒", Date().timeIntervalSince(directoryStarted)))
             log("[内核探针] 5/5 列不出 \(applicationsRoot)")
             return (nil, false)
         }
+        log(String(format: "[容器定位] Applications 根目录读取完成：%d 个条目，耗时 %.2f 秒",
+                   entries.count, Date().timeIntervalSince(directoryStarted)))
         log("[内核探针] 5/5 应用数据容器 \(entries.count) 个，开始找法二、找法三")
 
         // Level 2 — the container-manager query: read each container's own
