@@ -14,6 +14,9 @@ struct DriftHomeView: View {
     /// change the judgement card re-renders from immediately. The same key
     /// backs `DriftJudge.manualPick`, which stays for non-view readers.
     @AppStorage(DriftJudge.manualKey) private var manualPickRaw: String?
+    /// The 内核直刷 switch from 实验性功能 (#329): while it is off the
+    /// method does not exist on this page at all.
+    @AppStorage(KernelDirectPremise.enabledKey) private var kernelEnabled = false
 
     @State private var imports: [PosterBoardTendie] = PosterBoardImports.load()
     @State private var importingPairing = false
@@ -37,6 +40,11 @@ struct DriftHomeView: View {
         DriftJudge.judge(identity: identity, selection: selection, pick: manualPick,
                          tunnelReady: tunnelReady)
     }
+    /// The method rows to draw: every pick, plus 内核直刷 only while
+    /// its 实验性功能 switch is on (#329).
+    private var visiblePicks: [DriftMethodPick] {
+        DriftMethodPick.allCases.filter { $0 != .kernel || kernelEnabled }
+    }
     private var selectedDescriptors: Int { selection.tendies.reduce(0) { $0 + $1.descriptorCount } }
     private var overLimit: Bool { selectedDescriptors > PosterBoardImports.descriptorLimit }
     private var canApply: Bool {
@@ -45,7 +53,17 @@ struct DriftHomeView: View {
         (session.paired || judgement.mode == .worseQuery)
             && !selection.tendies.isEmpty && !overLimit && !session.running
     }
+    /// The kernel channel's premise, judged on this device alone.
+    /// Ready only when the user turned it on in 实验性功能 and this
+    /// device is in its band and offset table (#319/#329).
+    private var kernelReady: Bool {
+        kernelEnabled && KernelDirectPremise.evaluate(version: localVersion).ready
+    }
+
     private var headerSubtitle: String {
+        if kernelReady {
+            return "内核直刷可用（本机 \(SystemVersionName.display(version: localVersion, build: localBuild))）：现在就能刷，不用配对，也不用开隧道。"
+        }
         if localReady {
             return "本机直刷可用（本机 \(SystemVersionName.display(version: localVersion, build: localBuild))）：现在就能刷，不用配对，也不用开隧道。"
         }
@@ -136,14 +154,22 @@ struct DriftHomeView: View {
             // in-process route only needs the app's own version and a granted
             // App Group, so pairing and the tunnel must not sit in front of it.
             DriftFlowLayout {
-                DriftPill(text: localReady ? "本机直刷可用" : "本机直刷不可用",
-                          tint: localReady ? .green : .orange)
+                // With the kernel method on and ready it leads the
+                // card (#329, Grace 2026-11-14: 「最上面就应该显示
+                // 内核直刷可用」); otherwise the local channel's
+                // verdict leads, as before.
+                if kernelReady {
+                    DriftPill(text: "内核直刷可用", tint: .green)
+                } else {
+                    DriftPill(text: localReady ? "本机直刷可用" : "本机直刷不可用",
+                              tint: localReady ? .green : .orange)
+                }
                 DriftPill(text: "本机 \(SystemVersionName.display(version: localVersion, build: localBuild))")
             }
             Text(headerSubtitle)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            if !localReady {
+            if !localReady && !kernelReady {
                 Text(InstallEnvironment.localReason(version: localVersion,
                                                     build: localBuild))
                     .font(.caption).foregroundStyle(.secondary)
@@ -181,9 +207,9 @@ struct DriftHomeView: View {
         return VStack(alignment: .leading, spacing: 10) {
             Text("刷入方式").font(.subheadline.weight(.semibold))
             VStack(spacing: 0) {
-                ForEach(DriftMethodPick.allCases) { pick in
+                ForEach(visiblePicks) { pick in
                     methodRow(pick, judged)
-                    if pick != DriftMethodPick.allCases.last {
+                    if pick != visiblePicks.last {
                         Divider().padding(.leading, 34)
                     }
                 }
@@ -196,21 +222,10 @@ struct DriftHomeView: View {
             } else if judged.isBlocked, let blocked = judged.blockedReason {
                 Text(blocked).font(.caption).foregroundStyle(.orange)
             }
-            if !DriftRestoreGate.isEnabled {
-                Button {
-                    session.noticeTitle = "恢复刷（已封存）"
-                    session.noticeText = DriftRestoreGate.notice
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "lock.fill").font(.caption)
-                        Text("恢复刷（已封存）").font(.caption.weight(.medium))
-                        Spacer()
-                        Text("点此看说明").font(.caption2)
-                    }
-                    .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
+            // Collection #329 (Grace, 2026-11-14): the sealed restore
+            // row that used to sit here is gone from Home entirely —
+            // 恢复刷 now lives only on the 实验性功能 page. The seal
+            // itself is unchanged.
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
@@ -223,7 +238,12 @@ struct DriftHomeView: View {
         let option = pick.channel.flatMap { channel in
             judged.options.first { $0.mode == channel }
         }
-        let available = pick == .auto ? !judged.isBlocked : (option?.available ?? false)
+        // The kernel pick has no channel row in the judgement; its
+        // availability is its own premise, judged on this device.
+        let kernelEval = pick == .kernel
+            ? KernelDirectPremise.evaluate(version: localVersion) : nil
+        let available = pick == .auto ? !judged.isBlocked
+            : (kernelEval?.ready ?? (option?.available ?? false))
         // Sealed (collection #142): the version is in range but this
         // install's signing grants no usable App Group — the row stays
         // visible like the sealed restore entry, but it cannot be picked;
@@ -269,6 +289,11 @@ struct DriftHomeView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if pick != .auto, let option, !option.available {
                         Text(option.reason)
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let kernelEval, !kernelEval.ready {
+                        Text(kernelEval.reason)
                             .font(.caption2).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }

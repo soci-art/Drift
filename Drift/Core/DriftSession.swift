@@ -598,14 +598,17 @@ struct DriftModeAvailability: Identifiable, Equatable {
     var id: String { mode.rawValue }
 }
 
-/// The user's method pick. Four methods, exactly as named: 自动选择 and the
-/// three channels. The sealed restore route is not a pick — it has its own
-/// greyed entry and never runs.
+/// The user's method pick. Five methods, exactly as named: 自动选择 and the
+/// four channels. The sealed restore route is not a pick — since #329 it
+/// has no Home entry at all and never runs. The kernel pick exists in the
+/// list only while its 实验性功能 switch is on (#329); its channel is not
+/// a `PosterBoardApplyMode` — the judge handles the pick directly.
 enum DriftMethodPick: String, CaseIterable, Identifiable {
     case auto
     case noRespring
     case respring
     case local
+    case kernel
 
     var id: String { rawValue }
 
@@ -615,6 +618,7 @@ enum DriftMethodPick: String, CaseIterable, Identifiable {
         case .noRespring: return "免注销直刷"
         case .respring: return "注销直刷"
         case .local: return "本机直刷"
+        case .kernel: return "内核直刷"
         }
     }
 
@@ -626,21 +630,23 @@ enum DriftMethodPick: String, CaseIterable, Identifiable {
         case .noRespring: return "隧道写入 · 刷完即生效，无需注销"
         case .respring: return "隧道写入 · 注销后生效"
         case .local: return "本机写入，免配对、免隧道"
+        case .kernel: return "内核写入，免配对、免隧道"
         }
     }
 
     /// The channel a manual pick forces; `.auto` decides at run time.
     var channel: PosterBoardApplyMode? {
         switch self {
-        case .auto: return nil
+        case .auto, .kernel: return nil
         case .noRespring: return .direct
         case .respring: return .airlift
         case .local: return .worseQuery
         }
     }
 
-    /// 本机直刷 carries the 实验 badge until the stage gate passes.
-    var isExperimental: Bool { self == .local }
+    /// 本机直刷 carried the 实验 badge until Grace graduated it
+    /// (#330, 2026-11-14); the badge belongs to 内核直刷 now.
+    var isExperimental: Bool { self == .kernel }
 
     /// Read a stored pick. Every value written by 2.0.0 or 1.x means the same
     /// thing now: let Drift choose. Only the three new raw values are picks.
@@ -649,6 +655,7 @@ enum DriftMethodPick: String, CaseIterable, Identifiable {
         case "noRespring": return .noRespring
         case "respring": return .respring
         case "local": return .local
+        case "kernel": return .kernel
         default: return .auto
         }
     }
@@ -892,6 +899,11 @@ enum DriftJudge {
     static func judge(identity: DeviceIdentity, selection: PosterBoardSelection,
                       pick: DriftMethodPick,
                       tunnelReady: Bool = false) -> DriftModeJudgement {
+        // A stored kernel pick with its 实验性功能 switch off reads
+        // as 自动选择 (#329): the method does not exist while the
+        // switch is off, so it cannot block a run either.
+        let pick = (pick == .kernel && !KernelDirectPremise.isEnabled)
+            ? DriftMethodPick.auto : pick
         let p = premises(identity: identity, tunnelReady: tunnelReady)
         let rows = optionRows(p, identity: identity)
 
@@ -925,6 +937,24 @@ enum DriftJudge {
             return p.restoreReady
                 ? judged(.backup, "包含商店数据库的壁纸包只能用恢复刷，刷完会重启")
                 : sealedBlocked("包含商店数据库的壁纸包只能用恢复刷，但恢复刷已封存，现在刷不了")
+        }
+
+        if pick == .kernel {
+            // The kernel channel lands separately (#319); until it
+            // does, a kernel pick is always blocked with the honest
+            // reason, and 自动选择 never considers it. Manual picks
+            // still never reroute to another channel.
+            let premise = KernelDirectPremise.evaluate(version: p.appVersion)
+            if !premise.inBand {
+                return blocked("你手动选了内核直刷：它只支持 iOS 17 / 18，这台的系统是 iOS \(p.appVersion)，不在这个范围。手动选定后不会自动改走别的通道。",
+                               notice: "内核直刷只支持 iOS 17 / 18。")
+            }
+            if !premise.chipCovered {
+                return blocked("你手动选了内核直刷：这台机型不在它的支持表里。手动选定后不会自动改走别的通道。",
+                               notice: "这台机型不在内核直刷的支持表里。")
+            }
+            return blocked("你手动选了内核直刷：通道正在接入，现在还刷不了。手动选定后不会自动改走别的通道。",
+                           notice: "内核直刷正在接入，现在还刷不了。")
         }
 
         if let channel = pick.channel {
