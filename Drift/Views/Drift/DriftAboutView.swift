@@ -114,7 +114,13 @@ struct DriftAboutView: View {
             Text("系统版本").frame(maxWidth: .infinity, alignment: .leading)
             Text("免注销直刷").frame(width: 56).minimumScaleFactor(0.85).lineLimit(1)
             Text("注销直刷").frame(width: 56).minimumScaleFactor(0.85).lineLimit(1)
-            Text("本机直刷").frame(width: 56).minimumScaleFactor(0.85).lineLimit(1)
+            // #333 (Grace, 2026-11-14): the local column must say up
+            // front that it needs a certificate, not only in the
+            // footnote under the table.
+            VStack(spacing: 0) {
+                Text("本机直刷").minimumScaleFactor(0.85).lineLimit(1)
+                Text("需证书").font(.caption2.weight(.semibold)).foregroundStyle(.orange)
+            }.frame(width: 56)
             Text("内核直刷").frame(width: 56).minimumScaleFactor(0.85).lineLimit(1)
         }
         .font(.caption.weight(.semibold)).foregroundStyle(.secondary)

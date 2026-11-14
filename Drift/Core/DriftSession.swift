@@ -796,7 +796,7 @@ enum DriftJudge {
             // Upstream AirCard's floor is 18.0 as well. The app still
             // installs on 17.0 (its own floor stays) for the sake of
             // the future on-device routes aimed at that band.
-            tunnelMissing = "设备系统是 iOS 17 这一代，隧道通道用不了：这一代系统会拒绝查壁纸文件夹，两条隧道都走不通。隧道通道需要 iOS 18.0 及以上。"
+            tunnelMissing = "设备系统是 iOS 17 这一代，隧道通道用不了。"
         } else if let lo = PosterBoard.compareVersion(identity.version, "26.0"), lo >= 0,
                   let hi = PosterBoard.compareVersion(identity.version, "26.2"), hi < 0 {
             // #331 (Grace, 2026-11-14): the coverage table is the
@@ -824,15 +824,19 @@ enum DriftJudge {
         let directReady = tunnelMissing == nil
             && PosterBoardDirect.isAvailable(deviceVersion: identity.version,
                                              buildVersion: identity.buildVersion)
+        // #332 (Grace, 2026-11-14): the Home rows show ONE short line per
+        // channel. When the tunnel premises themselves pass, a channel's
+        // own refusal can only be its version/build gate (both reason
+        // functions return nothing else), so the session layer states it
+        // in one line and leaves the band detail to the tutorial pages —
+        // the channels' own texts and gates are not touched.
         let directWhy = tunnelMissing
-            ?? PosterBoardDirect.unavailableReason(deviceVersion: identity.version,
-                                                   buildVersion: identity.buildVersion)
+            ?? (directReady ? "" : "这个系统版本不支持。")
         let respringReady = tunnelMissing == nil
             && Airlift.isSupported(deviceVersion: identity.version,
                                    buildVersion: identity.buildVersion)
         let respringWhy = tunnelMissing
-            ?? Airlift.unsupportedReason(deviceVersion: identity.version,
-                                         buildVersion: identity.buildVersion)
+            ?? (respringReady ? "" : "这个系统版本不支持。")
 
         return Premises(
             appVersion: appVersion,
@@ -1022,10 +1026,11 @@ enum DriftJudge {
         if let channel = firstAvailable(p) {
             return judged(channel, autoReason(channel))
         }
-        let whys = [PosterBoardApplyMode.worseQuery, .direct, .airlift]
-            .map { "\($0.shortTitle)：\(p.why($0))" }
-            .joined(separator: "；")
-        return blocked("自动选择现在没有可用通道（\(whys)），恢复刷又已封存，现在刷不了",
-                       notice: "现在没有可用的通道：\(whys)。")
+        // #332 (Grace, 2026-11-14): this summary used to concatenate all
+        // three channels' full reasons into one paragraph — the same
+        // texts the rows and the header card already showed. One line is
+        // enough here; each row above carries its own short reason.
+        return blocked("自动选择：现在没有能用的方式。",
+                       notice: "现在没有能用的方式。")
     }
 }
