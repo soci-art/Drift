@@ -609,11 +609,14 @@ final class DriftSession: ObservableObject {
         }
 
         flashStage = "内核读写已建立，正在写入 PosterBoard 描述文件"
+        DriftEngine.shared.log("[内核直刷] 探针通过，进入正式写入阶段")
+        let writerStarted = Date()
         do {
             let outcome: KernelDirectWriter.Outcome = try await withCheckedThrowingContinuation {
                 continuation in
                 DispatchQueue.global(qos: .userInitiated).async {
                     do {
+                        DriftEngine.shared.log("[内核直刷] KernelDirectWriter.apply() 已启动")
                         let result = try KernelDirectWriter.apply(
                             selection: selection,
                             containerPath: containerPath,
@@ -625,8 +628,11 @@ final class DriftSession: ObservableObject {
                                 DriftEngine.shared.log(String(format: "[内核写入] 进度 %.0f%%", value))
                             }
                         )
+                        DriftEngine.shared.log(String(format: "[内核直刷] KernelDirectWriter.apply() 返回：%d 个描述符，耗时 %.2f 秒",
+                                                       result.installedCount, Date().timeIntervalSince(writerStarted)))
                         continuation.resume(returning: result)
                     } catch {
+                        DriftEngine.shared.log("[内核直刷] KernelDirectWriter.apply() 抛出错误：\(error.localizedDescription)")
                         continuation.resume(throwing: error)
                     }
                 }
