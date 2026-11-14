@@ -112,8 +112,8 @@ enum PosterBoardLocal {
     // MARK: - Warm location
 
     /// Locate PosterBoard in the background once per process launch, after the
-    /// first frame, only when the in-process route is usable and no container
-    /// is cached. The work is the same `openContainer` the apply flow uses;
+    /// first frame, whenever the in-process route is usable. A cached path is
+    /// still verified through the same `openContainer` the apply flow uses;
     /// this method deliberately never writes, flashes or changes selection.
     static func startPrewarmIfNeeded() {
         guard WorseQueryEscape.isAvailable(deviceVersion: WorseQueryEscape.processVersion,
@@ -127,11 +127,10 @@ enum PosterBoardLocal {
             return
         }
         prewarmStarted = true
-        let cacheEmpty = cachedContainer.isEmpty
+        let cacheState = cachedContainer.isEmpty ? "缓存为空" : "先验证已有缓存"
         locationCondition.unlock()
-        guard cacheEmpty else { return }
 
-        AppLog.write("预热定位：开始（触发时缓存为空）")
+        AppLog.write("预热定位：开始（\(cacheState)）")
         let started = DispatchTime.now()
         Task.detached(priority: .utility) {
             do {
@@ -590,11 +589,8 @@ enum PosterBoardLocal {
 
     // MARK: - Container
 
-    /// How many candidate probes may be in flight at once. The probes are
-    /// independent (one containermanagerd query + one kernel grant each), but
-    /// concurrent grants have no prior evidence on these devices; 6 is the
-    /// conservative middle of the 4–8 range and one constant so a device that
-    /// refuses them can fall back by changing only this number.
+    /// How many candidate probes run concurrently in the first pass. Refused
+    /// paths are collected and re-asked serially after the complete inode scan.
     private static let probeConcurrency = 6
 
     /// One cold-location scan at a time. A prewarm and a formal caller share
@@ -662,6 +658,23 @@ enum PosterBoardLocal {
     }
 
     private static func locateContainer(log: @escaping @Sendable (String) -> Void) throws -> (path: String, handle: Int64) {
+        var lastFailure: DriftError?
+        for round in 1...3 {
+            do {
+                let opened = try locateContainerOnce(log: log)
+                if round > 1 { log("本机定位：第 \(round) 轮命中") }
+                return opened
+            } catch let error as DriftError where error.message.hasPrefix("这次没找到壁纸商店") {
+                lastFailure = error
+                if round < 3 {
+                    log("本机定位：第 \(round) 轮没有找到壁纸商店，自动开始第 \(round + 1) 轮（最多 3 轮）")
+                }
+            }
+        }
+        throw lastFailure ?? DriftError("这次没找到壁纸商店。")
+    }
+
+    private static func locateContainerOnce(log: @escaping @Sendable (String) -> Void) throws -> (path: String, handle: Int64) {
         log("本机通道 App Group：\(WorseQueryEscape.discoveredGroupIdentifier ?? "没有可用的组")")
         let locateStart = DispatchTime.now()
         log("正在定位壁纸商店，第一次会慢一些")
@@ -702,7 +715,9 @@ enum PosterBoardLocal {
         }
         if !known.isEmpty {
             log("已知容器路径：\(known.count) 个（隧道缓存 / 旧回执）")
-            if let path = tryConsumePosterBoard(among: known, label: "已知路径", log: log) {
+            var ignoredRefusals: [String] = []
+            if let path = tryConsumePosterBoard(among: known, label: "已知路径",
+                                                deferredRefused: &ignoredRefusals, log: log) {
                 let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
                 cachedContainer = path
                 log(String(format: "PosterBoard container resolved from a known path: %@（handle %lld，总定位 %.0f ms）",
@@ -722,6 +737,7 @@ enum PosterBoardLocal {
             var segments = 0
             var candidates = 0
             var enumerationMs: Double = 0
+            var refusedCandidates: [String] = []
 
             while scanned < maxInode {
                 let start = scanned + 1
@@ -737,6 +753,7 @@ enum PosterBoardLocal {
 
                 if let path = tryConsumePosterBoard(among: leaked,
                                                     label: "pathleak 第 \(segments) 段",
+                                                    deferredRefused: &refusedCandidates,
                                                     log: log) {
                     let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
                     cachedContainer = path
@@ -752,6 +769,39 @@ enum PosterBoardLocal {
                        applicationsRoot, maxInode, segments, candidates, enumerationMs))
         } else {
             log("pathleak：无法建立 inode 上限临时文件")
+        }
+
+        // A refused candidate is not proof that it is not PosterBoard. Finish
+        // the inode walk before asking each refused path once more, serially.
+        if !refusedCandidates.isEmpty {
+            var seen = Set<String>()
+            let candidatesToRetry = refusedCandidates.filter { seen.insert($0).inserted }
+            log("pathleak 补问开始：候选 \(candidatesToRetry.count) 个，逐个串行重试")
+            for (index, candidate) in candidatesToRetry.enumerated() {
+                log("pathleak 补问第 \(index + 1)/\(candidatesToRetry.count) 个：consume path=\(candidate) createDirectory=false")
+                let probeHandle: Int64
+                do {
+                    probeHandle = try WorseQueryEscape.consume(path: candidate, createDirectory: false)
+                } catch {
+                    log("pathleak 补问结果：\(candidate) 扩展被拒（\(error.localizedDescription)）")
+                    continue
+                }
+
+                let identified = isPosterBoardContainer(atPath: candidate)
+                WorseQueryEscape.release(probeHandle)
+                guard identified else {
+                    log("pathleak 补问结果：\(candidate) consume 成功，但身份核对未通过")
+                    continue
+                }
+
+                log("pathleak 补问命中：第 \(index + 1)/\(candidatesToRetry.count) 个候选身份核对通过：\(candidate)")
+                let handle = try WorseQueryEscape.consume(path: candidate, createDirectory: true)
+                cachedContainer = candidate
+                log(String(format: "PosterBoard container resolved from serial retry: %@（handle %lld，总定位 %.0f ms）",
+                           candidate, handle, millis(since: locateStart)))
+                return (candidate, handle)
+            }
+            log("pathleak 补问结束：首问被拒的候选均未命中")
         }
 
         // 3. The root extension is an optional accelerator, never a gate.
@@ -779,18 +829,14 @@ enum PosterBoardLocal {
         }
 
         log(String(format: "容器定位失败：总耗时 %.0f ms", millis(since: locateStart)))
-        throw DriftError("找不到 PosterBoard 的容器：pathleak 没有枚举到可用的应用容器"
-            + (rootFailure.isEmpty ? "。" : "，根目录扩展也被拒绝（\(rootFailure)）。")
-            + "这个系统可能还没有壁纸商店的数据目录；先添加一张系统壁纸，或者改用隧道通道。")
+        throw DriftError("这次没找到壁纸商店。")
     }
 
-    /// Try each candidate as a container with a bounded parallel scan. A probe
-    /// consumes without creating anything, checks the store directory by
-    /// content (the only acceptance rule), then releases; the first pass wins
-    /// and the rest are cancelled. A candidate the kernel will not extend is
-    /// skipped, not fatal.
+    /// Probe candidates in parallel once; return refused paths for the
+    /// caller's serial second ask after the complete inode scan.
     private static func tryConsumePosterBoard(among candidates: [String],
                                               label: String,
+                                              deferredRefused: inout [String],
                                               log: @escaping @Sendable (String) -> Void) -> String? {
         let started = DispatchTime.now()
         var unique: [String] = []
@@ -804,6 +850,7 @@ enum PosterBoardLocal {
         var cancelled = false
         var consumed = 0
         var refused = 0
+        var refusedPaths = Set<String>()
         var identified = 0
         var probed = 0
         let semaphore = DispatchSemaphore(value: probeConcurrency)
@@ -846,11 +893,23 @@ enum PosterBoardLocal {
                         lock.unlock()
                     }
                 } catch {
-                    lock.lock(); refused += 1; lock.unlock()
+                    lock.lock()
+                    refused += 1
+                    refusedPaths.insert(candidate)
+                    lock.unlock()
                 }
             }
         }
         group.wait()
+
+        // Preserve the original inode/candidate order while accumulating
+        // refusals from each parallel segment.
+        var seenDeferred = Set(deferredRefused)
+        for candidate in unique where refusedPaths.contains(candidate) {
+            if seenDeferred.insert(candidate).inserted {
+                deferredRefused.append(candidate)
+            }
+        }
 
         let elapsed = millis(since: started)
         let average = probed > 0 ? elapsed / Double(probed) : 0
@@ -859,22 +918,6 @@ enum PosterBoardLocal {
                    average, elapsed))
         if refused > 0 {
             log("\(label)：\(refused) 个候选容器扩展被拒绝，继续尝试其余路径")
-        }
-        // Every probe was refused: that is the one pattern concurrency itself
-        // could cause (containermanagerd throttling), so retry once serially.
-        // A normal scan that simply found nothing does not take this path.
-        if found == nil, !unique.isEmpty, refused == probed {
-            log("\(label)：并发探测全部被拒，退回串行重试一次")
-            for candidate in unique {
-                do {
-                    let handle = try WorseQueryEscape.consume(path: candidate, createDirectory: false)
-                    let ok = isPosterBoardContainer(atPath: candidate)
-                    WorseQueryEscape.release(handle)
-                    if ok { return candidate }
-                } catch {
-                    continue
-                }
-            }
         }
         return found
     }

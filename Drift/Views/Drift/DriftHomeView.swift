@@ -526,7 +526,11 @@ struct DriftHomeView: View {
                 statusLine = outcome.message
             } else {
                 statusLine = nil
-                session.errorText = outcome.message
+                if outcome.message.hasPrefix("这次没找到壁纸商店") {
+                    session.presentError(outcome.message, retry: { self.runApply() })
+                } else {
+                    session.errorText = outcome.message
+                }
             }
         }
     }

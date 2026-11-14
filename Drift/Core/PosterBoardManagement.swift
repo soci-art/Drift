@@ -125,11 +125,7 @@ enum PosterBoardManagement {
             return states
         }
 
-        struct GroupKey: Hashable {
-            let container: String
-            let generation: Int
-        }
-        var groups: [GroupKey: [PosterBoardLocalReceipt]] = [:]
+        var groups: [String: [Int: [PosterBoardLocalReceipt]]] = [:]
         for receipt in tunnel {
             guard tunnelSupports(receipt.extensionID) else {
                 states[receipt.id] = .unsupported(
@@ -141,25 +137,53 @@ enum PosterBoardManagement {
                 states[receipt.id] = .unknown("回执里缺少结构版本或容器路径，无法核对。")
                 continue
             }
-            groups[GroupKey(container: container, generation: receipt.generation),
-                   default: []].append(receipt)
+            var containerGroups = groups[container] ?? [:]
+            var generationReceipts = containerGroups[receipt.generation] ?? []
+            generationReceipts.append(receipt)
+            containerGroups[receipt.generation] = generationReceipts
+            groups[container] = containerGroups
         }
 
-        for (key, group) in groups {
+        // Read the root once per container; never ask store_list for a
+        // generation absent from that root listing.
+        for (container, generationGroups) in groups {
+            let availableGenerations: Set<Int>
             do {
-                let items = try await Airlift.posterStoreList(
+                availableGenerations = Set(try await Airlift.posterStoreGenerations(
                     pairingPath: AppPaths.pairingFile.path,
-                    containerPath: key.container,
-                    structureVersion: key.generation)
-                let present = Set(items.map { "\($0.extension)/\($0.uuid)" })
-                for receipt in group {
-                    states[receipt.id] = present.contains(
-                        "\(receipt.extensionID)/\(receipt.folderName)") ? .inStore : .absent
-                }
-                log("管理页对账：结构版本 \(key.generation) 枚举到 \(items.count) 个描述符。")
+                    containerPath: container))
+                log("管理页对账：商店根目录结构版本 \(availableGenerations.sorted())。")
             } catch {
-                for receipt in group {
-                    states[receipt.id] = .unknown("商店枚举失败：\(error.localizedDescription)")
+                for group in generationGroups.values {
+                    for receipt in group {
+                        states[receipt.id] = .unknown("商店根目录枚举失败：\(error.localizedDescription)")
+                    }
+                }
+                continue
+            }
+
+            for generation in generationGroups.keys.sorted() {
+                guard let group = generationGroups[generation] else { continue }
+                guard availableGenerations.contains(generation) else {
+                    for receipt in group { states[receipt.id] = .absent }
+                    log("管理页对账：结构版本 \(generation) 不在商店根目录中，跳过细问。")
+                    continue
+                }
+                do {
+                    let items = try await Airlift.posterStoreList(
+                        pairingPath: AppPaths.pairingFile.path,
+                        containerPath: container,
+                        structureVersion: generation)
+                    let present = Set(items.map { "\($0.extension)/\($0.uuid)" })
+                    for receipt in group {
+                        states[receipt.id] = present.contains(
+                            "\(receipt.extensionID)/\(receipt.folderName)") ? .inStore : .absent
+                    }
+                    log("管理页对账：结构版本 \(generation) 枚举到 \(items.count) 个描述符。")
+                } catch {
+                    for receipt in group {
+                        states[receipt.id] = .unknown("商店枚举失败：\(error.localizedDescription)")
+                    }
                 }
             }
         }
@@ -281,9 +305,23 @@ enum PosterBoardManagement {
                 return ([], "隧道", "隧道容器未读到，无法列出商店。")
             }
             if !container.hasSuffix("/") { container += "/" }
+            let availableGenerations: Set<Int>
+            do {
+                availableGenerations = Set(try await Airlift.posterStoreGenerations(
+                    pairingPath: AppPaths.pairingFile.path,
+                    containerPath: container))
+            } catch {
+                return ([], "隧道", "隧道商店没读到：\(error.localizedDescription)")
+            }
+            guard !availableGenerations.isEmpty else {
+                log("隧道商店根目录为空，没有可管理的描述符。")
+                return ([], "隧道", nil)
+            }
+            log("隧道商店根目录：实际存在的结构版本 \(availableGenerations.sorted())。")
+
             var entries: [ManagedEntry] = []
             var seen = Set<String>()
-            for generation in [61, 62, 63, 60, 64] {
+            for generation in [61, 62, 63, 60, 64] where availableGenerations.contains(generation) {
                 do {
                     let items = try await Airlift.posterStoreList(
                         pairingPath: AppPaths.pairingFile.path,
@@ -327,7 +365,9 @@ enum PosterBoardManagement {
                 }
                 return (entries, "本机", nil)
             } catch {
-                return ([], "本机", "本机商店打不开：\(error.localizedDescription)")
+                let message = error.localizedDescription
+                return ([], "本机", message.hasPrefix("这次没找到壁纸商店")
+                    ? message : "本机商店打不开：\(message)")
             }
         }
 

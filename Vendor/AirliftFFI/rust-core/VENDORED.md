@@ -431,3 +431,22 @@ absent store generation is an empty list, not a failure)
   fresh-service retry still runs first, so a transient failure on
   an existing directory is not reclassified. No other flow
   (install, delete, audits) changed.
+
+
+---
+
+Drift local change, 2026-11-14 (collection #321: enumerate store root before
+asking individual generations)
+----------------------------------------
+- `src/poster_store.rs` — adds a DVT deviceinfo listing of the
+  `PRBPosterExtensionDataStore` root and returns its positive numeric
+  generation directories. The root query gets one fresh-service retry;
+  when both attempts return `no data in reply`, the whole store is
+  reported as empty. Other connection and listing errors remain errors.
+- `src/lib.rs` / `include/airlift.h` — add the
+  `al_poster_store_generations` C FFI.
+- Drift's Swift call layer adds `Airlift.posterStoreGenerations`.
+  Management and receipt reconciliation list only generations found
+  at the root; the existing preference order and #320 per-generation
+  missing-path fallback are retained. No flash, delete, or store-write
+  path changed.

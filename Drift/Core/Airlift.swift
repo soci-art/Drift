@@ -381,6 +381,36 @@ enum Airlift {
         let items: [PosterStoreItem]
     }
 
+    private struct PosterStoreGenerationsReply: Decodable {
+        let generations: [Int]
+    }
+
+    /// Read the generation directories present under the PosterBoard store root.
+    /// A missing store root is represented as an empty generation list.
+    static func posterStoreGenerations(pairingPath: String,
+                                       containerPath: String) async throws -> [Int] {
+        try await offMainActor {
+            var outJSON: UnsafeMutablePointer<CChar>?
+            var outStatus: UnsafeMutablePointer<CChar>?
+            var outError: UnsafeMutablePointer<CChar>?
+            let rc = al_poster_store_generations(pairingPath, containerPath,
+                                                 logTrampoline, nil,
+                                                 &outJSON, &outStatus, &outError)
+            let json = take(outJSON)
+            _ = take(outStatus)
+            let message = take(outError)
+            guard rc == 0 else {
+                throw DriftError(message ?? "商店根目录枚举返回了 \(rc)。")
+            }
+            guard let json,
+                  let reply = try? JSONDecoder().decode(PosterStoreGenerationsReply.self,
+                                                        from: Data(json.utf8)) else {
+                throw DriftError("商店根目录枚举的返回无法解析。")
+            }
+            return reply.generations
+        }
+    }
+
     /// Enumerate the descriptors actually present in the device's PosterBoard
     /// store — the read side of the chassis rule that store state is read,
     /// not guessed. Scoped by the Rust side to the CollectionsPoster

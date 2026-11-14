@@ -34,9 +34,9 @@ struct DriftRootView: View {
             // logging is on when the tunnel core starts.
             DriftLaunchTasks.runAfterFirstFrame()
             // Item 3: spend the cold-location bill now, while the user is
-            // reading the guide or importing packs. The method itself is a
-            // no-op when the in-process route is unavailable or a container
-            // is already cached.
+            // reading the guide or importing packs. The method is a no-op
+            // when the in-process route is unavailable; a cached path is
+            // verified rather than assumed to be valid.
             PosterBoardLocal.startPrewarmIfNeeded()
             session.bootstrap()
             startLiveDetection()
@@ -83,9 +83,15 @@ struct DriftRootView: View {
         }
         .alert("出错了", isPresented: Binding(
             get: { session.errorText != nil },
-            set: { if !$0 { session.errorText = nil } }
+            set: { if !$0 { session.dismissError() } }
         )) {
-            Button("知道了") { session.errorText = nil }
+            if let retry = session.errorRetryAction {
+                Button("再试一次") {
+                    session.dismissError()
+                    retry()
+                }
+            }
+            Button("知道了") { session.dismissError() }
         } message: {
             Text(session.errorText ?? "")
         }

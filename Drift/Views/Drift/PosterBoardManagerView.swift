@@ -229,7 +229,11 @@ struct PosterBoardManagerView: View {
         sourceLabel = result.source
         loadError = result.reason
         if let reason = result.reason {
-            session.errorText = reason
+            if reason.hasPrefix("这次没找到壁纸商店") {
+                session.presentError(reason, retry: { Task { await self.load() } })
+            } else {
+                session.errorText = reason
+            }
         }
         selected = selected.intersection(Set(entries.map(\.id)))
     }

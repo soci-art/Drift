@@ -272,38 +272,16 @@ final class DriftEngine {
                 deviceVersion: WorseQueryEscape.processVersion,
                 buildVersion: WorseQueryEscape.processBuildVersion)
             log("PosterBoard: \(selection.describe) — on-device, no tunnel")
-            // #251 (Grace, 2026-11-12): a user who skips the setup
-            // flow and flashes straight away can reach the local
-            // channel before PosterBoard's store has been found or
-            // created yet. The channel then fails discovery with
-            // 「找不到 PosterBoard 的容器」 — that means "not ready
-            // yet", not "broken", and Grace does not want it shown.
-            // The flash cover (「正在刷入」) is already up for the
-            // whole apply, so just wait on it: retry for up to two
-            // minutes, logging each wait. The failure is thrown by
-            // container discovery, before anything is written, so
-            // retrying the apply is safe. Only a failure that
-            // survives the whole window is reported, with the
-            // original guidance (add a system wallpaper first).
-            let outcome: PosterBoardLocalOutcome
-            var waitedSeconds = 0
-            while true {
-                do {
-                    outcome = try await PosterBoardLocal.apply(
-                        selection: selection,
-                        templates: [],
-                        deviceVersion: WorseQueryEscape.processVersion,
-                        log: { AppLog.write($0) },
-                        progress: { overall in self.logProgress("posterboard local", overall) })
-                    break
-                } catch let error as DriftError
-                    where error.message.hasPrefix("找不到 PosterBoard 的容器")
-                        && waitedSeconds < 120 {
-                    waitedSeconds += 3
-                    log("PosterBoard local: 壁纸商店还没定位到，等 3 秒再试（已等 \(waitedSeconds) 秒）")
-                    try? await Task.sleep(nanoseconds: 3_000_000_000)
-                }
-            }
+            // #251: container discovery is read-only and completes its own
+            // bounded retry before this apply can write anything. A failed
+            // lookup is therefore safe to offer as a user-triggered retry;
+            // PosterBoardLocal performs at most three complete location rounds.
+            let outcome = try await PosterBoardLocal.apply(
+                selection: selection,
+                templates: [],
+                deviceVersion: WorseQueryEscape.processVersion,
+                log: { AppLog.write($0) },
+                progress: { overall in self.logProgress("posterboard local", overall) })
             lastPosterBoardEffect = outcome.effect
             lastVerification = outcome.verification
             log("Apply succeeded: the wallpapers are in PosterBoard's container; "

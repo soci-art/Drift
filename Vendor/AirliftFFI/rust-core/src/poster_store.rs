@@ -212,6 +212,13 @@ fn json_escape(s: &str) -> String {
     out
 }
 
+fn store_root_abs(container_path: &str) -> String {
+    format!(
+        "{}/Library/Application Support/PRBPosterExtensionDataStore",
+        container_path.trim_end_matches('/')
+    )
+}
+
 fn extensions_abs(container_path: &str, struct_version: i64) -> String {
     format!(
         "{}/Library/Application Support/PRBPosterExtensionDataStore/{}/Extensions",
@@ -489,6 +496,23 @@ async fn dvt_list_dir(
     Ok(out)
 }
 
+fn parse_store_generations(names: Vec<String>) -> Vec<i64> {
+    let mut generations: Vec<i64> = names
+        .into_iter()
+        .filter_map(|name| {
+            let generation = name.parse::<i64>().ok()?;
+            if generation > 0 && generation.to_string() == name {
+                Some(generation)
+            } else {
+                None
+            }
+        })
+        .collect();
+    generations.sort_unstable();
+    generations.dedup();
+    generations
+}
+
 // ---------------------------------------------------------------------------
 // List flow
 // ---------------------------------------------------------------------------
@@ -580,6 +604,81 @@ async fn store_list(
     logger.log(format!(
         "airlift: airlift.poster_store.list.end count={} duration_ms={}",
         items.len(),
+        started.elapsed().as_millis()
+    ));
+    Ok(json)
+}
+
+/// List positive numeric generation directories at the store root using DVT.
+async fn generations_attempt(
+    pairing_bytes: &[u8],
+    store_root: &str,
+    logger: &PSLogger,
+) -> StoreResult<Vec<i64>> {
+    let (_adapter, _handshake, mut server) = connect_device_info(pairing_bytes, logger).await?;
+    let mut info = device_info_client(&mut server).await?;
+    let names = dvt_list_dir(&mut info, store_root)
+        .await
+        .map_err(|message| (StoreStatus::ListFailed, message))?;
+    Ok(parse_store_generations(names))
+}
+
+async fn store_generations(
+    pairing_path: String,
+    container_path: String,
+    logger: &PSLogger,
+) -> StoreResult<String> {
+    let started = Instant::now();
+    logger.log("airlift: airlift.poster_store.generations.begin");
+
+    let pairing_bytes = std::fs::read(&pairing_path).map_err(|e| {
+        (
+            StoreStatus::ConnectFailed,
+            format!("Failed to read pairing file at {pairing_path}: {e}"),
+        )
+    })?;
+    let target = store_root_abs(&container_path);
+
+    // Retry a failed DVT listing on a fresh tunnel and service. A missing
+    // store root is the expected empty-store result, not an error.
+    let mut generations: Option<Vec<i64>> = None;
+    let mut last_error = String::new();
+    for attempt in 1..=2 {
+        match generations_attempt(&pairing_bytes, &target, logger).await {
+            Ok(found) => {
+                generations = Some(found);
+                break;
+            }
+            Err((status, message)) => {
+                if matches!(status, StoreStatus::ConnectFailed | StoreStatus::ServiceUnavailable) {
+                    return Err((status, message));
+                }
+                last_error = message;
+                if attempt == 1 {
+                    logger.log(
+                        "airlift: airlift.poster_store.generations.retry attempt=2 fresh_service=true query_only=true",
+                    );
+                }
+            }
+        }
+    }
+
+    let generations = match generations {
+        Some(found) => found,
+        None if last_error.contains("no data in reply") => {
+            logger.log(format!(
+                "airlift: airlift.poster_store.generations.absent path={target} - store root not present, treated as an empty store"
+            ));
+            Vec::new()
+        }
+        None => return Err((StoreStatus::ListFailed, last_error)),
+    };
+    let values = generations.iter().map(|value| value.to_string()).collect::<Vec<_>>().join(",");
+    let json = format!("{{\"generations\":[{values}]}}");
+    logger.log(format!(
+        "airlift: airlift.poster_store.generations.end count={} generations={:?} duration_ms={}",
+        generations.len(),
+        generations,
         started.elapsed().as_millis()
     ));
     Ok(json)
@@ -1899,6 +1998,55 @@ unsafe fn write_outs(
 
 /// # Safety
 /// All pointer args must be null or valid for their documented types.
+pub unsafe fn poster_store_generations(
+    pairing_path: *const c_char,
+    container_path: *const c_char,
+    log_cb: ALLogCallback,
+    ctx: *mut c_void,
+    out_json: *mut *mut c_char,
+    out_status: *mut *mut c_char,
+    out_error: *mut *mut c_char,
+) -> i32 {
+    let pairing_path = opt_str(pairing_path, "airlift_pairing.plist");
+    let container_path = opt_str(container_path, "");
+    let ctx_usize = ctx as usize;
+
+    let res = crate::ffi_util::run_with_large_stack("al_poster_store_generations", move || {
+        let logger = PSLogger { cb: log_cb, ctx: ctx_usize as *mut c_void };
+        idevice_ffi::run_sync_local(async move {
+            match tokio::time::timeout(
+                Duration::from_secs(120),
+                store_generations(pairing_path, container_path, &logger),
+            )
+            .await
+            {
+                Ok(Ok(json)) => (Some(json), StoreStatus::Ok, None),
+                Ok(Err((status, message))) => {
+                    logger.log(format!(
+                        "airlift: airlift.poster_store.generations.end status={} error={message}",
+                        status.as_str()
+                    ));
+                    (None, status, Some(message))
+                }
+                Err(_) => (
+                    None,
+                    StoreStatus::AfcFailed,
+                    Some("poster store generations timed out after 120s".to_string()),
+                ),
+            }
+        })
+    });
+
+    let (json, status, error) = match res {
+        Ok(triple) => triple,
+        Err(panic_msg) => (None, StoreStatus::ConnectFailed, Some(panic_msg)),
+    };
+    write_outs(out_json, out_status, out_error, json.as_deref(), status, error.as_deref());
+    if status == StoreStatus::Ok { 0 } else { 1 }
+}
+
+/// # Safety
+/// All pointer args must be null or valid for their documented types.
 /// `out_json` / `out_status` / `out_error` receive heap strings owned by
 /// the caller (free with al_string_free) when non-null.
 pub unsafe fn poster_store_list(
@@ -2040,6 +2188,24 @@ pub unsafe fn poster_store_delete(
 // ---------------------------------------------------------------------------
 // Tests (run #115 assertion-level self-checks)
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod generation_listing_tests {
+    use super::parse_store_generations;
+
+    #[test]
+    fn only_positive_numeric_generation_directories_are_kept() {
+        let names = vec![
+            "61".to_string(),
+            "Extensions".to_string(),
+            "0".to_string(),
+            "-1".to_string(),
+            "064".to_string(),
+            "61".to_string(),
+        ];
+        assert_eq!(parse_store_generations(names), vec![61]);
+    }
+}
 
 #[cfg(test)]
 mod cleanup_scope_tests {

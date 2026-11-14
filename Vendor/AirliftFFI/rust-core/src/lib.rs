@@ -464,6 +464,44 @@ pub unsafe extern "C" fn al_poster_refresh(
     }
 }
 
+/// PosterBoard store-root listing: return numeric generation directories
+/// present under PRBPosterExtensionDataStore. Missing root returns an empty
+/// list; other DVT failures are reported. Blocks; run off the main thread.
+#[no_mangle]
+pub unsafe extern "C" fn al_poster_store_generations(
+    pairing_path: *const c_char,
+    container_path: *const c_char,
+    log_cb: exploit::ALLogCallback,
+    ctx: *mut c_void,
+    out_json: *mut *mut c_char,
+    out_status: *mut *mut c_char,
+    out_error: *mut *mut c_char,
+) -> i32 {
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        poster_store::poster_store_generations(
+            pairing_path,
+            container_path,
+            log_cb,
+            ctx,
+            out_json,
+            out_status,
+            out_error,
+        )
+    }));
+    match res {
+        Ok(rc) => rc,
+        Err(e) => {
+            if !out_status.is_null() {
+                *out_status = ffi_util::cstr("connectFailed");
+            }
+            if !out_error.is_null() {
+                *out_error = ffi_util::cstr(format!("Rust panic in al_poster_store_generations: {e:?}"));
+            }
+            1
+        }
+    }
+}
+
 /// PosterBoard data-store enumeration (local addition, see
 /// src/poster_store.rs): lists the descriptors actually present in the
 /// device's PRBPosterExtensionDataStore via AFC over the RSD tunnel.

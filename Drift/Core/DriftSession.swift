@@ -19,7 +19,10 @@ final class DriftSession: ObservableObject {
     @Published private(set) var pairingRaw: String?
     /// A user-presentable connection/run problem, shown as a banner by the
     /// shell. Cleared by the next successful step.
-    @Published var errorText: String?
+    @Published var errorText: String? {
+        willSet { errorRetryAction = nil }
+    }
+    @Published var errorRetryAction: (() -> Void)?
     /// True while a wallpaper run is in flight.
     @Published private(set) var running = false
     /// The full-screen "flashing" cover (collection #150, corrected
@@ -88,6 +91,17 @@ final class DriftSession: ObservableObject {
     private init() {}
 
     var paired: Bool { pairingRaw != nil }
+
+    /// Present an error with an optional user-triggered retry action.
+    func presentError(_ message: String, retry: (() -> Void)? = nil) {
+        errorText = message
+        errorRetryAction = retry
+    }
+
+    func dismissError() {
+        errorText = nil
+        errorRetryAction = nil
+    }
 
     // MARK: - Launch
 
