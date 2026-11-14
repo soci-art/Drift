@@ -92,7 +92,9 @@ enum KernelDirectProbe {
             log("[内核探针] 2/5 本进程的脱沙盒已生效，跳过内核链（同一进程不重跑链）")
         } else {
             log("[内核探针] 2/5 启动内核链（上限 \(Int(timeout)) 秒）…")
-            let code = runChainWithDeadline(deadline: deadline)
+            fflush(stdout)
+            let code = runChainWithDeadline(deadline: deadline,
+                                            log: { log($0) })
             let elapsed = Date().timeIntervalSince(started)
             if code == codeTimedOut {
                 chainLock.lock(); chainFailedInThisProcess = true; chainLock.unlock()
@@ -181,7 +183,18 @@ enum KernelDirectProbe {
     /// Runs `kexploit_opa334` + `sandbox_escape` on a dedicated thread and
     /// waits at most until `deadline`. A timed-out thread cannot be killed;
     /// the caller treats the timeout as a failure and taints the process.
-    private static func runChainWithDeadline(deadline: Date) -> Int32 {
+    ///
+    /// The chain's own `printf` output is captured into the app log: almost
+    /// every early failure (an IOSurface that would not be created, a
+    /// `mach_vm_map` that was refused) is written there and nowhere else, so
+    /// without this a device log only shows "returned -1".
+    private static func runChainWithDeadline(deadline: Date,
+                                             log: (String) -> Void) -> Int32 {
+        let savedStdout = startStdoutCapture(log: log)
+        defer {
+            if let savedStdout { stopStdoutCapture(saved: savedStdout) }
+        }
+
         let box = CodeBox()
         let finished = DispatchSemaphore(value: 0)
         Thread.detachNewThread {
@@ -199,6 +212,55 @@ enum KernelDirectProbe {
             return codeTimedOut
         }
         return box.value
+    }
+
+    // MARK: - Chain output capture
+
+    /// Point fd 1 at a pipe and log every line the chain writes, on a reader
+    /// thread so a full pipe can never stall the exploit. Returns the saved
+    /// stdout descriptor, or nil when the pipe could not be set up (the
+    /// chain then runs with its output going wherever it went before).
+    private static func startStdoutCapture(log: @escaping (String) -> Void) -> Int32? {
+        var fds: [Int32] = [-1, -1]
+        guard pipe(&fds) == 0 else { return nil }
+        setvbuf(stdout, nil, _IONBF, 0)
+        let saved = dup(STDOUT_FILENO)
+        guard saved >= 0 else {
+            close(fds[0]); close(fds[1])
+            return nil
+        }
+        dup2(fds[1], STDOUT_FILENO)
+        close(fds[1])
+        let readFd = fds[0]
+        Thread.detachNewThread {
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            var pending = ""
+            func flushPending() {
+                while let idx = pending.firstIndex(of: "\n") {
+                    let line = String(pending[..<idx])
+                    pending = String(pending[pending.index(after: idx)...])
+                    if !line.isEmpty { log("[内核链] \(line)") }
+                }
+            }
+            while true {
+                let count = read(readFd, &buffer, buffer.count)
+                if count <= 0 { break }
+                pending += String(decoding: buffer[0..<count], as: UTF8.self)
+                flushPending()
+            }
+            if !pending.isEmpty { log("[内核链] \(pending)") }
+            close(readFd)
+        }
+        return saved
+    }
+
+    /// Put fd 1 back. The chain may still be running after a timeout; the
+    /// pipe's read end is therefore left to its reader, which sees EOF as
+    /// soon as fd 1 stops pointing at the pipe.
+    private static func stopStdoutCapture(saved: Int32) {
+        fflush(stdout)
+        dup2(saved, STDOUT_FILENO)
+        close(saved)
     }
 
     // MARK: - Write-read-delete
