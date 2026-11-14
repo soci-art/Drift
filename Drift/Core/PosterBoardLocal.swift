@@ -730,6 +730,7 @@ enum PosterBoardLocal {
         // 2. pathleak: walk contiguous inode ranges and probe each range as
         // soon as it finishes. A hit near the front stops the rest of the walk.
         let leakStart = DispatchTime.now()
+        var refusedCandidates: [String] = []
         if let limit = WorseQueryEscape.pathleakScanLimit() {
             defer { limit.cleanup() }
             let maxInode = limit.maxInode
@@ -737,7 +738,6 @@ enum PosterBoardLocal {
             var segments = 0
             var candidates = 0
             var enumerationMs: Double = 0
-            var refusedCandidates: [String] = []
 
             while scanned < maxInode {
                 let start = scanned + 1

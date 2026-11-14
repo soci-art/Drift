@@ -141,5 +141,13 @@ echo "==> previous working copy backed up to $BACKUP"
 
 python3 "$REPO/scripts/dedupe-airlift-archive.py"
 
+# Keep the Swift-imported C declarations in lockstep with the Rust FFI.
+HEADER_SOURCE="$CORE/include/airlift.h"
+HEADER_DEST="$XCF/Headers/AirliftFFI/airlift.h"
+[[ -f "$HEADER_SOURCE" ]] || { echo "error: missing FFI header at $HEADER_SOURCE" >&2; exit 1; }
+[[ -d "$(dirname "$HEADER_DEST")" ]] || { echo "error: missing XCFramework headers directory" >&2; exit 1; }
+cp "$HEADER_SOURCE" "$HEADER_DEST"
+echo "==> installed FFI header: $HEADER_DEST"
+
 echo "==> installed: $XCF/libairlift_ffi.a ($(du -h "$XCF/libairlift_ffi.a" | cut -f1))"
 echo "==> run scripts/check-linked-symbols.py, then xtool dev"
