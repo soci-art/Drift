@@ -180,9 +180,13 @@ jobs:
       # the accepted cost is that an in-place asset swap under the same
       # version no longer prompts an in-app update.
       - name: Publish unsigned IPA to Releases
+        # Formal line (Grace, 2026-11-14): formal releases ship from the
+        # `formal` branch, never from main (main is the pre-release
+        # line). This branch's copy of the workflow therefore gates the
+        # step to refs/heads/formal; main's copy keeps its own gating.
         if: >-
           github.event_name == 'push' &&
-          github.ref == 'refs/heads/main' &&
+          github.ref == 'refs/heads/formal' &&
           contains(github.event.head_commit.message, '[release]')
         shell: bash
         env:
