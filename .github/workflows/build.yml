@@ -135,7 +135,7 @@ jobs:
 
       # Replace the IPA attachment on the rolling `nightly` pre-release
       # (Grace, 2026-11-14, SideStore's shape): pre-releases carry no
-      # version — one fixed tag `nightly`, title just "Drift", asset
+      # version — one fixed tag `nightly`, title "Nightly", asset
       # `Drift-unsigned.ipa` — so test builds never consume a formal
       # version number. A formal release is never touched: if `nightly`
       # exists and is not a pre-release the step fails rather than
@@ -172,7 +172,7 @@ jobs:
             # on the public run page when it fails.
             RESP="$(mktemp)"
             ERR="$(mktemp)"
-            BODY="$(printf '{"tag_name":"%s","target_commitish":"%s","name":"Drift","body":"预发行构建（滚动更新），供测试使用。未签名 IPA，安装者自行签名；不影响正式版。","prerelease":true}' \
+            BODY="$(printf '{"tag_name":"%s","target_commitish":"%s","name":"Nightly","body":"预发行构建（滚动更新），供测试使用。未签名 IPA，安装者自行签名；不影响正式版。","prerelease":true}' \
               "$TAG" "$GITHUB_SHA")"
             CODE="$(curl -sS -o "$RESP" -w '%{http_code}' -X POST \
               -H "Authorization: Bearer $GH_TOKEN" \
