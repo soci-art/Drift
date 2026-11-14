@@ -763,6 +763,16 @@ enum DriftJudge {
             // installs on 17.0 (its own floor stays) for the sake of
             // the future on-device routes aimed at that band.
             tunnelMissing = "设备系统是 iOS 17 这一代，隧道通道用不了：这一代系统会拒绝查壁纸文件夹，两条隧道都走不通。隧道通道需要 iOS 18.0 及以上。"
+        } else if let lo = PosterBoard.compareVersion(identity.version, "26.0"), lo >= 0,
+                  let hi = PosterBoard.compareVersion(identity.version, "26.2"), hi < 0 {
+            // #331 (Grace, 2026-11-14): the coverage table is the
+            // rulebook for which band opens which channel, and its
+            // 26.0–26.1 row is local-only — the tunnel window opens
+            // at 26.2. The channels' own gates would pass this band
+            // (their floors sit lower), so the closure lives here at
+            // the session layer, beside #314's 17-band closure, rather
+            // than inside either channel.
+            tunnelMissing = "设备系统是 iOS 26.0–26.1 正式版，隧道通道在这两版不开，请用本机直刷。"
         } else if identity.buildVersion.isEmpty,
                   PosterBoard.compareVersion(identity.version, "27.2") == 0 {
             // #294 (Grace, 2026-11-13): the build number only decides

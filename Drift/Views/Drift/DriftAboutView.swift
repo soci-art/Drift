@@ -89,11 +89,16 @@ struct DriftAboutView: View {
         // ticks — its system refuses the container lookup (see
         // DriftSession) — and 18 keeps its own row. #329
         // (2026-11-14): the kernel column joins — it is the 17
-        // band's only tick and shares the 18 band with the tunnels;
-        // its finer limits (17.7 / 18.7.1 caps, the model table)
-        // live in the footnote under the table.
-        TableRow(version: "iOS 17.0 – 17.x", noRespring: false, respring: false, local: false, kernel: true),
-        TableRow(version: "iOS 18.0 – 18.x", noRespring: true, respring: true, local: false, kernel: true),
+        // band's only tick and shares the 18 band with the tunnels.
+        // #331 (Grace, 2026-11-14): the bands are spelled out at
+        // the kernel gate's own granularity — 17 ends at 17.7 and
+        // 18 splits at 18.7.1, past which the kernel gate closes
+        // even though the offset table would reach; 18.7.2+ keeps
+        // only its tunnel ticks. The model table stays in the
+        // footnote under the table.
+        TableRow(version: "iOS 17.0 – 17.7", noRespring: false, respring: false, local: false, kernel: true),
+        TableRow(version: "iOS 18.0 – 18.7.1", noRespring: true, respring: true, local: false, kernel: true),
+        TableRow(version: "iOS 18.7.2 – 18.x", noRespring: true, respring: true, local: false, kernel: false),
         TableRow(version: "iOS 26.0 – 26.1 正式版", noRespring: false, respring: false, local: true),
         TableRow(version: "iOS 26.2 – 27.1 正式版", noRespring: true, respring: true, local: true),
         TableRow(version: "iOS 27.2 beta 1 / beta 2", noRespring: true, respring: true, local: true),

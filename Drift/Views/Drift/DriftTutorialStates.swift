@@ -58,7 +58,7 @@ enum DriftTutorialStates {
         // real device version was read and the gate rejects it; anything
         // else (no pairing, no tunnel, no identity yet) is setup.
         if !identity.version.isEmpty {
-            let gateOpen = switch channel {
+            var gateOpen = switch channel {
             case .noRespring:
                 PosterBoardDirect.isAvailable(deviceVersion: identity.version,
                                               buildVersion: identity.buildVersion)
@@ -67,6 +67,18 @@ enum DriftTutorialStates {
                                     buildVersion: identity.buildVersion)
             case .local, .kernel:
                 true
+            }
+            // The session layer closes two tunnel bands the channels'
+            // own gates pass — the whole 17 band (#314) and 26.0–26.1,
+            // which the coverage table keeps local-only (#331). A pill
+            // on either band is system-blocked, not merely unsetup.
+            if channel == .noRespring || channel == .respring {
+                if let below = PosterBoard.compareVersion(identity.version, "18.0"),
+                   below < 0 { gateOpen = false }
+                if let lo = PosterBoard.compareVersion(identity.version, "26.0"), lo >= 0,
+                   let hi = PosterBoard.compareVersion(identity.version, "26.2"), hi < 0 {
+                    gateOpen = false
+                }
             }
             if !gateOpen { return .systemBlocked }
         }
