@@ -83,7 +83,10 @@ final class AppUpdateChecker: ObservableObject {
     var currentBuild: Int { AppVersion.buildNumber }
 
     /// "3.0.9（构建 25）" — what the update page shows as 本机版本.
-    var currentDisplay: String { AppVersion.display }
+    /// The current version as the update page shows it: version only,
+    /// no build number (#328, Grace 2026-11-14). Other surfaces keep
+    /// `AppVersion.display` with the build.
+    var currentDisplay: String { AppVersion.marketing }
 
     var updateAvailable: Bool {
         guard let latest else { return false }
