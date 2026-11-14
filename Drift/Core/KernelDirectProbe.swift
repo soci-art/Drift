@@ -60,7 +60,7 @@ enum KernelDirectProbe {
 
     private static func execute(version: String,
                                 model: String,
-                                log: (String) -> Void) -> Report {
+                                log: @escaping (String) -> Void) -> Report {
         // 1. The band and the table, re-checked here: a stale card, a
         //    restored pick or a future caller cannot wave the chain through.
         log("[内核探针] 1/5 后端复查：iOS \(version)，机型 \(model)")
@@ -189,7 +189,7 @@ enum KernelDirectProbe {
     /// `mach_vm_map` that was refused) is written there and nowhere else, so
     /// without this a device log only shows "returned -1".
     private static func runChainWithDeadline(deadline: Date,
-                                             log: (String) -> Void) -> Int32 {
+                                             log: @escaping (String) -> Void) -> Int32 {
         let savedStdout = startStdoutCapture(log: log)
         defer {
             if let savedStdout { stopStdoutCapture(saved: savedStdout) }
