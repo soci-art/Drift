@@ -1,10 +1,13 @@
 import SwiftUI
 
-/// The tutorial home (collection #230/#231/#236, Grace 2026-11-12): three
-/// cards, one per flashing channel, and nothing else. It is reached from
+/// The tutorial home (collection #230/#231/#236, Grace 2026-11-12): one
+/// card per flashing channel, and nothing else. It is reached from
 /// the Home page's entry card between the status card and the method card
 /// — the setup wizard is unchanged and Settings carries no tutorial entry
-/// any more (#239).
+/// any more (#239). 内核直刷 joined as the fourth card in #329
+/// (2026-11-14); unlike the others it is taught even while its
+/// 实验性功能 switch is off — the card is how a user finds out the
+/// method exists, and its page explains where the switch lives.
 ///
 /// Each card's pill follows the live judgement (#231): 可用 when the
 /// channel can run now; for the two tunnel channels, 需要配对和隧道 when
@@ -65,12 +68,13 @@ struct DriftTutorialView: View {
     }
 }
 
-/// The three channels the tutorial teaches (the sealed restore route is
+/// The channels the tutorial teaches (the sealed restore route is
 /// not one of them — it is not taught anywhere).
 enum TutorialChannel: CaseIterable, Identifiable {
     case noRespring
     case respring
     case local
+    case kernel
 
     var id: String { title }
 
@@ -82,6 +86,7 @@ enum TutorialChannel: CaseIterable, Identifiable {
         case .noRespring: return "免注销直刷"
         case .respring: return "注销直刷"
         case .local: return "本机直刷"
+        case .kernel: return "内核直刷"
         }
     }
 
@@ -90,6 +95,7 @@ enum TutorialChannel: CaseIterable, Identifiable {
         case .noRespring: return "隧道写入 · 刷完即生效，无需注销"
         case .respring: return "隧道写入 · 注销后生效"
         case .local: return "本机写入，免配对、免隧道"
+        case .kernel: return "内核写入，免配对、免隧道"
         }
     }
 
@@ -98,6 +104,7 @@ enum TutorialChannel: CaseIterable, Identifiable {
         case .noRespring: return "bolt.fill"
         case .respring: return "arrow.clockwise"
         case .local: return "iphone"
+        case .kernel: return "cpu"
         }
     }
 
@@ -106,20 +113,25 @@ enum TutorialChannel: CaseIterable, Identifiable {
         case .noRespring: return .blue
         case .respring: return .purple
         case .local: return .green
+        case .kernel: return .orange
         }
     }
 
-    var isTunnel: Bool { self != .local }
+    var isTunnel: Bool { self == .noRespring || self == .respring }
 }
 
 /// Where one channel stands for this phone right now, in the tutorial's
-/// four spoken states (#231). The mapping from the live judgement lives
-/// in DriftTutorialStates; this enum is only the spoken result.
+/// spoken states (#231; 还没打开 added with the kernel channel in
+/// #329). The mapping from the live judgement lives in
+/// DriftTutorialStates; this enum is only the spoken result.
 enum TutorialChannelState {
     case ready
     case needsSetup
     case systemBlocked
     case groupBlocked
+    /// The method's own switch is off (内核直刷 before its
+    /// 实验性功能 switch is turned on, #329).
+    case notEnabled
 
     /// The tutorial-home pill (#231).
     var pillText: String {
@@ -127,13 +139,14 @@ enum TutorialChannelState {
         case .ready: return "可用"
         case .needsSetup: return "需要配对和隧道"
         case .systemBlocked, .groupBlocked: return "不可用"
+        case .notEnabled: return "还没打开"
         }
     }
 
     var pillTint: Color {
         switch self {
         case .ready: return .green
-        case .needsSetup: return .orange
+        case .needsSetup, .notEnabled: return .orange
         case .systemBlocked, .groupBlocked: return .secondary
         }
     }
