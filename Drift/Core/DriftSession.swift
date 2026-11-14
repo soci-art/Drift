@@ -646,7 +646,15 @@ final class DriftSession: ObservableObject {
                 packFiles: selection.tendies.map { $0.url.lastPathComponent },
                 logSliceText: RunLog.shared.lines.joined(separator: "\n")
             )
-            return (true, "内核直刷已写入 \(outcome.installedCount) 个描述符，写后核验：\(verification.summary)。本次没有执行壁纸刷新或生效操作。")
+            // Match Drift's existing WorseQuery activation: bring PosterBoard
+            // forward so the user can swipe it away from the app switcher.
+            // The existing, confirmed NeoSpring action remains available as
+            // the alternative from the activation card below.
+            let opened = await MainActor.run { PosterBoardLaunch.open() }
+            let refreshHint = opened
+                ? "已打开 PosterBoard，请从应用切换器上滑结束它，系统重新启动后会读取新壁纸。"
+                : "请打开锁定屏幕壁纸选择器刷新 PosterBoard，再从应用切换器上滑结束它。"
+            return (true, "内核直刷已写入 \(outcome.installedCount) 个描述符，写后核验：\(verification.summary)。\(refreshHint) 也可以使用下方「注销」方式生效。")
         } catch {
             let message = error.localizedDescription
             DriftEngine.shared.log("内核直刷写入失败：\(message)")

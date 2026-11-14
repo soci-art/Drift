@@ -171,6 +171,7 @@ enum KernelDirectProbe {
 
     private final class CodeBox: @unchecked Sendable {
         var value: Int32 = -1
+        var escapeResult: Int32?
     }
 
     /// Runs `kexploit_opa334` + `sandbox_escape` on a dedicated thread and
@@ -197,8 +198,7 @@ enum KernelDirectProbe {
                 if proc == 0 {
                     box.value = -2
                 } else {
-                    let escapeResult = sandbox_escape(proc)
-                    printf("[3106兼容] sandbox_escape 返回 %d；内核读写链已成功，继续验证目标容器\\n", escapeResult)
+                    box.escapeResult = sandbox_escape(proc)
                     box.value = 0
                 }
             } else {
@@ -209,6 +209,9 @@ enum KernelDirectProbe {
         let remaining = max(0, deadline.timeIntervalSinceNow)
         if finished.wait(timeout: .now() + remaining) == .timedOut {
             return codeTimedOut
+        }
+        if let escapeResult = box.escapeResult {
+            log("[3106兼容] sandbox_escape 返回 \(escapeResult)；内核读写链已成功，继续验证目标容器")
         }
         return box.value
     }

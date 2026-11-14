@@ -458,7 +458,7 @@ struct DriftHomeView: View {
                 .driftGlassButton()
             }
             if manualPick == .kernel {
-                NativeNote("内核直刷会把已选壁纸描述文件直接写入 PosterBoard 容器，并逐项读回核验。当前阶段不执行刷新或生效操作。")
+                NativeNote("内核直刷会把已选壁纸描述文件写入 PosterBoard 容器并逐项核验；写入后会打开 PosterBoard，可上滑结束它，也可使用下方「注销」方式生效。")
             } else if judgement.mode == .worseQuery {
                 NativeNote("本机直刷在本机写入，不需要配对文件，也不用开隧道。刷完先打开 PosterBoard 刷新集合，再从应用切换器上滑关闭它，系统重新拉起后壁纸生效。App 不会自动注销。")
             } else if !session.paired {
@@ -486,11 +486,11 @@ struct DriftHomeView: View {
             // difference and all four line up.
             homeBarButton(icon: "arrow.triangle.2.circlepath",
                           title: "结束 PosterBoard",
-                          disabled: !localReady) {
+                          disabled: !(localReady || (manualPick == .kernel && kernelReady))) {
                 openPosterBoard()
             }
             .padding(.horizontal, -4)
-            if !localReady {
+            if !localReady && !(manualPick == .kernel && kernelReady) {
                 Text(InstallEnvironment.localReason(version: localVersion,
                                                     build: localBuild))
                     .font(.caption).foregroundStyle(.secondary)
@@ -520,7 +520,11 @@ struct DriftHomeView: View {
                 Text("正在刷入，刷完再注销。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            NativeNote("隧道通道（免注销 / 注销直刷）刷完会自动处理生效，不用在这里操作。")
+            if manualPick == .kernel {
+                NativeNote("内核直刷使用本页两种现有生效方式：上滑结束 PosterBoard，或确认后注销。")
+            } else {
+                NativeNote("隧道通道（免注销 / 注销直刷）刷完会自动处理生效，不用在这里操作。")
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
