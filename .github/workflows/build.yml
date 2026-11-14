@@ -164,15 +164,19 @@ jobs:
           cp build/Drift.ipa "$ASSET"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             echo "no release $TAG yet — creating it as an empty pre-release"
-            if ! OUT="$(gh release create "$TAG" \
-                  --title "Drift $VERSION（预发行）" \
-                  --notes "预发行构建，供测试使用。未签名 IPA，安装者自行签名；不影响正式版。" \
-                  --prerelease \
-                  --target "$GITHUB_SHA" 2>&1)"; then
+            # Created through the API rather than `gh release create`:
+            # the CLI's failure mode here was silent (an empty message),
+            # while the API's error body names the actual HTTP reason.
+            if ! OUT="$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+                  --raw-field tag_name="$TAG" \
+                  --raw-field target_commitish="$GITHUB_SHA" \
+                  --raw-field name="Drift $VERSION（预发行）" \
+                  --raw-field body="预发行构建，供测试使用。未签名 IPA，安装者自行签名；不影响正式版。" \
+                  -F prerelease=true 2>&1)"; then
               # The run page's log needs a sign-in; an annotation is the
               # only part of a failure a public reader can see, so the
               # reason goes there as well as into the log.
-              echo "::error::gh release create $TAG failed: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-800)"
+              echo "::error::release create $TAG failed: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-900)"
               echo "$OUT" >&2
               exit 1
             fi
