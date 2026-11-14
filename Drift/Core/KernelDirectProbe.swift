@@ -140,7 +140,11 @@ enum KernelDirectProbe {
         if pastDeadline(deadline) {
             return timeoutReport(log: log, step: "5/5")
         }
-        guard let located = locateStore(deadline: deadline, log: log) else {
+        let locatedResult = locateStore(deadline: deadline, log: log)
+        if locatedResult.timedOut {
+            return timeoutReport(log: log, step: "5/5")
+        }
+        guard let located = locatedResult.store else {
             log("[内核探针] 5/5 失败：三种找法都没有找到商店")
             return Report(passed: false, failure: "没有找到壁纸商店。")
         }
@@ -223,6 +227,10 @@ enum KernelDirectProbe {
 
         var byte = expected
         let written = withUnsafeBytes(of: &byte) { write(fd, $0.baseAddress, 1) }
+        // Capture errno now: close()/unlink() below would replace it, and a
+        // failure report carrying their errno instead of the write's misleads
+        // whoever reads the log later.
+        let writeErrno = errno
         if written == 1, lseek(fd, 0, SEEK_SET) == 0 {
             var got: UInt8 = 0
             let readCount = withUnsafeMutableBytes(of: &got) { read(fd, $0.baseAddress, 1) }
@@ -233,7 +241,7 @@ enum KernelDirectProbe {
         deleted = path.withCString { unlink($0) } == 0
 
         guard wrote else {
-            return WriteReadDeleteResult(path: nil, failure: "临时文件写入失败（errno \(errno)）")
+            return WriteReadDeleteResult(path: nil, failure: "临时文件写入失败（errno \(writeErrno)）")
         }
         guard readBack else {
             return WriteReadDeleteResult(path: nil, failure: "临时文件读回的内容和写入的不一致")
@@ -259,9 +267,11 @@ enum KernelDirectProbe {
     private static let posterBoardBundleID = "com.apple.PosterBoard"
 
     /// The three-level find the order names. Every level only tests for the
-    /// store directory; nothing is created, written or removed.
+    /// store directory; nothing is created, written or removed. `timedOut`
+    /// says the scan stopped on the deadline rather than finishing — the
+    /// caller must report a timeout then, not "store not found".
     private static func locateStore(deadline: Date,
-                                    log: (String) -> Void) -> LocatedStore? {
+                                    log: (String) -> Void) -> (store: LocatedStore?, timedOut: Bool) {
         let manager = FileManager.default
 
         // Level 1 — the application snapshot: container paths this install
@@ -278,9 +288,9 @@ enum KernelDirectProbe {
             for container in known {
                 if let store = storeIn(container: container) {
                     log("[内核探针] 5/5 找法一命中：\(container)")
-                    return LocatedStore(container: container,
-                                        store: store,
-                                        structureVersions: structureVersions(in: store))
+                    return (LocatedStore(container: container,
+                                         store: store,
+                                         structureVersions: structureVersions(in: store)), false)
                 }
             }
             log("[内核探针] 5/5 找法一没有命中")
@@ -290,14 +300,17 @@ enum KernelDirectProbe {
 
         guard let entries = try? manager.contentsOfDirectory(atPath: applicationsRoot) else {
             log("[内核探针] 5/5 列不出 \(applicationsRoot)")
-            return nil
+            return (nil, false)
         }
         log("[内核探针] 5/5 应用数据容器 \(entries.count) 个，开始找法二、找法三")
 
         // Level 2 — the container-manager query: read each container's own
         // metadata and match PosterBoard's bundle identifier.
         for (index, entry) in entries.enumerated() {
-            if pastDeadline(deadline) { break }
+            if pastDeadline(deadline) {
+                log("[内核探针] 5/5 找法二因超过总时限停下（已查 \(index)/\(entries.count) 个容器）")
+                return (nil, true)
+            }
             if index % 200 == 0 && index > 0 {
                 log("[内核探针] 5/5 已查 \(index)/\(entries.count) 个容器")
             }
@@ -305,9 +318,9 @@ enum KernelDirectProbe {
             guard containerHasPosterBoardIdentity(container) else { continue }
             if let store = storeIn(container: container) {
                 log("[内核探针] 5/5 找法二命中（容器管理查询）：\(container)")
-                return LocatedStore(container: container,
-                                    store: store,
-                                    structureVersions: structureVersions(in: store))
+                return (LocatedStore(container: container,
+                                     store: store,
+                                     structureVersions: structureVersions(in: store)), false)
             }
         }
         log("[内核探针] 5/5 找法二没有命中")
@@ -315,17 +328,20 @@ enum KernelDirectProbe {
         // Level 3 — the metadata scan fallback: look for the store directory
         // itself in every container.
         for entry in entries {
-            if pastDeadline(deadline) { break }
+            if pastDeadline(deadline) {
+                log("[内核探针] 5/5 找法三因超过总时限停下")
+                return (nil, true)
+            }
             let container = (applicationsRoot as NSString).appendingPathComponent(entry)
             if let store = storeIn(container: container) {
                 log("[内核探针] 5/5 找法三命中（商店目录扫描）：\(container)")
-                return LocatedStore(container: container,
-                                    store: store,
-                                    structureVersions: structureVersions(in: store))
+                return (LocatedStore(container: container,
+                                     store: store,
+                                     structureVersions: structureVersions(in: store)), false)
             }
         }
         log("[内核探针] 5/5 找法三没有命中")
-        return nil
+        return (nil, false)
     }
 
     private static func containerHasPosterBoardIdentity(_ container: String) -> Bool {
