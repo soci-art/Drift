@@ -1,29 +1,14 @@
 import Foundation
 import KernelDirect
 
-/// Phase one of 内核直刷 (#319, construction order §4): **verify only, never
-/// flash.** The probe proves that this device, on this system, can run the
-/// kernel chain and reach the wallpaper store — and writes no wallpaper byte.
+/// The kernel preflight for 内核直刷. It establishes the 3106 kernel R/W
+/// backend, locates PosterBoard's real container, and proves create/write/read
+/// /delete access inside the actual wallpaper store. It never writes a
+/// wallpaper descriptor; that is the next stage in KernelDirectWriter.
 ///
-/// The five steps, in the fixed order the order states (each one logs a line
-/// that can be read back from a remote log upload):
-///
-/// 1. Re-check the version band and the chip table *inside the backend* — the
-///    caller's word is not trusted (`KernelDirectPremise` also re-reads the
-///    model itself).
-/// 2. Run the kernel chain (`kexploit_opa334` → `sandbox_escape`) under one
-///    hard 60-second ceiling. The upstream chain retries physical reads
-///    without a limit; the ceiling is what keeps this run from spinning
-///    forever, and a timeout is a failure.
-/// 3. Sandbox self-check through the chain's own criterion
-///    (`sandbox_access_is_active`).
-/// 4. Write-read-delete self-check outside this app's sandbox
-///    (`/private/var/mobile/Containers/Data/Application` — the same level the
-///    store lives at). All three halves must pass.
-/// 5. Locate the wallpaper store read-only, in the three-level order the
-///    order names (known container snapshot → container-manager metadata →
-///    store-directory scan), and record the path plus the structure version
-///    (61 on the supported systems).
+/// The probe re-checks the device premise, runs the chain under one hard
+/// 60-second ceiling, then tests the target store itself. sandbox_escape is
+/// attempted for compatibility, but its return value is not the write gate.
 ///
 /// Success requires all five. A failure returns an error and leaves the device
 /// untouched; the app stays alive because 3106's longjmp path is what runs
@@ -38,6 +23,19 @@ enum KernelDirectProbe {
         let passed: Bool
         /// One user-facing line when `passed` is false.
         let failure: String?
+        let containerPath: String?
+        let storePath: String?
+        let structureVersions: [Int]
+
+        init(passed: Bool, failure: String?,
+             containerPath: String? = nil, storePath: String? = nil,
+             structureVersions: [Int] = []) {
+            self.passed = passed
+            self.failure = failure
+            self.containerPath = containerPath
+            self.storePath = storePath
+            self.structureVersions = structureVersions
+        }
     }
 
     // MARK: - Entry
@@ -74,6 +72,7 @@ enum KernelDirectProbe {
 
         chainLock.lock()
         let tainted = chainFailedInThisProcess
+        let alreadyEstablished = chainSucceededInThisProcess
         chainLock.unlock()
         if tainted {
             log("[内核探针] 2/5 拒绝：本进程上一次内核链已经失败或超时，重启 App 后才能再跑")
@@ -84,12 +83,11 @@ enum KernelDirectProbe {
         let started = Date()
         let deadline = started.addingTimeInterval(timeout)
 
-        // 2. The chain itself, under the ceiling. If the sandbox is already
-        //    escaped in this process (the probe was run before), the chain is
-        //    not run a second time — re-running kernel r/w in one process is
-        //    not something the upstream code supports.
-        if sandbox_access_is_active() == 1 {
-            log("[内核探针] 2/5 本进程的脱沙盒已生效，跳过内核链（同一进程不重跑链）")
+        // Match 3106's iOS 17/18 kernel backend: successful kernel R/W is
+        // enough to proceed. sandbox_escape is attempted, but its return
+        // value is not treated as the container-access verdict.
+        if alreadyEstablished {
+            log("[内核探针] 2/5 本进程内核读写已建立，跳过重复 exploit")
         } else {
             log("[内核探针] 2/5 启动内核链（上限 \(Int(timeout)) 秒）…")
             fflush(stdout)
@@ -107,54 +105,47 @@ enum KernelDirectProbe {
                 log(String(format: "[内核探针] 2/5 失败：内核链返回 %d（耗时 %.1f 秒）", code, elapsed))
                 return Report(passed: false, failure: "内核链失败（返回 \(code)）。")
             }
-            log(String(format: "[内核探针] 2/5 通过：内核链返回 0（耗时 %.1f 秒）", elapsed))
+            chainLock.lock(); chainSucceededInThisProcess = true; chainLock.unlock()
+            log(String(format: "[内核探针] 2/5 通过：内核读写已建立（耗时 %.1f 秒）", elapsed))
         }
 
-        // 3. The chain's own self-check: process-level read/write must be
-        //    active, not merely "the functions returned 0".
-        log("[内核探针] 3/5 脱沙盒自检")
+        log("[内核探针] 3/5 内核读写状态确认：sandbox_escape 不作硬门槛")
         if pastDeadline(deadline) {
             return timeoutReport(log: log, step: "3/5")
         }
-        guard sandbox_access_is_active() == 1 else {
-            log("[内核探针] 3/5 失败：进程级读写没有生效")
-            return Report(passed: false, failure: "脱沙盒自检没有通过：进程级读写没有生效。")
-        }
-        log("[内核探针] 3/5 通过：进程级读写已生效")
+        log("[内核探针] 3/5 通过：开始检查真实目标容器")
 
-        // 4. Write, read back byte for byte, delete, confirm gone. This is a
-        //    temporary file at the sandbox-external container level — never
-        //    the wallpaper store, never a wallpaper.
-        log("[内核探针] 4/5 写-读-删自检")
+        log("[内核探针] 4/5 定位 PosterBoard 容器")
         if pastDeadline(deadline) {
             return timeoutReport(log: log, step: "4/5")
         }
-        let probeDirectory = "/private/var/mobile/Containers/Data/Application"
-        let probe = writeReadDelete(in: probeDirectory)
-        if let failure = probe.failure {
-            log("[内核探针] 4/5 失败：\(failure)")
-            return Report(passed: false, failure: "写-读-删自检没有通过：\(failure)。")
+        let locatedResult = locateStore(deadline: deadline, log: log)
+        if locatedResult.timedOut {
+            return timeoutReport(log: log, step: "4/5")
         }
-        log("[内核探针] 4/5 通过：\(probe.path ?? "临时文件") 写入、读回一致、已删除")
+        guard let located = locatedResult.store else {
+            log("[内核探针] 4/5 失败：三种找法都没有找到商店")
+            return Report(passed: false, failure: "没有找到 PosterBoard 容器。")
+        }
+        let versions = located.structureVersions.map(String.init).joined(separator: "、")
+        log("[内核探针] 4/5 通过：容器 \(located.container)，商店 \(located.store)，结构版本 \(versions.isEmpty ? "（无代际目录）" : versions)")
 
-        // 5. Locate the store, read-only, and record what was found.
-        log("[内核探针] 5/5 定位壁纸商店（只读）")
+        log("[内核探针] 5/5 PosterBoard 容器写-读-删自检")
         if pastDeadline(deadline) {
             return timeoutReport(log: log, step: "5/5")
         }
-        let locatedResult = locateStore(deadline: deadline, log: log)
-        if locatedResult.timedOut {
-            return timeoutReport(log: log, step: "5/5")
+        let probe = writeReadDelete(in: located.store)
+        if let failure = probe.failure {
+            log("[内核探针] 5/5 失败：\(failure)")
+            return Report(passed: false, failure: "PosterBoard 容器写-读-删自检没有通过：\(failure)。")
         }
-        guard let located = locatedResult.store else {
-            log("[内核探针] 5/5 失败：三种找法都没有找到商店")
-            return Report(passed: false, failure: "没有找到壁纸商店。")
-        }
-        let versions = located.structureVersions.map(String.init).joined(separator: "、")
-        log("[内核探针] 5/5 通过：商店 \(located.store)，结构版本 \(versions.isEmpty ? "（无代际目录）" : versions)")
-        log("[内核探针] 全部通过：本次零写入，没有改动任何壁纸")
+        log("[内核探针] 5/5 通过：\(probe.path ?? "临时文件") 写入、读回一致、已删除")
+        log("[内核探针] 全部通过：PosterBoard 容器可读写，未改动任何壁纸")
 
-        return Report(passed: true, failure: nil)
+        return Report(passed: true, failure: nil,
+                      containerPath: located.container,
+                      storePath: located.store,
+                      structureVersions: located.structureVersions)
     }
 
     private static func timeoutReport(log: (String) -> Void, step: String) -> Report {
@@ -175,6 +166,8 @@ enum KernelDirectProbe {
     /// A failed or timed-out chain is not run again in this process: the
     /// order requires a relaunch, and the chain is not re-entrant.
     private static var chainFailedInThisProcess = false
+    /// A successful kernel R/W chain is never re-entered in this process.
+    private static var chainSucceededInThisProcess = false
 
     private final class CodeBox: @unchecked Sendable {
         var value: Int32 = -1
@@ -201,7 +194,13 @@ enum KernelDirectProbe {
             let ret = kexploit_opa334()
             if ret == 0 {
                 let proc = proc_self()
-                box.value = proc == 0 ? -2 : sandbox_escape(proc)
+                if proc == 0 {
+                    box.value = -2
+                } else {
+                    let escapeResult = sandbox_escape(proc)
+                    printf("[3106兼容] sandbox_escape 返回 %d；内核读写链已成功，继续验证目标容器\\n", escapeResult)
+                    box.value = 0
+                }
             } else {
                 box.value = ret
             }
@@ -319,7 +318,7 @@ enum KernelDirectProbe {
 
     // MARK: - Store location (read-only)
 
-    private struct LocatedStore {
+    struct LocatedStore {
         let container: String
         let store: String
         let structureVersions: [Int]
@@ -328,10 +327,9 @@ enum KernelDirectProbe {
     private static let applicationsRoot = "/private/var/mobile/Containers/Data/Application"
     private static let posterBoardBundleID = "com.apple.PosterBoard"
 
-    /// The three-level find the order names. Every level only tests for the
-    /// store directory; nothing is created, written or removed. `timedOut`
-    /// says the scan stopped on the deadline rather than finishing — the
-    /// caller must report a timeout then, not "store not found".
+    /// Three-level container discovery. The later probe stage performs a
+    /// create/write/read/delete test in the returned store. `timedOut`
+    /// distinguishes a deadline from a completed negative scan.
     private static func locateStore(deadline: Date,
                                     log: (String) -> Void) -> (store: LocatedStore?, timedOut: Bool) {
         let manager = FileManager.default

@@ -557,38 +557,112 @@ final class DriftSession: ObservableObject {
         }
     }
 
-    /// Phase one of the kernel direct channel (#319, construction order §4):
-    /// run the five-step probe and report what it found. **No wallpaper is
-    /// written**, and a failure never borrows another channel.
-    ///
-    /// The probe runs off the main thread under its own 60-second ceiling
-    /// (`KernelDirectProbe`). The blocking cover is the existing one; the
-    /// stage line is where the order's "may take 10–30 s, do not background or
-    /// lock the screen" warning is shown.
-    func runKernelProbe(identity: DeviceIdentity) async -> (ok: Bool, message: String) {
+    /// 内核直刷：先验证 3106 kernel backend 对真实 PosterBoard store 的
+    /// 读写能力，再将已选描述符以暂存 + 校验 + 原子改名方式写入。
+    /// 不调用 WorseQuery、App Group 或隧道，也不处理生效刷新。
+    func runKernelApply(identity: DeviceIdentity,
+                         selection: PosterBoardSelection) async -> (ok: Bool, message: String) {
         guard !InFlightCall.shared.hasLiveRun else {
             return (false, "已有一轮刷入正在进行")
         }
+        guard !selection.tendies.isEmpty else {
+            return (false, "先在「壁纸包」里选择要写入的 .tendies 包。")
+        }
+        guard selection.video == nil,
+              !selection.fullReset,
+              selection.resetModes.isEmpty else {
+            return (false, "内核直刷当前只支持已选的 .tendies 描述文件，不处理视频或重置任务。")
+        }
+
         flashCover = true
-        flashStage = "内核探针运行中，可能要等 10–30 秒，期间不要切后台或锁屏"
+        flashStage = "正在验证内核与 PosterBoard 容器读写，期间不要切后台或锁屏"
         defer { flashCover = false; flashStage = nil }
         running = true
+        lastEffect = nil
         RunLog.shared.clear()
         defer { running = false }
 
-        DriftEngine.shared.log("内核探针：开始（本机 \(KernelDirectPremise.modelIdentifier)，"
+        DriftEngine.shared.log("内核直刷：开始（本机 \(KernelDirectPremise.modelIdentifier)，"
             + "iOS \(WorseQueryEscape.processVersion)，构建 \(WorseQueryEscape.processBuildVersion)，"
-            + "设备读数 \(identity.describe)）")
+            + "设备读数 \(identity.describe)，包数 \(selection.tendies.count)）")
+
         let report = await KernelDirectProbe.run(log: { line in
             DriftEngine.shared.log(line)
         })
-        if report.passed {
-            DriftEngine.shared.log("内核探针：通过（零写入）")
-            return (true, "内核直刷探针通过：内核链、脱沙盒、读写删除和商店定位都正常，这次没有写入任何壁纸。")
+        guard report.passed,
+              let containerPath = report.containerPath,
+              let storePath = report.storePath else {
+            let reason = report.failure ?? "没有取得 PosterBoard 容器路径"
+            DriftEngine.shared.log("内核直刷：前置验证失败 —— \(reason)")
+            ApplyHistory.record(
+                mode: "内核直刷",
+                success: false,
+                error: reason,
+                device: identity.describe,
+                model: identity.productType,
+                ios: WorseQueryEscape.processVersion,
+                packName: selection.tendies.map(\.name).joined(separator: "、"),
+                packFiles: selection.tendies.map { $0.url.lastPathComponent },
+                logSliceText: RunLog.shared.lines.joined(separator: "\n")
+            )
+            return (false, "内核直刷前置验证失败：\(reason) 本次没有写入壁纸。")
         }
-        let reason = report.failure ?? "未知原因"
-        DriftEngine.shared.log("内核探针：失败 —— \(reason)")
-        return (false, "内核探针失败：\(reason) 本次零写入，也没有改走其他方式；要重试需要重启 App。")
+
+        flashStage = "内核读写已建立，正在写入 PosterBoard 描述文件"
+        do {
+            let outcome: KernelDirectWriter.Outcome = try await withCheckedThrowingContinuation {
+                continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        let result = try KernelDirectWriter.apply(
+                            selection: selection,
+                            containerPath: containerPath,
+                            storePath: storePath,
+                            structureVersions: report.structureVersions,
+                            deviceVersion: WorseQueryEscape.processVersion,
+                            log: { DriftEngine.shared.log($0) },
+                            progress: { value in
+                                DriftEngine.shared.log(String(format: "[内核写入] 进度 %.0f%%", value))
+                            }
+                        )
+                        continuation.resume(returning: result)
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+            let verification = outcome.verification
+            DriftEngine.shared.log("内核直刷写入完成：\(outcome.installedCount) 个描述符；\(verification.summary)")
+            ApplyHistory.record(
+                mode: "内核直刷",
+                success: true,
+                device: identity.describe,
+                model: identity.productType,
+                ios: WorseQueryEscape.processVersion,
+                channel: "内核直刷",
+                provider: verification.providersSeen.sorted().joined(separator: "、"),
+                verification: verification.summary,
+                packName: selection.tendies.map(\.name).joined(separator: "、"),
+                packFiles: selection.tendies.map { $0.url.lastPathComponent },
+                logSliceText: RunLog.shared.lines.joined(separator: "\n")
+            )
+            return (true, "内核直刷已写入 \(outcome.installedCount) 个描述符，写后核验：\(verification.summary)。本次没有执行壁纸刷新或生效操作。")
+        } catch {
+            let message = error.localizedDescription
+            DriftEngine.shared.log("内核直刷写入失败：\(message)")
+            ApplyHistory.record(
+                mode: "内核直刷",
+                success: false,
+                error: message,
+                device: identity.describe,
+                model: identity.productType,
+                ios: WorseQueryEscape.processVersion,
+                packName: selection.tendies.map(\.name).joined(separator: "、"),
+                packFiles: selection.tendies.map { $0.url.lastPathComponent },
+                logSliceText: RunLog.shared.lines.joined(separator: "\n")
+            )
+            return (false, "内核直刷写入失败：\(message)")
+        }
     }
 
     /// Collection #219 (Grace, 2026-11-12): when a channel finds no
@@ -1001,15 +1075,12 @@ enum DriftJudge {
                 return blocked("你手动选了内核直刷：这台机型不在它的支持表里。手动选定后不会自动改走别的通道。",
                                notice: "这台机型不在内核直刷的支持表里。")
             }
-            // #319 phase one: the premises pass, so the pick is runnable.
-            // Until the write channel lands, 刷入 runs the verification
-            // probe instead of a flash — the judgement is not blocked, but
-            // it names no channel (`mode` is a placeholder there; Home
-            // branches on the pick before it reads `mode`).
+            // Kernel Direct is a separate on-device writer, not a
+            // PosterBoardApplyMode channel. Home dispatches it directly.
             return DriftModeJudgement(
                 pick: pick,
                 mode: .worseQuery,
-                reason: "已手动选择内核直刷：现在跑的是第一阶段探针，点「刷入」只验证内核链、脱沙盒和商店定位，不写入任何壁纸。",
+                reason: "已手动选择内核直刷：会先验证 PosterBoard 容器读写，再写入已选描述文件；不需要配对或隧道。",
                 blockedReason: nil,
                 options: rows,
                 expectedEffect: "")

@@ -48,10 +48,13 @@ struct DriftHomeView: View {
     private var selectedDescriptors: Int { selection.tendies.reduce(0) { $0 + $1.descriptorCount } }
     private var overLimit: Bool { selectedDescriptors > PosterBoardImports.descriptorLimit }
     private var canApply: Bool {
-        // Phase one of the kernel channel (#319) is a probe, not a flash:
-        // it needs no pack selection, no pairing and no tunnel — only its
-        // own premises.
-        if manualPick == .kernel { return kernelReady && !session.running }
+        // Kernel Direct writes the selected descriptor packs directly into
+        // PosterBoard's container; no pairing or tunnel is required.
+        if manualPick == .kernel {
+            return kernelReady && !selection.tendies.isEmpty && !overLimit
+                && selection.video == nil && !selection.fullReset
+                && selection.resetModes.isEmpty && !session.running
+        }
         // The in-process route is the one path that does not need a pairing
         // record; every other mode still does.
         return (session.paired || judgement.mode == .worseQuery)
@@ -66,7 +69,7 @@ struct DriftHomeView: View {
 
     private var headerSubtitle: String {
         if kernelReady {
-            return "内核直刷探针可用（本机 \(SystemVersionName.display(version: localVersion, build: localBuild))）：点「刷入」只验证通道，不写入壁纸。"
+            return "内核直刷可用（本机 \(SystemVersionName.display(version: localVersion, build: localBuild))）：选择壁纸包后直接写入 PosterBoard 容器。"
         }
         if localReady {
             return "本机直刷可用（本机 \(SystemVersionName.display(version: localVersion, build: localBuild))）：现在就能刷，不用配对，也不用开隧道。"
@@ -454,7 +457,9 @@ struct DriftHomeView: View {
                 }
                 .driftGlassButton()
             }
-            if judgement.mode == .worseQuery {
+            if manualPick == .kernel {
+                NativeNote("内核直刷会把已选壁纸描述文件直接写入 PosterBoard 容器，并逐项读回核验。当前阶段不执行刷新或生效操作。")
+            } else if judgement.mode == .worseQuery {
                 NativeNote("本机直刷在本机写入，不需要配对文件，也不用开隧道。刷完先打开 PosterBoard 刷新集合，再从应用切换器上滑关闭它，系统重新拉起后壁纸生效。App 不会自动注销。")
             } else if !session.paired {
                 NativeNote("两条隧道通道都需要先导入配对文件；本机直刷不需要，但只有证书签名才能用。")
@@ -557,13 +562,14 @@ struct DriftHomeView: View {
         var runSelection = selection
         runSelection.resetModes = []
         runSelection.fullReset = false
-        // #319 phase one: a kernel pick runs the verification probe, not a
-        // flash. No channel mode is involved, so the run funnel below is
-        // skipped on purpose.
+        // Kernel Direct has its own on-device write flow. It verifies the
+        // real PosterBoard container first, then writes the selected packs;
+        // no channel mode, pairing record or tunnel is involved.
         if manualPick == .kernel {
             Task {
                 defer { session.flashCover = false }
-                let outcome = await session.runKernelProbe(identity: identity)
+                let outcome = await session.runKernelApply(identity: identity,
+                                                            selection: selection)
                 if outcome.ok {
                     statusLine = outcome.message
                 } else {
