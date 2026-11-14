@@ -65,7 +65,7 @@ enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
         case .airlift:
             return "通过配对隧道逐张写入 PosterBoard 的容器——写完统一注销生效。支持 iOS 18.0–27.1 正式版及 27.2 beta 1 / 2；需要配对、隧道、LocalDevVPN，且设备保持解锁。"
         case .worseQuery:
-            return "在本机直接写进 PosterBoard 的容器——不用配对文件、不用隧道。刷完提示你上滑关闭 PosterBoard，系统重新拉起时生效；需要 iOS 26.0–26.7.2、27.0–27.2、27.2.1，或 27.3 测试版 1（实验），且是证书签名（带能用的 App Group）。"
+            return "在本机直接写进 PosterBoard 的容器——不用配对文件、不用隧道。刷完提示你上滑关闭 PosterBoard，系统重新拉起时生效；需要 iOS 26.0–26.7.2、27.0–27.2、27.2.1，或 27.3 测试版 1，且是证书签名（带能用的 App Group）。"
         }
     }
 
