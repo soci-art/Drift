@@ -195,16 +195,6 @@ int32_t al_poster_refresh(const char *pairing_path,
 // "serviceUnavailable" / "stageFailed" / "listFailed" / "afcFailed"),
 // out_error is human-readable and the return value is 1.
 // Heap strings must be released with al_string_free().
-// List existing generation directories at the PosterBoard store root.
-// A missing root returns {"generations":[]} with status "ok".
-int32_t al_poster_store_generations(const char *pairing_path,
-                                    const char *container_path,
-                                    ALLogCallback log_cb,
-                                    void *ctx,
-                                    char **out_json,
-                                    char **out_status,
-                                    char **out_error);
-
 int32_t al_poster_store_list(const char *pairing_path,
                              const char *container_path,
                              int64_t struct_version,
