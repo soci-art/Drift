@@ -51,13 +51,44 @@ enum KernelDirectWriter {
             throw DriftError("内核直刷当前只写入描述文件，不接受包含整个商店容器或数据库的包。")
         }
 
-        let canonicalContainer = URL(fileURLWithPath: containerPath).standardizedFileURL.path
+        // Keep the exact path spelling returned by the kernel probe.
+        // URL.standardizedFileURL may strip the existing "/private" alias
+        // from /private/var/... on iOS. That changes the string even though
+        // it names the same directory, causing the strict prefix/store
+        // comparison below to reject a path the probe just verified.
+        let canonicalContainer = containerPath.hasSuffix("/")
+            ? String(containerPath.dropLast())
+            : containerPath
+        let components = canonicalContainer.split(separator: "/", omittingEmptySubsequences: true)
+        let hasSafeComponents = !components.contains(".") && !components.contains("..")
+        let hasExpectedRoot = canonicalContainer.hasPrefix(
+            "/private/var/mobile/Containers/Data/Application/"
+        )
+        let hasContainerUUID = UUID(
+            uuidString: (canonicalContainer as NSString).lastPathComponent
+        ) != nil
         let expectedStore = canonicalContainer + PosterBoard.storeRoot
-        guard canonicalContainer.hasPrefix("/private/var/mobile/Containers/Data/Application/"),
-              UUID(uuidString: URL(fileURLWithPath: canonicalContainer).lastPathComponent) != nil,
-              storePath == expectedStore,
-              FileManager.default.fileExists(atPath: storePath) else {
-            throw DriftError("PosterBoard 容器路径未通过校验，拒绝写入。")
+        let storePathMatches = storePath == expectedStore
+        var storeIsDirectory: ObjCBool = false
+        let storeExists = FileManager.default.fileExists(
+            atPath: storePath,
+            isDirectory: &storeIsDirectory
+        ) && storeIsDirectory.boolValue
+
+        log("[内核写入] 路径校验：根路径=\(hasExpectedRoot)，容器 UUID=\(hasContainerUUID)，"
+            + "路径组件安全=\(hasSafeComponents)，Store 路径匹配=\(storePathMatches)，"
+            + "Store 目录存在=\(storeExists)")
+        guard hasExpectedRoot,
+              hasContainerUUID,
+              hasSafeComponents,
+              storePathMatches,
+              storeExists else {
+            throw DriftError(
+                "PosterBoard 容器路径未通过校验，拒绝写入。"
+                + "（根路径：\(hasExpectedRoot)，容器 UUID：\(hasContainerUUID)，"
+                + "路径安全：\(hasSafeComponents)，Store 匹配：\(storePathMatches)，"
+                + "目录存在：\(storeExists)）"
+            )
         }
 
         let sources = selection.tendies.map { pack in
