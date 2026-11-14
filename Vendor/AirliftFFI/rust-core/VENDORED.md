@@ -411,3 +411,23 @@ iOS 17 container-lookup fallback chain)
   iOS 17.0's installation_proxy deterministically drops the
   connection on the historical ask (field logs, seven attempts);
   iOS 18 and 26/27 answer shape 0 and never reach the fallbacks.
+
+---
+
+Drift local change, 2026-11-14 (collection #320, Grace-approved:
+absent store generation is an empty list, not a failure)
+----------------------------------------
+- `src/poster_store.rs` — `store_list` only: when both listing
+  attempts for one store generation fail and the last error is the
+  deviceinfo channel's `UnexpectedResponse("no data in reply")`
+  (its answer for a path that does not exist), the generation is
+  logged as `poster_store.list.absent` and reported as an empty
+  list instead of `ListFailed`. Reason: the management page probes
+  the neighbouring generations around the one in use
+  (60/62/63/64 around a real 61); on a device where only the real
+  generation exists, every management load produced dozens of
+  listFailed lines for directories that were never there (field
+  log 2026-11-13 23:44, iPhone18,2 / iOS 27.0.1). The two-attempt
+  fresh-service retry still runs first, so a transient failure on
+  an existing directory is not reclassified. No other flow
+  (install, delete, audits) changed.

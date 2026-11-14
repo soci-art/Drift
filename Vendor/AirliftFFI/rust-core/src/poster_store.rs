@@ -539,7 +539,28 @@ async fn store_list(
             }
         }
     }
-    let items = items.ok_or((StoreStatus::ListFailed, last_error))?;
+    // Collection #320: a generation directory that does not exist on
+    // this device is not a failure. The deviceinfo channel answers a
+    // listing for a missing path with UnexpectedResponse("no data in
+    // reply"), deterministically — the fresh-service retry above has
+    // already ruled out a flaky pass by then. The generation in actual
+    // use always exists; the neighbouring generations the management
+    // page probes around it (60/62/63/64 around a real 61) usually do
+    // not, and reporting ListFailed for them turned a normal store
+    // shape into dozens of failure lines per management load (field
+    // log 2026-11-13 23:44: 46 listFailed entries, all for absent
+    // generations, while the real generation listed fine). Absent
+    // generation ⇒ empty list.
+    let items = match items {
+        Some(found) => found,
+        None if last_error.contains("no data in reply") => {
+            logger.log(format!(
+                "airlift: airlift.poster_store.list.absent path={target} - generation directory not present on this device, treated as an empty store"
+            ));
+            Vec::new()
+        }
+        None => return Err((StoreStatus::ListFailed, last_error)),
+    };
 
     let mut json = String::from("{\"items\":[");
     for (i, item) in items.iter().enumerate() {
