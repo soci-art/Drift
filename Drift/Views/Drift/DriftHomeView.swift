@@ -135,17 +135,10 @@ struct DriftHomeView: View {
             // The premises are listed per route, not as one global gate: the
             // in-process route only needs the app's own version and a granted
             // App Group, so pairing and the tunnel must not sit in front of it.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
-                    DriftPill(text: localReady ? "本机直刷可用" : "本机直刷不可用",
-                              tint: localReady ? .green : .orange)
-                    DriftPill(text: "本机 \(SystemVersionName.display(version: localVersion, build: localBuild))")
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    DriftPill(text: localReady ? "本机直刷可用" : "本机直刷不可用",
-                              tint: localReady ? .green : .orange)
-                    DriftPill(text: "本机 \(SystemVersionName.display(version: localVersion, build: localBuild))")
-                }
+            DriftFlowLayout {
+                DriftPill(text: localReady ? "本机直刷可用" : "本机直刷不可用",
+                          tint: localReady ? .green : .orange)
+                DriftPill(text: "本机 \(SystemVersionName.display(version: localVersion, build: localBuild))")
             }
             Text(headerSubtitle)
                 .font(.subheadline)
@@ -155,10 +148,7 @@ struct DriftHomeView: View {
                                                     build: localBuild))
                     .font(.caption).foregroundStyle(.secondary)
             }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) { tunnelPills }
-                VStack(alignment: .leading, spacing: 6) { tunnelPills }
-            }
+            DriftFlowLayout { tunnelPills }
             if !session.paired {
                 Button { importingPairing = true } label: {
                     Label("导入配对文件（只走两条隧道通道时才需要）", systemImage: "link.badge.plus")
@@ -332,10 +322,18 @@ struct DriftHomeView: View {
         .buttonStyle(.plain)
     }
 
-    /// The shared shape of Home's two long bars (#266/#280): the
+    /// The shared shape of Home's long bars (#266/#280): the
     /// usable-state blue, white centred content, no chevron. A flat
     /// fill again since the glass-unification round (2026-11-13) —
     /// the tinted liquid glass of #286 is gone.
+    ///
+    /// Collection #326 (Grace, 2026-11-14): all four of Home's bars
+    /// — these two navigation bars and the two action buttons below
+    /// (`homeBarButton`) — share this one fixed height, so the set
+    /// reads as one size. The buttons used to be
+    /// `NativePrimaryButton`, whose shared style pads less, and the
+    /// refresh card insets more than the action frame, so no two of
+    /// the four matched.
     private func homeBarLabel(icon: String, title: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
@@ -344,8 +342,34 @@ struct DriftHomeView: View {
         .font(.headline)
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 15)
+        .frame(height: 50)
         .driftGlassCapsule(tint: .accentColor)
+    }
+
+    /// One of Home's long bars as a button (#326): the same 50pt
+    /// bar `homeBarLabel` draws, with the running spinner and the
+    /// disabled dimming the shared primary button used to give it.
+    private func homeBarButton(icon: String, title: String,
+                               running: Bool = false, disabled: Bool = false,
+                               action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if running {
+                    ProgressView().controlSize(.small).tint(.white)
+                } else {
+                    Image(systemName: icon)
+                }
+                Text(title)
+            }
+            .font(.headline)
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .frame(height: 50)
+            .driftGlassCapsule(tint: .accentColor)
+            .opacity(disabled || running ? 0.45 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled || running)
     }
 
     /// Collection #286 (Grace, 2026-11-13): the packs bar, the flash
@@ -372,10 +396,10 @@ struct DriftHomeView: View {
     /// the action frame is the surface now.
     private var applySection: some View {
         VStack(spacing: 10) {
-            NativePrimaryButton(title: session.running ? "刷入中…" : "刷入",
-                                systemImage: "paintbrush.pointed",
-                                running: session.running,
-                                disabled: !canApply) {
+            homeBarButton(icon: "paintbrush.pointed",
+                          title: session.running ? "刷入中…" : "刷入",
+                          running: session.running,
+                          disabled: !canApply) {
                 runApply()
             }
             if session.running {
@@ -422,27 +446,37 @@ struct DriftHomeView: View {
             Text("刷新与生效").font(.subheadline.weight(.semibold))
             Text("刷完壁纸还没生效时用这里。")
                 .font(.subheadline).foregroundStyle(.secondary)
-            NativePrimaryButton(title: "结束 PosterBoard",
-                                systemImage: "arrow.triangle.2.circlepath",
-                                running: false,
-                                disabled: !localReady) {
+            // The same width as the three bars in the action frame
+            // above (#326): this card insets its content by 16 where
+            // the frame insets 12, so the bar pulls out by the
+            // difference and all four line up.
+            homeBarButton(icon: "arrow.triangle.2.circlepath",
+                          title: "结束 PosterBoard",
+                          disabled: !localReady) {
                 openPosterBoard()
             }
+            .padding(.horizontal, -4)
             if !localReady {
                 Text(InstallEnvironment.localReason(version: localVersion,
                                                     build: localBuild))
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Button {
-                confirmRespring = true
-            } label: {
-                Label("注销", systemImage: "arrow.clockwise.circle")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
+            // Collection #327 (Grace, 2026-11-14): no capsule —
+            // just the icon and the word, centred, and only that
+            // cluster takes taps (the centring spacers sit outside
+            // the button). The confirmation sheet is unchanged.
+            HStack {
+                Spacer()
+                Button {
+                    confirmRespring = true
+                } label: {
+                    Label("注销", systemImage: "arrow.clockwise.circle")
+                        .font(.headline)
+                }
+                .buttonStyle(.plain)
+                .disabled(session.running)
+                Spacer()
             }
-            .driftGlassButton()
-            .controlSize(.large)
-            .disabled(session.running)
             .driftActionSheet(isPresented: $confirmRespring, title: "确认注销？",
                               message: "将立即注销，界面会重启一遍，壁纸在重启后生效。",
                               actions: [

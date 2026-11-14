@@ -62,14 +62,31 @@ final class RotatingFileSink: LogSink, @unchecked Sendable {
         guard !buffer.isEmpty else { return }
         let fm = FileManager.default
         if !fm.fileExists(atPath: url.path) {
+            // A held handle would point at the unlinked old file; drop
+            // it so the next flush reopens the path that exists.
+            try? handle?.close()
+            handle = nil
             try? buffer.write(to: url)
             knownSize = UInt64(buffer.count)
             buffer.removeAll()
             return
         }
+        // Resync against the file on disk (#323): the cache clearer
+        // truncates this file through its own handle while this sink
+        // keeps writing through the one it holds. Without the check,
+        // the next flush landed at the pre-truncation offset and left
+        // a NUL hole where the cleared lines had been, and the lines
+        // written after the clear sat behind kilobytes of zeros. One
+        // stat per (already batched) flush keeps the handle and the
+        // remembered size honest.
+        let actualSize = ((try? fm.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)
+            .map { $0.uint64Value } ?? 0
         if knownSize == nil {
-            knownSize = ((try? fm.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)
-                .map { $0.uint64Value } ?? 0
+            knownSize = actualSize
+        } else if knownSize != actualSize {
+            try? handle?.close()
+            handle = nil
+            knownSize = actualSize
         }
         if let size = knownSize, size > limit, let existing = try? Data(contentsOf: url) {
             // Keep the newer half — a long run logs continuously and the tail is

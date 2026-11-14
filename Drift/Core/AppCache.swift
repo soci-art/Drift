@@ -11,9 +11,11 @@ import Foundation
 /// receipts or history as "cache" would break same-pack dedup and
 /// the management page's flash-channel identification.
 ///
-/// Logs are truncated, not deleted: both log sinks keep writing to
-/// the same path, and truncation frees the space immediately without
-/// disturbing a sink that holds the file open.
+/// Logs are truncated, not deleted: the sinks keep writing to the
+/// same path, and truncation frees the space immediately. The file
+/// sink notices the size change on its next flush and reopens at
+/// the new end (#323), so a clear never leaves a hole behind the
+/// lines written after it.
 enum AppCache {
     struct Breakdown {
         var previews = 0

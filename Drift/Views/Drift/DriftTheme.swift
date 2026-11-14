@@ -152,6 +152,56 @@ struct DriftPill: View {
     }
 }
 
+/// Left-to-right layout that wraps onto the next line when a row
+/// fills (collection #325): the header card's pill groups used
+/// `ViewThatFits` with a one-per-line vertical fallback, and the
+/// four tunnel pills never fit on a single line, so they always
+/// landed stacked one per row. A flow keeps them side by side,
+/// wrapping as needed, the way the first group already read.
+struct DriftFlowLayout: Layout {
+    var horizontalSpacing: CGFloat = 8
+    var verticalSpacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var widest: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > maxWidth {
+                widest = max(widest, x - horizontalSpacing)
+                x = 0
+                y += rowHeight + verticalSpacing
+                rowHeight = 0
+            }
+            x += size.width + horizontalSpacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        widest = max(widest, x - horizontalSpacing)
+        return CGSize(width: min(maxWidth, widest), height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + verticalSpacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading,
+                          proposal: ProposedViewSize(size))
+            x += size.width + horizontalSpacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
 /// One fact row on the About page: a heading and its text.
 struct DriftFactRow: View {
     let title: String
