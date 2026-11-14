@@ -45,18 +45,64 @@ enum KernelDirectProbe {
     static func run(log: @escaping @Sendable (String) -> Void) async -> Report {
         let version = WorseQueryEscape.processVersion
         let model = KernelDirectPremise.modelIdentifier
-        log("[内核探针] run() 已进入：iOS \(version)，机型 \(model)")
+
+        // Keep the full diagnostic log, but also mirror meaningful probe
+        // milestones into the flashing cover. Without this, the user sees
+        // one static "checking" message while pathleak may be scanning.
+        let emit: @Sendable (String) -> Void = { line in
+            log(line)
+            guard let stage = visibleStage(for: line) else { return }
+            Task { @MainActor in
+                DriftSession.shared.flashStage = stage
+            }
+        }
+
+        emit("[内核探针] run() 已进入：iOS \(version)，机型 \(model)")
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let started = Date()
-                log("[内核探针] 后台执行线程已启动")
-                let report = execute(version: version, model: model, log: log)
-                log(String(format: "[内核探针] execute() 返回：passed=%@，总耗时 %.2f 秒",
-                           report.passed ? "true" : "false",
-                           Date().timeIntervalSince(started)))
+                emit("[内核探针] 后台执行线程已启动")
+                let report = execute(version: version, model: model, log: emit)
+                emit(String(format: "[内核探针] execute() 返回：passed=%@，总耗时 %.2f 秒",
+                            report.passed ? "true" : "false",
+                            Date().timeIntervalSince(started)))
                 continuation.resume(returning: report)
             }
         }
+    }
+
+    /// Translate low-level probe logs into concise, live cover text. The
+    /// detailed log remains the source of truth for exact inode ranges,
+    /// candidate counts, errno values and elapsed times.
+    private static func visibleStage(for line: String) -> String? {
+        if line.contains("全部通过") {
+            return "PosterBoard 容器读写验证通过，准备写入壁纸"
+        }
+        if line.contains("[pathleak]") {
+            if line.contains("开始") {
+                return "正在分段定位 PosterBoard 容器（pathleak）"
+            }
+            if line.contains("超时") {
+                return "PosterBoard 容器定位超时，正在整理诊断结果"
+            }
+            return "正在扫描 PosterBoard 容器，请保持 Drift 在前台"
+        }
+        if line.contains("[容器定位]") || line.contains("4/5") {
+            return "正在定位 PosterBoard 容器"
+        }
+        if line.contains("5/5") {
+            return "正在验证 PosterBoard 商店的创建、写入、读回与删除能力"
+        }
+        if line.contains("3/5") {
+            return "内核读写能力已建立，正在确认目标容器访问状态"
+        }
+        if line.contains("2/5") || line.contains("[内核链]") {
+            return "正在建立 3106 内核读写能力，请保持 Drift 在前台"
+        }
+        if line.contains("1/5") {
+            return "正在复查当前系统版本与设备支持条件"
+        }
+        return nil
     }
 
     // MARK: - The five steps
