@@ -133,11 +133,15 @@ jobs:
           path: build/Drift.ipa
           if-no-files-found: error
 
-      # Replace the IPA attachment on the existing pre-release, without
-      # creating a release or touching its title, notes, tag or any non-IPA
-      # asset. [probe] builds the timing package; [preview] builds the formal
-      # handover package without the probe switch. Both leave the tag as a
-      # pre-release and only swap the IPA.
+      # Replace the IPA attachment on the tag's pre-release. A formal
+      # release is never touched: if the tag exists and is not a
+      # pre-release the step fails rather than swapping a shipped IPA.
+      # The tag is created as an empty pre-release only when it does not
+      # exist at all (the first probe of a new version, e.g. v3.2.4 after
+      # v3.2.3 was promoted to Latest); its title, notes and non-IPA
+      # assets are never edited afterwards. [probe] builds the probe
+      # package; [preview] builds the formal handover package without the
+      # probe switch. Both leave the tag as a pre-release.
       - name: Replace the pre-release IPA with this build
         if: >-
           github.event_name == 'push' &&
@@ -158,6 +162,14 @@ jobs:
           TAG="v$VERSION"
           ASSET="build/Drift-$VERSION-unsigned.ipa"
           cp build/Drift.ipa "$ASSET"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "no release $TAG yet — creating it as an empty pre-release"
+            gh release create "$TAG" \
+              --title "Drift $VERSION（预发行）" \
+              --notes "预发行构建，供测试使用。未签名 IPA，安装者自行签名；不影响正式版。" \
+              --prerelease \
+              --target "$GITHUB_SHA"
+          fi
           if [ "$(gh release view "$TAG" --json isPrerelease --jq '.isPrerelease')" != "true" ]; then
             echo "error: $TAG is not a pre-release; refusing to replace its IPA" >&2
             exit 1
