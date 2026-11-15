@@ -642,7 +642,7 @@ final class DriftSession: ObservableObject {
             // #319: dump the store through the same kernel session, after the
             // write has settled and before the receipt is recorded, so the
             // comparison lines travel with this run's log. Read-only.
-            await dumpKernelStore(container: containerPath,
+            await Self.dumpKernelStore(container: containerPath,
                                   store: storePath,
                                   generation: verification.structureVersion,
                                   placedFolders: Set(outcome.placed.map(\.folderName)))
@@ -685,7 +685,7 @@ final class DriftSession: ObservableObject {
             DriftEngine.shared.log("内核直刷写入失败：\(message)")
             // #319: the order asks for the dump once the probe has passed even
             // when the write itself failed; the kernel session is still here.
-            await dumpKernelStore(container: containerPath,
+            await Self.dumpKernelStore(container: containerPath,
                                   store: storePath,
                                   generation: report.structureVersions.first
                                       ?? PosterBoard.fallbackStructureVersion,
