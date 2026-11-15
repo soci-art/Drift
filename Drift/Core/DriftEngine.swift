@@ -296,7 +296,7 @@ final class DriftEngine {
             // apply: these routes never take or restore a backup.
             let minimuxer = Minimuxer.shared()
             guard await testReady(minimuxer) else {
-                throw DriftError("核心还没就绪。请确保 Wi-Fi 和隧道可用（LocalDevVPN 或 WireGuard + em_proxy），然后选择配对文件。")
+                throw DriftError("核心还没就绪。请确保 Wi-Fi 可用，并打开 LocalDevVPN 连上隧道，然后选择配对文件。")
             }
             // Everything after this byte offset is this run's Rust output.
             markRustLog()
