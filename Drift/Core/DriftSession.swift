@@ -813,8 +813,8 @@ struct DriftModeAvailability: Identifiable, Equatable {
 
 /// The user's method pick. Five methods, exactly as named: 自动选择 and the
 /// four channels. The sealed restore route is not a pick — since #329 it
-/// has no Home entry at all and never runs. The kernel pick exists in the
-/// list only while its 实验性功能 switch is on (#329); its channel is not
+/// has no Home entry at all and never runs. The kernel pick is always in
+/// the list (Grace, 2026-11-15); its channel is not
 /// a `PosterBoardApplyMode` — the judge handles the pick directly.
 enum DriftMethodPick: String, CaseIterable, Identifiable {
     case auto
@@ -1131,11 +1131,10 @@ enum DriftJudge {
     static func judge(identity: DeviceIdentity, selection: PosterBoardSelection,
                       pick: DriftMethodPick,
                       tunnelReady: Bool = false) -> DriftModeJudgement {
-        // A stored kernel pick with its 实验性功能 switch off reads
-        // as 自动选择 (#329): the method does not exist while the
-        // switch is off, so it cannot block a run either.
-        let pick = (pick == .kernel && !KernelDirectPremise.isEnabled)
-            ? DriftMethodPick.auto : pick
+        // The kernel pick is always visible and selectable (Grace,
+        // 2026-11-15, replacing the #329 hide-while-off rule): with
+        // its 实验性功能 switch off it judges as blocked with a
+        // go-turn-it-on reminder below, never as another pick.
         let p = premises(identity: identity, tunnelReady: tunnelReady)
         let rows = optionRows(p, identity: identity)
 
@@ -1175,6 +1174,12 @@ enum DriftJudge {
             // A manual kernel pick is used as-is when its premise
             // passes and blocked with the honest reason when it does
             // not; manual picks never reroute to another channel.
+            // The switch comes first: off is not "unavailable", it is
+            // "not turned on yet" — the answer points at the switch.
+            guard KernelDirectPremise.isEnabled else {
+                return blocked("你手动选了内核直刷：它还没有打开。先到「设置 → 实验性功能」里打开内核直刷，再回来刷入。手动选定后不会自动改走别的通道。",
+                               notice: "请先到「设置 → 实验性功能」里打开内核直刷。")
+            }
             let premise = KernelDirectPremise.evaluate(version: p.appVersion)
             if !premise.inBand {
                 return blocked("你手动选了内核直刷：它只支持 iOS 17 / 18，这台的系统是 iOS \(p.appVersion)，不在这个范围。手动选定后不会自动改走别的通道。",
@@ -1225,6 +1230,14 @@ enum DriftJudge {
 
         if let channel = firstAvailable(p) {
             return judged(channel, autoReason(channel))
+        }
+        // Nothing else can run. If this device could flash through
+        // the kernel channel and the only thing missing is its
+        // switch, 自动选择 says so instead of a bare dead end
+        // (Grace, 2026-11-15): the reminder is the answer.
+        if kernelPremise.ready, !KernelDirectPremise.isEnabled {
+            return blocked("自动选择：这台设备能用内核直刷（实验），但它还没有打开，其他方式现在也用不了。先到「设置 → 实验性功能」里打开内核直刷，就能刷了。",
+                           notice: "请先到「设置 → 实验性功能」里打开内核直刷。")
         }
         // #332 (Grace, 2026-11-14): this summary used to concatenate all
         // three channels' full reasons into one paragraph — the same

@@ -26,16 +26,11 @@ struct DriftHomeView: View {
     private var identity: DeviceIdentity { identityMonitor.current }
     /// The user's method pick (2.0.0: a method, never a channel).
     private var manualPick: DriftMethodPick {
-        let stored = DriftMethodPick.fromStored(manualPickRaw)
-        // Grace (2026-11-15): with the 实验性功能 switch off, the
-        // kernel method cannot be selected on this page at all —
-        // not by hand (its row is hidden) and not by 自动选择. A
-        // stored kernel pick therefore reads as 自动选择 for
-        // everything this page shows and gates on (selected row,
-        // can-apply, notes, the run's log line), matching how the
-        // judge already treats it.
-        if stored == .kernel && !kernelEnabled { return .auto }
-        return stored
+        // The stored pick stands as-is (Grace, 2026-11-15): the
+        // kernel row is always shown and selectable, and the judge
+        // answers a kernel pick whose switch is off with a
+        // go-turn-it-on reminder — the pick is never rewritten.
+        DriftMethodPick.fromStored(manualPickRaw)
     }
     /// The local channel's premise: the app's own system only. It never
     /// looks at the device read, pairing or the tunnel.
@@ -49,10 +44,12 @@ struct DriftHomeView: View {
         DriftJudge.judge(identity: identity, selection: selection, pick: manualPick,
                          tunnelReady: tunnelReady)
     }
-    /// The method rows to draw: every pick, plus 内核直刷 only while
-    /// its 实验性功能 switch is on (#329).
+    /// The method rows to draw: every pick, always — 内核直刷
+    /// included (Grace, 2026-11-15, replacing the #329
+    /// hide-while-off rule). Its row carries the turn-it-on
+    /// reminder while the switch is off.
     private var visiblePicks: [DriftMethodPick] {
-        DriftMethodPick.allCases.filter { $0 != .kernel || kernelEnabled }
+        DriftMethodPick.allCases
     }
     private var selectedDescriptors: Int { selection.tendies.reduce(0) { $0 + $1.descriptorCount } }
     private var overLimit: Bool { selectedDescriptors > PosterBoardImports.descriptorLimit }
@@ -259,7 +256,8 @@ struct DriftHomeView: View {
         let kernelEval = pick == .kernel
             ? KernelDirectPremise.evaluate(version: localVersion) : nil
         let available = pick == .auto ? !judged.isBlocked
-            : (kernelEval?.ready ?? (option?.available ?? false))
+            : (kernelEval.map { $0.ready && kernelEnabled }
+                ?? (option?.available ?? false))
         // Sealed (collection #142): the version is in range but this
         // install's signing grants no usable App Group — the row stays
         // visible like the sealed restore entry, but it cannot be picked;
@@ -271,6 +269,8 @@ struct DriftHomeView: View {
                 : (judged.useKernel ? "→ 内核直刷（实验）" : "→ \(judged.mode.shortTitle)")
         } else if sealed {
             status = "不可选"
+        } else if pick == .kernel, kernelEval?.ready == true, !kernelEnabled {
+            status = "未打开"
         } else {
             status = available ? "可用" : "不可用"
         }
@@ -311,6 +311,11 @@ struct DriftHomeView: View {
                     }
                     if let kernelEval, !kernelEval.ready {
                         Text(kernelEval.reason)
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if pick == .kernel, kernelEval?.ready == true, !kernelEnabled {
+                        Text("还没打开：请到「设置 → 实验性功能」里打开内核直刷。")
                             .font(.caption2).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }

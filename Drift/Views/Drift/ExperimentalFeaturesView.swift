@@ -5,10 +5,12 @@ import SwiftUI
 /// and nowhere else:
 ///
 /// * 内核直刷 — off by default. Turning it on asks first (the sheet's
-///   wording is Grace's); only then does the method appear in Home's
-///   method list and its status group lead the status card. Turning
-///   it off is silent, and a stored kernel pick falls back to
-///   自动选择 (handled in `DriftJudge.judge`).
+///   wording is Grace's). The method is always listed on Home
+///   (Grace, 2026-11-15); while the switch is off its row shows
+///   未打开 with a pointer back here, its status group leads the
+///   status card only once it is ready, and the judge blocks a
+///   kernel pick with the turn-it-on reminder. Turning it off is
+///   silent.
 /// * 恢复刷 — the switch is a surface only: any tap answers
 ///   「恢复刷暂不可用」 and the switch stays off. The restore seal
 ///   itself is untouched (`DriftRestoreGate` still decides), this
