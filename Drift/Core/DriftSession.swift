@@ -509,8 +509,8 @@ final class DriftSession: ObservableObject {
             case .worseQuery:
                 let opened = await MainActor.run { PosterBoardLaunch.open() }
                 let hint = opened
-                    ? "已打开 PosterBoard 以刷新集合，请从应用切换器中关闭它，然后检查锁定屏幕壁纸选择器。"
-                    : "请打开锁定屏幕壁纸选择器来刷新 PosterBoard；如果壁纸未出现，请从应用切换器关闭 PosterBoard 后重试。"
+                    ? "已打开 PosterBoard 以刷新集合，请在应用切换器里上滑结束它，然后检查锁定屏幕壁纸选择器。"
+                    : "请打开锁定屏幕壁纸选择器来刷新 PosterBoard；如果壁纸未出现，请在应用切换器里上滑结束 PosterBoard 后重试。"
                 if let effect {
                     return (true, "\(effect.headline)。\(hint)", effect)
                 }

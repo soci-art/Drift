@@ -90,11 +90,18 @@ final class RotatingFileSink: LogSink, @unchecked Sendable {
         }
         if let size = knownSize, size > limit, let existing = try? Data(contentsOf: url) {
             // Keep the newer half — a long run logs continuously and the tail is
-            // the part that matters.
+            // the part that matters. The cut aligns to the next newline
+            // (next-version batch, Grace 2026-11-15): a raw byte cut could
+            // split a line — or a multi-byte character — in two, leaving a
+            // garbled first line in every rotated log.
             try? handle?.close()
             handle = nil
-            try? existing.suffix(Int(limit / 2)).write(to: url)
-            knownSize = limit / 2
+            var kept = existing.suffix(Int(limit / 2))
+            if let newline = kept.firstIndex(of: 0x0A), newline + 1 < kept.count {
+                kept = kept.suffix(from: newline + 1)
+            }
+            try? kept.write(to: url)
+            knownSize = UInt64(kept.count)
         }
         if handle == nil {
             handle = try? FileHandle(forWritingTo: url)

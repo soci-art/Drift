@@ -343,7 +343,14 @@ struct PackListView: View {
     /// the conversion UI shows unless the device is known to be on
     /// iOS 26, the one supported system that never converts.
     private var needsConversionUI: Bool {
-        let version = identity.version
+        // Next-version batch (Grace, 2026-11-15): judge by the phone's
+        // own version when the tunnel read is absent. Kernel users on
+        // 17/18 never pair, so the tunnel identity is empty for them,
+        // and the old empty-means-show fallback put this row in front
+        // of exactly the users it can never apply to. Mirrors the
+        // repair flow's resolution further down this file.
+        let version = identity.version.isEmpty
+            ? WorseQueryEscape.processVersion : identity.version
         guard let major = Int(version.split(separator: ".").first ?? "") else { return true }
         return major >= 27
     }
@@ -374,7 +381,9 @@ struct PackListView: View {
             AppLog.op("壁纸包页：取消勾选 \(pack.name)")
             return
         }
-        if let prompt = pack.legacyConvertPrompt(deviceVersion: identity.version) {
+        if let prompt = pack.legacyConvertPrompt(
+            deviceVersion: identity.version.isEmpty
+                ? WorseQueryEscape.processVersion : identity.version) {
             legacyPrompt = prompt
             return
         }
