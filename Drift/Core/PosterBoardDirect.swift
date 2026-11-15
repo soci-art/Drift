@@ -77,7 +77,7 @@ enum PosterBoardDirect {
     static func unavailableReason(deviceVersion: String, buildVersion: String = "") -> String {
         if deviceVersion.isEmpty { return "还没有读到设备系统版本。" }
         if let ceiling = PosterBoard.compareVersion(deviceVersion, "27.2"), ceiling > 0 {
-            return "免注销直刷在 iOS 27.2 测试版 3 起已被系统修复。"
+            return "免注销直刷在 iOS 27.2 beta 3 起已被系统修复。"
         }
         if let floor = PosterBoard.compareVersion(deviceVersion, minimumVersion), floor < 0 {
             return "免注销直刷需要 iOS \(minimumVersion) 或更高版本。"
@@ -88,7 +88,7 @@ enum PosterBoardDirect {
             }
             if !AirliftAvailability.early272Builds.contains(
                 buildVersion.trimmingCharacters(in: .whitespacesAndNewlines)) {
-                return "免注销直刷在 iOS 27.2 测试版 3 起已关闭，只有测试版 1/2（24B5084k、24B5089g）可用。"
+                return "免注销直刷在 iOS 27.2 beta 3 起已关闭，只有 beta 1 / 2（构建 24B5084k、24B5089g）可用。"
             }
         }
         return ""
