@@ -36,6 +36,29 @@ enum KernelDirectWriter {
         let numericID: Int
     }
 
+    private struct PreparedDescriptor {
+        let pack: String
+        let folder: URL
+        let extensionID: String
+        let numericID: Int
+        let folderName: String
+    }
+
+    /// A copied and fsynced hidden folder, ready for one final atomic rename.
+    private struct PendingDescriptor {
+        let pack: String
+        let extensionID: String
+        let folderName: String
+        let numericID: Int
+        let parent: String
+        let stagingPath: String
+        let destination: String
+        let files: Int
+        let bytes: Int64
+
+        var key: String { "\(extensionID)/\(folderName)" }
+    }
+
     static func apply(
         selection: PosterBoardSelection,
         containerPath: String,
@@ -58,10 +81,7 @@ enum KernelDirectWriter {
         }
 
         // Keep the exact path spelling returned by the kernel probe.
-        // URL.standardizedFileURL may strip the existing "/private" alias
-        // from /private/var/... on iOS. That changes the string even though
-        // it names the same directory, causing the strict prefix/store
-        // comparison below to reject a path the probe just verified.
+        // URL.standardizedFileURL may strip the existing "/private" alias.
         let canonicalContainer = containerPath.hasSuffix("/")
             ? String(containerPath.dropLast())
             : containerPath
@@ -84,11 +104,8 @@ enum KernelDirectWriter {
         log("[内核写入] 路径校验：根路径=\(hasExpectedRoot)，容器 UUID=\(hasContainerUUID)，"
             + "路径组件安全=\(hasSafeComponents)，Store 路径匹配=\(storePathMatches)，"
             + "Store 目录存在=\(storeExists)")
-        guard hasExpectedRoot,
-              hasContainerUUID,
-              hasSafeComponents,
-              storePathMatches,
-              storeExists else {
+        guard hasExpectedRoot, hasContainerUUID, hasSafeComponents,
+              storePathMatches, storeExists else {
             throw DriftError(
                 "PosterBoard 容器路径未通过校验，拒绝写入。"
                 + "（根路径：\(hasExpectedRoot)，容器 UUID：\(hasContainerUUID)，"
@@ -110,110 +127,176 @@ enum KernelDirectWriter {
         }
 
         let manager = FileManager.default
-        let generations = structureVersions.isEmpty
-            ? generationDirectories(in: storePath)
-            : structureVersions.sorted(by: >)
-        let requiredProviders = Set(sources.map(\.defaultExtension))
-        let generation = chooseGeneration(generations,
-                                          required: requiredProviders,
-                                          storePath: storePath)
-        log("[内核写入] PosterBoard 容器：\(canonicalContainer)")
-        log("[内核写入] 商店目录：\(storePath)")
-        log("[内核写入] 采用结构版本：\(generation)")
+        var sourceStages: [URL] = []
+        defer {
+            for stage in sourceStages { try? manager.removeItem(at: stage) }
+        }
 
-        log("[内核写入] 计划统计开始：\(sources.count) 个包")
-        let planningStarted = Date()
+        // Unpack first, then select a generation from the providers actually
+        // declared by the descriptor trees, not from the pack's default type.
         let planned = max(1, sources.reduce(0) {
             $0 + PosterBoardAirlift.countDescriptors(inArchiveAt: $1.url)
         })
-        log(String(format: "[内核写入] 计划统计完成：预计 %d 个描述符，耗时 %.2f 秒",
-                   planned, Date().timeIntervalSince(planningStarted)))
-        var completed = 0
-        var placed: [Placed] = []
+        log("[内核写入] 计划统计：\(sources.count) 个包，预计 \(planned) 个描述符")
+        var prepared: [PreparedDescriptor] = []
 
-        do {
-            for (sourceIndex, source) in sources.enumerated() {
-                log("[内核写入] [\(sourceIndex + 1)/\(sources.count)] \(source.name)")
-                let stage = PosterBoard.workDirectory
-                    .appendingPathComponent("kernel-\(UUID().uuidString)",
-                                            isDirectory: true)
-                try manager.createDirectory(at: stage,
-                                            withIntermediateDirectories: true)
-                defer { try? manager.removeItem(at: stage) }
+        for (sourceIndex, source) in sources.enumerated() {
+            log("[内核写入] [\(sourceIndex + 1)/\(sources.count)] \(source.name)")
+            let stage = PosterBoard.workDirectory
+                .appendingPathComponent("kernel-\(UUID().uuidString)", isDirectory: true)
+            try manager.createDirectory(at: stage, withIntermediateDirectories: true)
+            sourceStages.append(stage)
 
-                let extractStarted = Date()
-                log("[内核写入] 解包开始：\(source.name)")
-                try source.extract(stage)
-                log(String(format: "[内核写入] 解包完成：\(source.name)，耗时 %.2f 秒",
-                           Date().timeIntervalSince(extractStarted)))
-                let discoveryStarted = Date()
-                log("[内核写入] 描述符枚举开始：\(source.name)")
-                let descriptors = PosterBoardAirlift.findDescriptors(
-                    in: stage,
-                    defaultExtension: source.defaultExtension,
-                    log: { log("[内核写入] " + $0) }
-                )
-                log(String(format: "[内核写入] 描述符枚举完成：\(source.name)，找到 %d 个，耗时 %.2f 秒",
-                           descriptors.count, Date().timeIntervalSince(discoveryStarted)))
-                guard !descriptors.isEmpty else {
-                    throw DriftError("在「\(source.name)」中没有找到壁纸描述文件。")
-                }
+            let extractStarted = Date()
+            log("[内核写入] 解包开始：\(source.name)")
+            try source.extract(stage)
+            log(String(format: "[内核写入] 解包完成：\(source.name)，耗时 %.2f 秒",
+                       Date().timeIntervalSince(extractStarted)))
 
-                for (descriptorIndex, descriptor) in descriptors.enumerated() {
-                    guard PosterBoard.managedProviders.contains(descriptor.extensionID) else {
-                        throw DriftError("不支持的 PosterBoard provider：\(descriptor.extensionID)")
-                    }
-                    let numericID = Int.random(in: PosterBoard.identifierRange)
-                    let parent = PosterBoard.descriptorsParentPath(
-                        container: canonicalContainer,
-                        structureVersion: generation,
-                        extensionID: descriptor.extensionID
-                    )
-                    let folderName: String
-                    if descriptor.extensionID == PosterBoardLocal.mercuryExtensionID {
-                        folderName = descriptor.url.lastPathComponent
-                    } else {
-                        folderName = UUID().uuidString.uppercased()
-                    }
-                    guard !folderName.isEmpty,
-                          folderName != "." && folderName != "..",
-                          !folderName.hasPrefix(".") else {
-                        throw DriftError("描述符目录名不安全，拒绝写入。")
-                    }
-                    let destination = parent + "/" + folderName
-                    guard !manager.fileExists(atPath: destination) else {
-                        throw DriftError("目标描述符目录已存在，拒绝覆盖：\(destination)")
-                    }
-
-                    try PosterBoardAirlift.randomizeIdentifiers(
-                        in: descriptor.url,
-                        numericID: numericID,
-                        extensionID: descriptor.extensionID
-                    )
-                    let installStarted = Date()
-                    log("[内核写入] 落盘开始：\(descriptor.extensionID)/\(folderName)")
-                    try install(folder: descriptor.url,
-                                parent: parent,
-                                name: folderName,
-                                log: log)
-                    log(String(format: "[内核写入] 落盘完成：\(descriptor.extensionID)/\(folderName)，耗时 %.2f 秒",
-                               Date().timeIntervalSince(installStarted)))
-
-                    placed.append(Placed(
-                        extensionID: descriptor.extensionID,
-                        folderName: folderName,
-                        parent: parent,
-                        key: "\(descriptor.extensionID)/\(folderName)",
-                        pack: source.name,
-                        numericID: numericID
-                    ))
-                    completed += 1
-                    progress(Double(completed) / Double(planned) * 100)
-                    log("[内核写入] ✅ \(descriptorIndex + 1)/\(descriptors.count) → \(descriptor.extensionID)/\(folderName)")
-                }
+            let discoveryStarted = Date()
+            let descriptors = PosterBoardAirlift.findDescriptors(
+                in: stage,
+                defaultExtension: source.defaultExtension,
+                log: { log("[内核写入] " + $0) }
+            )
+            log(String(format: "[内核写入] 描述符枚举完成：\(source.name)，找到 %d 个，耗时 %.2f 秒",
+                       descriptors.count, Date().timeIntervalSince(discoveryStarted)))
+            guard !descriptors.isEmpty else {
+                throw DriftError("在「\(source.name)」中没有找到壁纸描述文件。")
             }
+
+            for (index, descriptor) in descriptors.enumerated() {
+                guard PosterBoard.managedProviders.contains(descriptor.extensionID) else {
+                    throw DriftError("不支持的 PosterBoard provider：\(descriptor.extensionID)")
+                }
+                let numericID = Int.random(in: PosterBoard.identifierRange)
+                let folderName: String
+                if descriptor.extensionID == PosterBoardLocal.mercuryExtensionID {
+                    folderName = descriptor.url.lastPathComponent
+                } else {
+                    folderName = UUID().uuidString.uppercased()
+                }
+                guard !folderName.isEmpty,
+                      folderName != "." && folderName != "..",
+                      !folderName.hasPrefix(".") else {
+                    throw DriftError("描述符目录名不安全，拒绝写入。")
+                }
+
+                try PosterBoardAirlift.randomizeIdentifiers(
+                    in: descriptor.url,
+                    numericID: numericID,
+                    extensionID: descriptor.extensionID
+                )
+                try ensureRoleIdentifier(in: descriptor.url)
+                prepared.append(PreparedDescriptor(
+                    pack: source.name,
+                    folder: descriptor.url,
+                    extensionID: descriptor.extensionID,
+                    numericID: numericID,
+                    folderName: folderName
+                ))
+                log("[内核写入] 已准备描述符：\(index + 1)/\(descriptors.count) "
+                    + "\(descriptor.extensionID)/\(folderName)")
+            }
+        }
+
+        guard !prepared.isEmpty else {
+            throw DriftError("没有找到可安装的 PosterBoard 描述符。")
+        }
+
+        let requiredProviders = Set(prepared.map(\.extensionID))
+        let generations = (structureVersions.isEmpty
+            ? generationDirectories(in: storePath)
+            : structureVersions)
+            .filter { $0 > 0 }
+            .sorted(by: >)
+        guard let generation = chooseGeneration(
+            generations, required: requiredProviders, storePath: storePath
+        ) else {
+            throw DriftError("设备商店没有同时包含本轮所需 provider 的结构版本："
+                + requiredProviders.sorted().joined(separator: "、")
+                + "。拒绝创建虚假的 provider 目录。")
+        }
+
+        let databaseURL = URL(fileURLWithPath:
+            storePath + "/\(generation)/" + PosterBoard.databaseFileName)
+        var databaseIsDirectory: ObjCBool = false
+        guard manager.fileExists(atPath: databaseURL.path, isDirectory: &databaseIsDirectory),
+              !databaseIsDirectory.boolValue else {
+            throw DriftError("结构版本 \(generation) 中不存在设备现有数据库：\(databaseURL.path)")
+        }
+
+        log("[内核写入] PosterBoard 容器：\(canonicalContainer)")
+        log("[内核写入] 商店目录：\(storePath)")
+        log("[内核写入] 采用结构版本：\(generation)")
+        log("[内核写入] 实际 provider：\(requiredProviders.sorted().joined(separator: "、"))")
+        log("[内核数据库] 目标：\(databaseURL.path)")
+
+        // Copy and fsync hidden staging folders before opening the DB transaction.
+        // The final UUID path is published only after BEGIN IMMEDIATE has locked
+        // the current WAL database; COMMIT follows the last publish immediately.
+        var pending: [PendingDescriptor] = []
+        defer {
+            for item in pending where manager.fileExists(atPath: item.stagingPath) {
+                try? manager.removeItem(atPath: item.stagingPath)
+                fsyncDirectory(item.parent)
+            }
+        }
+        for item in prepared {
+            let parent = PosterBoard.descriptorsParentPath(
+                container: canonicalContainer,
+                structureVersion: generation,
+                extensionID: item.extensionID
+            )
+            let staged = try stageDescriptor(
+                folder: item.folder, parent: parent, name: item.folderName,
+                pack: item.pack, extensionID: item.extensionID,
+                numericID: item.numericID
+            )
+            pending.append(staged)
+        }
+        log("[内核写入] 隐藏暂存完成：\(pending.count) 个目录，尚未发布最终 UUID 目录")
+
+        // A kernel registration only adds the wallpaper to the picker. It must
+        // never change the user's currently selected wallpaper.
+        let registrationItems = pending.map {
+            PosterBoardConfigItem(
+                uuid: $0.folderName,
+                extensionID: $0.extensionID,
+                setSelected: false
+            )
+        }
+
+        var placed: [Placed] = []
+        var completed = 0
+        let registration: PosterBoardStore.InPlaceRegistration
+        do {
+            registration = try PosterBoardStore.registerInPlace(
+                database: databaseURL,
+                items: registrationItems,
+                backupRoot: PosterBoard.workDirectory.deletingLastPathComponent()
+                    .appendingPathComponent("KernelDirectDatabaseBackups", isDirectory: true),
+                installFiles: {
+                    var lastPublishedAt = Date.distantPast
+                    for item in pending {
+                        lastPublishedAt = try publish(item, log: log)
+                        placed.append(Placed(
+                            extensionID: item.extensionID,
+                            folderName: item.folderName,
+                            parent: item.parent,
+                            key: item.key,
+                            pack: item.pack,
+                            numericID: item.numericID
+                        ))
+                        completed += 1
+                        progress(Double(completed) / Double(max(1, pending.count)) * 100)
+                    }
+                    return lastPublishedAt
+                },
+                log: { log("[内核数据库] " + $0) }
+            )
         } catch {
-            log("[内核写入] 事务失败，回滚本轮已落盘的 \(placed.count) 个描述符")
+            log("[内核写入] 文件发布/数据库事务失败：\(error.localizedDescription)")
             for item in placed.reversed() {
                 try? manager.removeItem(atPath: item.parent + "/" + item.folderName)
                 fsyncDirectory(item.parent)
@@ -221,37 +304,74 @@ enum KernelDirectWriter {
             throw error
         }
 
-        guard !placed.isEmpty else {
-            throw DriftError("没有写入任何 PosterBoard 描述文件。")
+        log("[内核数据库] 原始数据库备份：\(registration.backupDirectory)")
+        log("[内核数据库] COMMIT 后完整性：\(registration.integrityCheck)")
+        log("[内核数据库] COMMIT 后立即行核验：\(registration.registeredKeys.count)/\(registrationItems.count)")
+        if registration.integrityCheck != "ok" {
+            throw DriftError("SQLite 已提交，但 integrity_check 异常：\(registration.integrityCheck)。"
+                + "已保留文件与数据库现场，请勿重复刷入。")
         }
 
-        log("[内核写入] 写后核验开始：\(placed.count) 个目标目录")
-        let verificationStarted = Date()
-        var confirmed: Set<String> = []
-        for item in placed {
-            let destination = item.parent + "/" + item.folderName
-            guard let stats = try? treeStats(destination), stats.files > 0 else {
-                log("[内核写入] 写后核验缺失或不可读：\(item.key)")
-                continue
-            }
-            confirmed.insert(item.key)
+        log("[内核写入] 文件发布和数据库提交完成，5 秒后进行延迟复查")
+        Thread.sleep(forTimeInterval: 5.0)
+
+        let registered: Set<String>
+        do {
+            registered = try PosterBoardStore.verifyRegisteredItems(
+                database: databaseURL,
+                items: registrationItems,
+                log: { log("[内核数据库] " + $0) }
+            )
+        } catch {
+            log("[② 数据库事务/延迟复查失败] \(error.localizedDescription)")
+            throw DriftError("② 数据库登记无法持续确认：\(error.localizedDescription)")
         }
-        log(String(format: "[内核写入] 写后核验结束：在册 %d/%d，耗时 %.2f 秒",
-                   confirmed.count, placed.count,
-                   Date().timeIntervalSince(verificationStarted)))
+
+        var directoriesPresent: Set<String> = []
+        for item in pending {
+            if let stats = try? treeStats(item.destination), stats.files > 0 {
+                directoriesPresent.insert(item.key)
+            }
+        }
+
+        let expected = Set(pending.map(\.key))
+        let missingRegistration = expected.subtracting(registered)
+        let missingDirectories = expected.subtracting(directoriesPresent)
+
+        for key in missingRegistration.sorted() {
+            if missingDirectories.contains(key) {
+                log("[① 文件被系统清除且登记未确认] \(key)")
+            } else {
+                log("[② 数据库行未持续存在] \(key)")
+            }
+        }
+        for key in missingDirectories.subtracting(missingRegistration).sorted() {
+            log("[③ 数据库登记仍在、描述符目录已消失] \(key)")
+        }
+
+        guard missingRegistration.isEmpty, missingDirectories.isEmpty else {
+            throw DriftError("5 秒延迟复查未通过：数据库登记 \(registered.count)/\(expected.count)，"
+                + "描述符目录 \(directoriesPresent.count)/\(expected.count)。"
+                + "请查看日志中的 ①/②/③ 分类；本次没有报告刷入成功。")
+        }
+
+        log("[④ 文件与登记均持续存在] 若系统壁纸列表仍不显示，再检查 descriptor/WallpaperKit 内容兼容。")
 
         let providers = Set(placed.map(\.extensionID))
         let verification = PosterStoreVerification(
             structureVersion: generation,
-            structureVersionSource: "内核直刷：从 PosterBoard 容器实际读取结构版本",
+            structureVersionSource: "内核直刷：实际 provider 选取代际；SQLite 原位事务登记；5 秒后目录与数据库行复查",
             providersSeen: providers,
-            expected: Set(placed.map(\.key)),
-            confirmed: confirmed,
+            expected: expected,
+            confirmed: expected,
             enumeratedAfter: true
         )
         progress(100)
-        return Outcome(verification: verification, installedCount: placed.count,
-                       placed: placed)
+        return Outcome(
+            verification: verification,
+            installedCount: placed.count,
+            placed: placed
+        )
     }
 
     private static func generationDirectories(in storePath: String) -> [Int] {
@@ -263,58 +383,92 @@ enum KernelDirectWriter {
 
     private static func chooseGeneration(_ generations: [Int],
                                          required: Set<String>,
-                                         storePath: String) -> Int {
-        let manager = FileManager.default
+                                         storePath: String) -> Int? {
         for generation in generations {
             let extensionRoot = storePath + "/\(generation)/Extensions"
-            let providers = Set((try? manager.contentsOfDirectory(
-                atPath: extensionRoot
-            )) ?? [])
-            if required.isSubset(of: providers) { return generation }
+            let hasProviders = required.allSatisfy {
+                FileManager.default.fileExists(atPath: extensionRoot + "/\($0)")
+            }
+            if hasProviders { return generation }
         }
-        return generations.first ?? PosterBoard.fallbackStructureVersion
+        return nil
     }
 
-    private static func install(folder: URL,
-                                parent: String,
-                                name: String,
-                                log: @escaping @Sendable (String) -> Void) throws {
+    private static func ensureRoleIdentifier(in folder: URL) throws {
+        let roleURL = folder.appendingPathComponent("com.apple.posterkit.role.identifier")
+        guard !FileManager.default.fileExists(atPath: roleURL.path) else { return }
+        try Data("PRPosterRoleLockScreen".utf8).write(to: roleURL, options: .atomic)
+    }
+
+    private static func stageDescriptor(
+        folder: URL,
+        parent: String,
+        name: String,
+        pack: String,
+        extensionID: String,
+        numericID: Int
+    ) throws -> PendingDescriptor {
         let manager = FileManager.default
-        try manager.createDirectory(atPath: parent,
-                                    withIntermediateDirectories: true)
-        let staging = parent + "/.drift-kernel-staging-\(UUID().uuidString)"
-        defer { try? manager.removeItem(atPath: staging) }
-
-        try manager.copyItem(at: folder,
-                             to: URL(fileURLWithPath: staging))
-        let sourceStats = try treeStats(folder.path)
-        let stagedStats = try treeStats(staging)
-        guard sourceStats.files == stagedStats.files,
-              sourceStats.bytes == stagedStats.bytes else {
-            throw DriftError("暂存校验失败：源文件与目标文件数或字节数不一致。")
-        }
-        try fsyncTree(staging)
-
+        try manager.createDirectory(atPath: parent, withIntermediateDirectories: true)
         let destination = parent + "/" + name
         guard !manager.fileExists(atPath: destination) else {
-            throw DriftError("目标目录已存在，拒绝覆盖：\(destination)")
+            throw DriftError("目标描述符目录已存在，拒绝覆盖：\(destination)")
         }
-        let result = staging.withCString { source in
-            destination.withCString { target in rename(source, target) }
+        let staging = parent + "/.drift-kernel-staging-\(UUID().uuidString)"
+        do {
+            try manager.copyItem(at: folder, to: URL(fileURLWithPath: staging))
+            let sourceStats = try treeStats(folder.path)
+            let stagedStats = try treeStats(staging)
+            guard sourceStats.files == stagedStats.files,
+                  sourceStats.bytes == stagedStats.bytes,
+                  stagedStats.files > 0 else {
+                throw DriftError("暂存校验失败：源文件与目标文件数或字节数不一致。")
+            }
+            try fsyncTree(staging)
+            return PendingDescriptor(
+                pack: pack,
+                extensionID: extensionID,
+                folderName: name,
+                numericID: numericID,
+                parent: parent,
+                stagingPath: staging,
+                destination: destination,
+                files: stagedStats.files,
+                bytes: stagedStats.bytes
+            )
+        } catch {
+            try? manager.removeItem(atPath: staging)
+            throw error
+        }
+    }
+
+    /// This is the only final-path publication inside the DB transaction.
+    private static func publish(
+        _ item: PendingDescriptor,
+        log: @escaping @Sendable (String) -> Void
+    ) throws -> Date {
+        let manager = FileManager.default
+        guard !manager.fileExists(atPath: item.destination) else {
+            throw DriftError("目标描述符目录已存在，拒绝覆盖：\(item.destination)")
+        }
+        let result = item.stagingPath.withCString { source in
+            item.destination.withCString { target in rename(source, target) }
         }
         guard result == 0 else {
             throw DriftError("原子改名失败：\(String(cString: strerror(errno)))")
         }
-        fsyncDirectory(parent)
+        let publishedAt = Date()
+        fsyncDirectory(item.parent)
 
-        let finalStats = try treeStats(destination)
-        guard finalStats.files == sourceStats.files,
-              finalStats.bytes == sourceStats.bytes else {
-            try? manager.removeItem(atPath: destination)
-            fsyncDirectory(parent)
-            throw DriftError("落盘后复核失败：目标目录与源内容不一致。")
+        let finalStats = try treeStats(item.destination)
+        guard finalStats.files == item.files,
+              finalStats.bytes == item.bytes else {
+            try? manager.removeItem(atPath: item.destination)
+            fsyncDirectory(item.parent)
+            throw DriftError("落盘后复核失败：目标目录与暂存内容不一致。")
         }
-        log("[内核写入] 落盘：\(name)（\(finalStats.files) 个文件 / \(finalStats.bytes) 字节）")
+        log("[内核写入] 发布：\(item.key)（\(finalStats.files) 个文件 / \(finalStats.bytes) 字节）")
+        return publishedAt
     }
 
     private static func treeStats(_ root: String) throws -> (files: Int, bytes: Int64) {

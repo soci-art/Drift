@@ -22,6 +22,14 @@ enum PosterBoardStore {
     static let requiredTables = ["poster", "posterAttributes", "posterRoleMembership",
                                  "sqlite_sequence"]
 
+    /// Result of a transaction applied directly to the live WAL database.
+    struct InPlaceRegistration {
+        let backupDirectory: String
+        let integrityCheck: String
+        let registeredKeys: Set<String>
+        let fileToCommitMilliseconds: Double
+    }
+
     /// `SQLITE_TRANSIENT` is a C macro the module never sees; `-1` tells sqlite
     /// to copy the bytes rather than keep the pointer, which matters because the
     /// Swift temporaries die when the bind returns.
@@ -254,6 +262,155 @@ enum PosterBoardStore {
         // device's own store is in (see `declareWAL`).
         try declareWAL(db, describing: "暂存的 PosterBoard 数据库")
         return staged
+    }
+
+    /// Register descriptors in the device's live database. This path never copies,
+    /// replaces, checkpoints, or changes the journal mode of the live database.
+    /// Hidden descriptor staging is prepared by the caller before BEGIN IMMEDIATE;
+    /// only final directory publication and the DB row transaction happen here.
+    static func registerInPlace(
+        database: URL,
+        items: [PosterBoardConfigItem],
+        backupRoot: URL,
+        installFiles: () throws -> Date,
+        log: (String) -> Void
+    ) throws -> InPlaceRegistration {
+        guard !items.isEmpty else {
+            throw DriftError("没有可登记的 PosterBoard 描述符。")
+        }
+        let keys = items.map { "\($0.extensionID)/\($0.uuid)" }
+        guard Set(keys).count == keys.count else {
+            throw DriftError("本轮存在重复的 PosterBoard UUID/provider，拒绝登记。")
+        }
+
+        // The family backup must finish before SQLite opens the live database.
+        let backup = try backupDatabaseFamily(
+            database: database, backupRoot: backupRoot, log: log
+        )
+
+        var opened: OpaquePointer?
+        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
+        let openStatus = sqlite3_open_v2(database.path, &opened, flags, nil)
+        guard openStatus == SQLITE_OK, let db = opened else {
+            let message = opened.map { String(cString: sqlite3_errmsg($0)) } ?? "无 SQLite 错误详情"
+            if let opened { sqlite3_close(opened) }
+            throw DriftError("SQLite 打开设备现有数据库失败（rc=\(openStatus)）：\(message)")
+        }
+        defer { sqlite3_close(db) }
+
+        let busyStatus = sqlite3_busy_timeout(db, 10_000)
+        guard busyStatus == SQLITE_OK else {
+            throw DriftError("SQLite busy_timeout 设置失败（rc=\(busyStatus)）："
+                + String(cString: sqlite3_errmsg(db)))
+        }
+
+        let journalMode = try scalarText(db, "PRAGMA journal_mode")?.lowercased() ?? ""
+        guard journalMode == "wal" else {
+            throw DriftError("设备数据库不是 WAL 模式（journal_mode=\(journalMode.isEmpty ? "未知" : journalMode)），拒绝改写。")
+        }
+
+        let missing = requiredTables.filter { !tableExists(db, $0) }
+        guard missing.isEmpty else {
+            throw DriftError("设备数据库缺少必要表：\(missing.joined(separator: "、"))。")
+        }
+
+        let beforeIntegrity = try integrityCheck(db)
+        guard beforeIntegrity == "ok" else {
+            throw DriftError("写入前 integrity_check 未通过：\(beforeIntegrity)")
+        }
+        let existingRows = try scalarInt(db, "SELECT COUNT(*) FROM poster") ?? 0
+        guard existingRows > 0 else {
+            throw DriftError("设备现有 poster 表为空，拒绝向空库登记。")
+        }
+        log("设备数据库已验证：WAL 模式，现有 poster 行 \(existingRows) 条")
+        log("设备数据库备份：\(backup.path)")
+
+        let beginStatus = sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil)
+        guard beginStatus == SQLITE_OK else {
+            throw DriftError("SQLite BEGIN IMMEDIATE 失败（rc=\(beginStatus)）："
+                + String(cString: sqlite3_errmsg(db)))
+        }
+
+        var transactionOpen = true
+        var lastFilePublishedAt = Date.distantPast
+        do {
+            // Prepare DB rows first while they remain invisible to other readers.
+            // Publish final descriptor names only after the transaction has begun;
+            // COMMIT follows the last rename/fsync immediately.
+            try write(db, items: items)
+            let transactionRows = try registeredKeys(on: db, items: items)
+            guard transactionRows.count == items.count else {
+                throw DriftError("BEGIN IMMEDIATE 内の行検証が不足：\(transactionRows.count)/\(items.count)。")
+            }
+            log("事务内数据库行验证：\(transactionRows.count)/\(items.count)")
+            lastFilePublishedAt = try installFiles()
+
+            let commitStatus = sqlite3_exec(db, "COMMIT", nil, nil, nil)
+            guard commitStatus == SQLITE_OK else {
+                throw DriftError("SQLite COMMIT 失败（rc=\(commitStatus)）："
+                    + String(cString: sqlite3_errmsg(db)))
+            }
+            transactionOpen = false
+        } catch {
+            if transactionOpen {
+                let rollbackStatus = sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+                if rollbackStatus != SQLITE_OK {
+                    log("SQLite ROLLBACK 也失败（rc=\(rollbackStatus)）："
+                        + String(cString: sqlite3_errmsg(db)))
+                }
+            }
+            throw error
+        }
+
+        let commitGap = max(0, Date().timeIntervalSince(lastFilePublishedAt) * 1_000)
+        if commitGap > 1_000 {
+            log(String(format: "警告：最后一个 descriptor 最终目录发布到 SQLite COMMIT：%.0f ms（超过 1 秒目标）", commitGap))
+        } else {
+            log(String(format: "最后一个 descriptor 最终目录发布到 SQLite COMMIT：%.0f ms", commitGap))
+        }
+
+        let afterIntegrity: String
+        do {
+            afterIntegrity = try integrityCheck(db)
+        } catch {
+            afterIntegrity = "读取失败：\(error.localizedDescription)"
+        }
+        log("提交后 integrity_check：\(afterIntegrity)")
+
+        let registered: Set<String>
+        do {
+            registered = try registeredKeys(on: db, items: items)
+        } catch {
+            log("提交后数据库行核验失败：\(error.localizedDescription)")
+            return InPlaceRegistration(
+                backupDirectory: backup.path,
+                integrityCheck: afterIntegrity,
+                registeredKeys: [],
+                fileToCommitMilliseconds: commitGap
+            )
+        }
+        log("提交后立即行核验：完整登记 \(registered.count)/\(items.count)")
+        return InPlaceRegistration(
+            backupDirectory: backup.path,
+            integrityCheck: afterIntegrity,
+            registeredKeys: registered,
+            fileToCommitMilliseconds: commitGap
+        )
+    }
+
+    /// Delayed read-back after PosterBoard has had time to process the store.
+    static func verifyRegisteredItems(
+        database: URL,
+        items: [PosterBoardConfigItem],
+        log: (String) -> Void
+    ) throws -> Set<String> {
+        guard let db = open(database.path) else {
+            throw DriftError("SQLite 延迟复查无法打开设备数据库：\(database.path)")
+        }
+        defer { sqlite3_close(db) }
+        let keys = try registeredKeys(on: db, items: items)
+        log("延迟数据库复查：完整登记 \(keys.count)/\(items.count)")
+        return keys
     }
 
     /// Leaves the database declaring WAL with every committed page in the main
@@ -507,6 +664,128 @@ enum PosterBoardStore {
             throw DriftError("PosterBoard 写入失败：\(sql) —— "
                 + String(cString: sqlite3_errmsg(db)))
         }
+    }
+
+    /// Preserve the existing database family before the first write. Missing
+    /// sidecars remain absent; no replacement or zero-byte sidecars are created.
+    private static func backupDatabaseFamily(
+        database: URL,
+        backupRoot: URL,
+        log: (String) -> Void
+    ) throws -> URL {
+        let manager = FileManager.default
+        var mainIsDirectory: ObjCBool = false
+        guard manager.fileExists(atPath: database.path, isDirectory: &mainIsDirectory),
+              !mainIsDirectory.boolValue else {
+            throw DriftError("设备现有 PosterBoard SQLite 主库不存在：\(database.path)")
+        }
+        try manager.createDirectory(at: backupRoot, withIntermediateDirectories: true)
+        let backup = backupRoot.appendingPathComponent(
+            "before-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try manager.createDirectory(at: backup, withIntermediateDirectories: false)
+
+        var manifest = [
+            "PosterBoard live database family backup",
+            "createdAt=\(ISO8601DateFormatter().string(from: Date()))",
+            "source=\(database.path)"
+        ]
+        for suffix in ["", "-wal", "-shm"] {
+            let name = database.lastPathComponent + suffix
+            let source = URL(fileURLWithPath: database.path + suffix)
+            let destination = backup.appendingPathComponent(name)
+            var isDirectory: ObjCBool = false
+            guard manager.fileExists(atPath: source.path, isDirectory: &isDirectory) else {
+                if suffix.isEmpty {
+                    throw DriftError("数据库备份失败：主库在复制前消失。")
+                }
+                manifest.append("\(name)=absent")
+                continue
+            }
+            let values = try source.resourceValues(
+                forKeys: [.isRegularFileKey, .isSymbolicLinkKey]
+            )
+            guard values.isRegularFile == true,
+                  values.isSymbolicLink != true,
+                  !isDirectory.boolValue else {
+                throw DriftError("数据库备份拒绝非普通文件或符号链接：\(source.path)")
+            }
+            let sourceAttributes = try manager.attributesOfItem(atPath: source.path)
+            let sourceBytes = (sourceAttributes[.size] as? NSNumber)?.int64Value ?? 0
+            try manager.copyItem(at: source, to: destination)
+            let attributes = try manager.attributesOfItem(atPath: destination.path)
+            let bytes = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+            guard bytes == sourceBytes else {
+                throw DriftError("数据库族备份大小不一致：\(name)，源 \(sourceBytes)，备份 \(bytes)。")
+            }
+            manifest.append("\(name)=copied,\(bytes) bytes")
+        }
+
+        try Data((manifest.joined(separator: "\n") + "\n").utf8).write(
+            to: backup.appendingPathComponent("backup-manifest.txt"),
+            options: .atomic
+        )
+        log("SQLite 原样备份已完成：\(backup.path)")
+        log("SQLite 备份清单：\(manifest.dropFirst(3).joined(separator: "；"))")
+        return backup
+    }
+
+    /// Collect every integrity_check result row for a clear diagnostic.
+    private static func integrityCheck(_ db: OpaquePointer) throws -> String {
+        var statement: OpaquePointer?
+        defer { sqlite3_finalize(statement) }
+        let status = sqlite3_prepare_v2(db, "PRAGMA integrity_check", -1, &statement, nil)
+        guard status == SQLITE_OK else {
+            throw DriftError("SQLite integrity_check 无法执行（rc=\(status)）："
+                + String(cString: sqlite3_errmsg(db)))
+        }
+        var messages: [String] = []
+        while true {
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW:
+                if let value = sqlite3_column_text(statement, 0) {
+                    messages.append(String(cString: value))
+                }
+            case SQLITE_DONE:
+                return messages.isEmpty ? "无返回行" : messages.joined(separator: "；")
+            default:
+                throw DriftError("SQLite integrity_check 读取失败："
+                    + String(cString: sqlite3_errmsg(db)))
+            }
+        }
+    }
+
+    /// A row is registered only when poster, usage metadata and role membership
+    /// agree on the descriptor UUID and provider. The SELECTED row is optional.
+    private static func registeredKeys(
+        on db: OpaquePointer,
+        items: [PosterBoardConfigItem]
+    ) throws -> Set<String> {
+        var result: Set<String> = []
+        for item in items {
+            let posterRows = try scalarInt(
+                db,
+                "SELECT COUNT(*) FROM poster WHERE UUID = ? AND providerId = ?",
+                [.text(item.uuid), .text(item.extensionID)]
+            ) ?? 0
+            let usageRows = try scalarInt(
+                db,
+                "SELECT COUNT(*) FROM posterAttributes WHERE posterUUID = ? AND roleId = ? "
+                    + "AND attributeIdentifier = ?",
+                [.text(item.uuid), .text("PRPosterRoleLockScreen"),
+                 .text("PRPosterRoleAttributeTypeUsageMetadata")]
+            ) ?? 0
+            let membershipRows = try scalarInt(
+                db,
+                "SELECT COUNT(*) FROM posterRoleMembership WHERE posterUUID = ? AND roleId = ?",
+                [.text(item.uuid), .text("PRPosterRoleLockScreen")]
+            ) ?? 0
+            if posterRows == 1, usageRows > 0, membershipRows > 0 {
+                result.insert("\(item.extensionID)/\(item.uuid)")
+            }
+        }
+        return result
     }
 
     private static func bind(_ statement: OpaquePointer?, _ bindings: [Binding]) {

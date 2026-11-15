@@ -195,7 +195,7 @@ enum KernelDirectStoreDump {
                                        emit: @Sendable (String) -> Void) {
         let manager = FileManager.default
         let root = (store as NSString)
-            .appendingPathComponent("\(version)/Extensions/\(provider)/\(folder)")
+            .appendingPathComponent("\(version)/Extensions/\(provider)/descriptors/\(folder)")
         var isDirectory: ObjCBool = false
         guard manager.fileExists(atPath: root, isDirectory: &isDirectory),
               isDirectory.boolValue else {
@@ -308,7 +308,7 @@ enum KernelDirectStoreDump {
                                           version: Int,
                                           provider: String) -> [String] {
         let root = (store as NSString)
-            .appendingPathComponent("\(version)/Extensions/\(provider)")
+            .appendingPathComponent("\(version)/Extensions/\(provider)/descriptors")
         let manager = FileManager.default
         let names = (try? manager.contentsOfDirectory(atPath: root)) ?? []
         return names.filter { name in
