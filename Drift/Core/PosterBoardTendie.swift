@@ -61,6 +61,18 @@ enum PosterBoardPosterType: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// The two-character wording of the 刷完出现在哪里 picker
+    /// (Grace, 2026-11-15): five seats sit side by side there —
+    /// 自动 plus these four — so each kind gets exactly two characters.
+    var shortLabel: String {
+        switch self {
+        case .collections: return "合集"
+        case .suggestedPhotos: return "推荐"
+        case .mercury: return "动态"
+        case .container: return "容器"
+        }
+    }
+
     /// One plain-language line on where a wallpaper of this kind ends up,
     /// shown under the type picker in the pack detail. The segmented labels
     /// are PosterBoard's own provider names — "Mercury" says nothing to
@@ -103,6 +115,14 @@ struct PosterBoardTendie: Identifiable, Hashable {
     /// Which extension this pack's descriptors are injected under. User-chosen,
     /// because the pack does not carry it; see `PosterBoardPosterType`.
     var posterType: PosterBoardPosterType
+    /// What the pack itself says it is — the automatic answer, read off
+    /// the pack in `init` (path words first, then the descriptor
+    /// identifier's number range). The picker's 自动 seat means this.
+    let detectedPosterType: PosterBoardPosterType
+    /// True when the user picked a kind by hand for this pack (the
+    /// answer is remembered by file name). False means the picker sits
+    /// on 自动 and `posterType` is the detected one.
+    var isTypeManual: Bool
     /// The user's answer to the legacy-format prompt: `true` convert, `false`
     /// install as is, `nil` never asked.
     ///
@@ -140,10 +160,15 @@ struct PosterBoardTendie: Identifiable, Hashable {
         // and the descriptor rule on the way into the payload, so a snapshot
         // ends up as the provider it snapshots rather than as `.container`.
         var detected: PosterBoardPosterType?
+        var identifierEntry: Entry?
         for entry in archive {
             let path = entry.path
             let lower = path.lowercased()
             if lower.contains("__macosx/") { continue }
+            if identifierEntry == nil,
+               lower.hasSuffix("com.apple.posterkit.provider.descriptor.identifier") {
+                identifierEntry = entry
+            }
             if lower.contains("container") {
                 container = true
                 // Raw case, as in the reference: the entry it is looking for is
@@ -179,11 +204,41 @@ struct PosterBoardTendie: Identifiable, Hashable {
             throw DriftError("\(url.lastPathComponent) 里既没有描述文件也没有"
                 + "container — it does not look like a .tendies pack.")
         }
+        // The pack's own say-so, when it carries one (Grace, 2026-11-15:
+        // judge by the descriptor identifier, not only by path words —
+        // a bare Mercury pack's paths are bare numbers and carry no
+        // "mercury" at all, which is how those packs were misread as
+        // Collections). The identifier file holds the provider's
+        // numeric id, and the ranges are provider families: 74xx is
+        // WallpaperKit's Collections line, 3xxx / 9xxx are Mercury's
+        // WWDC lines. The number outranks the path-word guess but
+        // keeps the parity those rules have with a container reading:
+        // Mercury may override it, Collections may not. A non-numeric
+        // identifier says nothing and the path reading stands.
+        if let identifierEntry {
+            var data = Data()
+            _ = try? archive.extract(identifierEntry) { data.append($0) }
+            let text = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if let number = Int(text) {
+                switch number {
+                case 7000...7999:
+                    if detected != .container { detected = .collections }
+                case 3000...3999, 9000...9999:
+                    detected = .mercury
+                default:
+                    break
+                }
+            }
+        }
+
         self.descriptorCount = descriptors
         self.isContainer = container
         self.isUnsafeContainer = unsafeContainer
-        self.posterType = PosterBoardPreferences.posterTypes[url.lastPathComponent]
-            ?? detected ?? .defaultForContainer(container)
+        let manualType = PosterBoardPreferences.posterTypes[url.lastPathComponent]
+        self.detectedPosterType = detected ?? .defaultForContainer(container)
+        self.isTypeManual = manualType != nil
+        self.posterType = manualType ?? self.detectedPosterType
         self.autoConvert = PosterBoardPreferences.autoConvertAnswers[url.lastPathComponent]
     }
 
@@ -237,8 +292,22 @@ struct PosterBoardTendie: Identifiable, Hashable {
     func settingPosterType(_ type: PosterBoardPosterType) -> PosterBoardTendie {
         var copy = self
         copy.posterType = type
+        copy.isTypeManual = true
         var types = PosterBoardPreferences.posterTypes
         types[url.lastPathComponent] = type
+        PosterBoardPreferences.posterTypes = types
+        return copy
+    }
+
+    /// Back to 自动: forget the hand pick for this pack, and return it
+    /// with the detected kind in force again. Written immediately,
+    /// like `settingPosterType`.
+    func settingAutoType() -> PosterBoardTendie {
+        var copy = self
+        copy.posterType = detectedPosterType
+        copy.isTypeManual = false
+        var types = PosterBoardPreferences.posterTypes
+        types[url.lastPathComponent] = nil
         PosterBoardPreferences.posterTypes = types
         return copy
     }

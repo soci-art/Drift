@@ -49,6 +49,19 @@ enum Diagnostics {
             let state = option.available ? "可用" : (option.sealed ? "不可选（签名无可用组）" : "不可用")
             lines.append("    \(option.mode.shortTitle): \(state) — \(option.reason)")
         }
+        // The kernel channel has no mode row in the judgement — it is
+        // not a PosterBoardApplyMode — so its standing is stated from
+        // its own premise, on one line like the channels above.
+        let kernelPremise = KernelDirectPremise.evaluate(version: WorseQueryEscape.processVersion)
+        let kernelState: String
+        if !KernelDirectPremise.isEnabled {
+            kernelState = "未开启（实验性功能里的开关是关的）"
+        } else if kernelPremise.ready {
+            kernelState = "可用"
+        } else {
+            kernelState = "不可用 — \(kernelPremise.reason)"
+        }
+        lines.append("    内核直刷: \(kernelState)（开关 \(KernelDirectPremise.isEnabled ? "开" : "关") · 系统在 17/18 带内 \(kernelPremise.inBand ? "是" : "否") · 机型在偏移表内 \(kernelPremise.chipCovered ? "是" : "否")）")
 
         // Snapshot the Rust evidence FIRST.
         let logStatus = RustLog.status()

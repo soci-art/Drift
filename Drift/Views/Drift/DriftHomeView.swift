@@ -258,7 +258,8 @@ struct DriftHomeView: View {
         let sealed = pick != .auto && (option?.sealed ?? false)
         let status: String
         if pick == .auto {
-            status = judged.isBlocked ? "不可用" : "→ \(judged.mode.shortTitle)"
+            status = judged.isBlocked ? "不可用"
+                : (judged.useKernel ? "→ 内核直刷（实验）" : "→ \(judged.mode.shortTitle)")
         } else if sealed {
             status = "不可选"
         } else {
@@ -568,8 +569,10 @@ struct DriftHomeView: View {
         runSelection.fullReset = false
         // Kernel Direct has its own on-device write flow. It verifies the
         // real PosterBoard container first, then writes the selected packs;
-        // no channel mode, pairing record or tunnel is involved.
-        if manualPick == .kernel {
+        // no channel mode, pairing record or tunnel is involved. It is
+        // reached by a manual 内核直刷 pick and by 自动选择 landing on
+        // it (the judgement's `useKernel`).
+        if manualPick == .kernel || judgement.useKernel {
             Task {
                 defer { session.flashCover = false }
                 let outcome = await session.runKernelApply(identity: identity,

@@ -848,6 +848,11 @@ struct DriftModeJudgement {
     var options: [DriftModeAvailability] = []
     /// How the chosen channel is expected to take effect.
     var expectedEffect: String = ""
+    /// The run goes to the kernel writer, which has no
+    /// `PosterBoardApplyMode` of its own: `mode` is then the local
+    /// placeholder, and dispatchers must honour this flag instead
+    /// (set for a manual 内核直刷 pick and for 自动选择 landing on it).
+    var useKernel: Bool = false
     var isBlocked: Bool { blockedReason != nil }
 }
 
@@ -1127,10 +1132,9 @@ enum DriftJudge {
         }
 
         if pick == .kernel {
-            // The kernel channel lands separately (#319); until it
-            // does, a kernel pick is always blocked with the honest
-            // reason, and 自动选择 never considers it. Manual picks
-            // still never reroute to another channel.
+            // A manual kernel pick is used as-is when its premise
+            // passes and blocked with the honest reason when it does
+            // not; manual picks never reroute to another channel.
             let premise = KernelDirectPremise.evaluate(version: p.appVersion)
             if !premise.inBand {
                 return blocked("你手动选了内核直刷：它只支持 iOS 17 / 18，这台的系统是 iOS \(p.appVersion)，不在这个范围。手动选定后不会自动改走别的通道。",
@@ -1148,7 +1152,8 @@ enum DriftJudge {
                 reason: "已手动选择内核直刷：会先验证 PosterBoard 容器读写，再写入已选描述文件；不用配对、不用隧道，对签名没要求。",
                 blockedReason: nil,
                 options: rows,
-                expectedEffect: "")
+                expectedEffect: "写完提示：打开应用切换器，上滑关闭 PosterBoard，系统重新拉起后生效",
+                useKernel: true)
         }
 
         if let channel = pick.channel {
@@ -1157,6 +1162,25 @@ enum DriftJudge {
             }
             return blocked("你手动选了\(pick.label)：\(p.why(channel))。手动选定后不会自动改走别的通道。",
                            notice: "\(pick.label)现在不可用：\(p.why(channel))。")
+        }
+
+        // 自动选择把内核直刷也算进去 (Grace, 2026-11-15): on its own
+        // band it asks the least of the user — no pairing, no tunnel,
+        // no signing gate — and that band (iOS 17 / 18) never overlaps
+        // the local channel's, so it is judged before the channel
+        // order. It exists as a candidate only while its 实验性功能
+        // switch is on, and an automatic landing on it still wears
+        // the 实验 marking, in the reason itself.
+        let kernelPremise = KernelDirectPremise.evaluate(version: p.appVersion)
+        if KernelDirectPremise.isEnabled, kernelPremise.ready {
+            return DriftModeJudgement(
+                pick: pick,
+                mode: .worseQuery,
+                reason: "自动选择：走内核直刷（实验）——会先验证 PosterBoard 容器读写，再写入已选描述文件；不用配对、不用隧道，对签名没要求。",
+                blockedReason: nil,
+                options: rows,
+                expectedEffect: "写完提示：打开应用切换器，上滑关闭 PosterBoard，系统重新拉起后生效",
+                useKernel: true)
         }
 
         if let channel = firstAvailable(p) {
