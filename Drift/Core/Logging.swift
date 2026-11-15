@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// A destination for one already-formatted log line.
 ///
@@ -90,11 +91,18 @@ final class RotatingFileSink: LogSink, @unchecked Sendable {
         }
         if let size = knownSize, size > limit, let existing = try? Data(contentsOf: url) {
             // Keep the newer half — a long run logs continuously and the tail is
-            // the part that matters.
+            // the part that matters. The cut aligns to the next newline
+            // (next-version batch, Grace 2026-11-15): a raw byte cut could
+            // split a line — or a multi-byte character — in two, leaving a
+            // garbled first line in every rotated log.
             try? handle?.close()
             handle = nil
-            try? existing.suffix(Int(limit / 2)).write(to: url)
-            knownSize = limit / 2
+            var kept = existing.suffix(Int(limit / 2))
+            if let newline = kept.firstIndex(of: 0x0A), newline + 1 < kept.count {
+                kept = kept.suffix(from: newline + 1)
+            }
+            try? kept.write(to: url)
+            knownSize = UInt64(kept.count)
         }
         if handle == nil {
             handle = try? FileHandle(forWritingTo: url)
@@ -205,10 +213,28 @@ final class AppLog: @unchecked Sendable {
     /// Flush the file sink — for readers about to open the log file.
     func flushFile() { file.flush() }
 
+    /// Where the console echo goes while the kernel chain's stdout
+    /// capture is live (#335). During capture fd 1 points at the
+    /// capture pipe, so echoing a line with `print()` feeds it back
+    /// into the capture, which logs it again — an echo loop that
+    /// ballooned one run's log to 9 MB of repeats and destroyed the
+    /// real lines. The probe sets this to the saved real stdout for
+    /// the capture's duration; nil means the ordinary `print()`.
+    static var consoleEchoFd: Int32?
+
     func log(_ line: String) {
         // Console first: if a sink below throws or a lock is held by a wedged
         // thread, the line still reaches the device console.
-        print(line)
+        if let fd = AppLog.consoleEchoFd {
+            let bytes = [UInt8](line.utf8) + [0x0A]
+            bytes.withUnsafeBufferPointer { buffer in
+                if let base = buffer.baseAddress {
+                    _ = write(fd, base, buffer.count)
+                }
+            }
+        } else {
+            print(line)
+        }
         lock.lock()
         memory.write(line)
         file.write(line)

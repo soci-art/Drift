@@ -233,21 +233,64 @@ enum LogPackage {
 
         let archive = try Archive(url: url, accessMode: .create)
         var missing: [String] = []
+        var truncated: [String] = []
+        // Next-version batch (Grace, 2026-11-15): the settings upload
+        // door caps a package at 20 MB and used to fail outright when
+        // the logs outgrew it. A log file past the per-file cap now
+        // rides along as its recent tail instead, declared in the
+        // note — the same degrade the record bundles already use.
+        let tailCap = 6 * 1024 * 1024
         for file in [AppPaths.diagnostics, AppPaths.appLog, AppPaths.rustLog] {
             guard FileManager.default.fileExists(atPath: file.path) else {
                 missing.append(file.lastPathComponent)
                 continue
             }
-            try archive.addEntry(with: file.lastPathComponent, fileURL: file)
+            let size = ((try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? NSNumber)?.intValue ?? 0
+            if size > tailCap, let tail = recentTail(of: file, maxBytes: tailCap) {
+                truncated.append("\(file.lastPathComponent)（原约 \(size / 1024 / 1024) MB，只带最近的一部分）")
+                try archive.addEntry(with: file.lastPathComponent, type: .file,
+                                     uncompressedSize: Int64(tail.count)) { position, size in
+                    tail.subdata(in: Int(position)..<(Int(position) + size))
+                }
+            } else {
+                try archive.addEntry(with: file.lastPathComponent, fileURL: file)
+            }
         }
-        if !missing.isEmpty {
-            let note = Data(("这份记录包缺少以下文件（打包时不存在）：\n"
-                + missing.joined(separator: "\n") + "\n").utf8)
+        if !missing.isEmpty || !truncated.isEmpty {
+            var text = ""
+            if !missing.isEmpty {
+                text += "这份记录包缺少以下文件（打包时不存在）：\n"
+                    + missing.joined(separator: "\n") + "\n"
+            }
+            if !truncated.isEmpty {
+                text += "以下文件太大，只带了最近的一部分：\n"
+                    + truncated.joined(separator: "\n") + "\n"
+            }
+            let note = Data(text.utf8)
             try archive.addEntry(with: "缺失说明.txt", type: .file,
                                  uncompressedSize: Int64(note.count)) { position, size in
                 note.subdata(in: Int(position)..<(Int(position) + size))
             }
         }
         return url
+    }
+
+    /// The last `maxBytes` of a file, aligned to a line start so the
+    /// tail never begins mid-line or mid-character.
+    private static func recentTail(of file: URL, maxBytes: Int) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? handle.close() }
+        do {
+            let length = try handle.seekToEnd()
+            guard length > UInt64(maxBytes) else { return nil }
+            try handle.seek(toOffset: length - UInt64(maxBytes))
+            guard let data = try handle.readToEnd() else { return nil }
+            if let newline = data.firstIndex(of: 0x0A), newline + 1 < data.count {
+                return data.subdata(in: (newline + 1)..<data.count)
+            }
+            return data
+        } catch {
+            return nil
+        }
     }
 }

@@ -66,8 +66,11 @@ enum AppAnnouncement {
     static let title = "Drift 更新公告"
 
     static func versionLine(dateLine: String?) -> String {
-        if let dateLine { return "版本 \(version)（构建 \(build)）· \(dateLine)" }
-        return "版本 \(version)（构建 \(build)）"
+        // Next-version batch (Grace, 2026-11-15): the announcement
+        // header shows the version only — no build number, matching
+        // the update page (#328) and the About page.
+        if let dateLine { return "版本 \(version)· \(dateLine)" }
+        return "版本 \(version)"
     }
 
     struct Notes: Equatable {

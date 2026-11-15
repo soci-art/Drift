@@ -287,6 +287,10 @@ enum KernelDirectProbe {
         }
         dup2(fds[1], STDOUT_FILENO)
         close(fds[1])
+        // #335: fd 1 is the capture pipe now — the log's console echo
+        // must go to the saved real stdout, never into the pipe, or
+        // every echoed line is captured and logged again forever.
+        AppLog.consoleEchoFd = saved
         let readFd = fds[0]
         Thread.detachNewThread {
             var buffer = [UInt8](repeating: 0, count: 4096)
@@ -314,6 +318,7 @@ enum KernelDirectProbe {
     /// pipe's read end is therefore left to its reader, which sees EOF as
     /// soon as fd 1 stops pointing at the pipe.
     private static func stopStdoutCapture(saved: Int32) {
+        AppLog.consoleEchoFd = nil
         fflush(stdout)
         dup2(saved, STDOUT_FILENO)
         close(saved)

@@ -509,8 +509,8 @@ final class DriftSession: ObservableObject {
             case .worseQuery:
                 let opened = await MainActor.run { PosterBoardLaunch.open() }
                 let hint = opened
-                    ? "已打开 PosterBoard 以刷新集合，请从应用切换器中关闭它，然后检查锁定屏幕壁纸选择器。"
-                    : "请打开锁定屏幕壁纸选择器来刷新 PosterBoard；如果壁纸未出现，请从应用切换器关闭 PosterBoard 后重试。"
+                    ? "已打开 PosterBoard 以刷新集合，请在应用切换器里上滑结束它，然后检查锁定屏幕壁纸选择器。"
+                    : "请打开锁定屏幕壁纸选择器来刷新 PosterBoard；如果壁纸未出现，请在应用切换器里上滑结束 PosterBoard 后重试。"
                 if let effect {
                     return (true, "\(effect.headline)。\(hint)", effect)
                 }
@@ -652,13 +652,25 @@ final class DriftSession: ObservableObject {
                 packFiles: selection.tendies.map { $0.url.lastPathComponent },
                 logSliceText: RunLog.shared.lines.joined(separator: "\n")
             )
+            // #334 (Grace, 2026-11-15): kernel writes join the receipt
+            // journal like every other channel's, so the management
+            // page can list and delete them later. Only the verified
+            // placements are recorded.
+            PosterBoardLocalReceipts.remember(
+                outcome.placed.map {
+                    PosterBoardLocalReceipts.KernelWrite(
+                        pack: $0.pack, extensionID: $0.extensionID,
+                        folderName: $0.folderName, numericID: $0.numericID,
+                        parent: $0.parent)
+                },
+                confirmed: verification.confirmed)
             // Match Drift's existing WorseQuery activation: bring PosterBoard
             // forward so the user can swipe it away from the app switcher.
             // The existing, confirmed NeoSpring action remains available as
             // the alternative from the activation card below.
             let opened = await MainActor.run { PosterBoardLaunch.open() }
             let refreshHint = opened
-                ? "已打开 PosterBoard，请从应用切换器上滑结束它，系统重新启动后会读取新壁纸。"
+                ? "已打开 PosterBoard，请在应用切换器里上滑结束它，它重新打开后就会读到新壁纸。"
                 : "请打开锁定屏幕壁纸选择器刷新 PosterBoard，再从应用切换器上滑结束它。"
             return (true, "内核直刷已写入 \(outcome.installedCount) 个描述符，写后核验：\(verification.summary)。\(refreshHint) 也可以使用下方「注销」方式生效。")
         } catch {
@@ -1094,7 +1106,7 @@ enum DriftJudge {
             return DriftModeJudgement(
                 pick: pick,
                 mode: .worseQuery,
-                reason: "已手动选择内核直刷：会先验证 PosterBoard 容器读写，再写入已选描述文件；不需要配对或隧道。",
+                reason: "已手动选择内核直刷：会先验证 PosterBoard 容器读写，再写入已选描述文件；不用配对、不用隧道，对签名没要求。",
                 blockedReason: nil,
                 options: rows,
                 expectedEffect: "")

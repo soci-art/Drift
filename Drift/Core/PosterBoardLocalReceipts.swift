@@ -6,8 +6,12 @@ enum PosterBoardReceiptChannel: String, Codable, CaseIterable, Hashable, Sendabl
     case local = "本机直刷"
     case direct = "免注销直刷"
     case airlift = "注销直刷"
+    /// #334 (Grace, 2026-11-15): kernel writes join the journal too,
+    /// so the management page can list and delete them like the
+    /// other channels'. On-device like 本机直刷, NOT a tunnel.
+    case kernel = "内核直刷"
 
-    var isTunnel: Bool { self != .local }
+    var isTunnel: Bool { self == .direct || self == .airlift }
 }
 
 /// One descriptor Drift wrote, recorded so it can be listed and deleted later
@@ -96,6 +100,30 @@ enum PosterBoardLocalReceipts {
                         container: container,
                         structureVersion: structureVersion,
                         extensionID: write.extensionID))
+        }
+    }
+
+    /// The descriptors one kernel run wrote (#334). Same rule as the
+    /// tunnel journal: only the post-write-verified ones get a
+    /// receipt.
+    struct KernelWrite {
+        let pack: String
+        let extensionID: String
+        let folderName: String
+        let numericID: Int
+        let parent: String
+    }
+
+    static func remember(_ writes: [KernelWrite], confirmed: Set<String>) {
+        for write in writes
+        where confirmed.contains("\(write.extensionID)/\(write.folderName)") {
+            remember(pack: write.pack,
+                     channel: .kernel,
+                     extensionID: write.extensionID,
+                     generation: generation(from: write.parent),
+                     folderName: write.folderName,
+                     numericID: write.numericID,
+                     parent: write.parent)
         }
     }
 

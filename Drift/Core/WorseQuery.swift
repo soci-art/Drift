@@ -126,7 +126,7 @@ enum WorseQueryEscape {
         var errorDescription: String? {
             switch self {
             case .unsupportedSystem(let version):
-                return "本机直刷只支持 iOS 26.0–26.7.2、27.0–27.2.1，以及 27.3 测试版 1（24C5037i，实验）；"
+                return "本机直刷只支持 iOS 26.0–26.7.2、27.0–27.2.1，以及 iOS 27.3 beta 1（构建 24C5037i）；"
                     + "这台设备报告的是 \(version.isEmpty ? "未知系统" : "iOS \(version)")。"
             case .groupUnavailable:
                 return "当前签名没有授予可用的 App Group，本机直刷用不了。"
@@ -245,7 +245,7 @@ enum WorseQueryEscape {
     /// menu item's disabled state, so the three cannot drift apart.
     static func unavailableReason(deviceVersion: String, buildVersion: String = "") -> String {
         if !isSupported(deviceVersion: deviceVersion, buildVersion: buildVersion) {
-            return "本机直刷只支持 iOS 26.0–26.7.2、27.0–27.2.1，以及 27.3 测试版 1（24C5037i，实验）；"
+            return "本机直刷只支持 iOS 26.0–26.7.2、27.0–27.2.1，以及 iOS 27.3 beta 1（构建 24C5037i）；"
                 + "这台设备报告的是 \(deviceVersion.isEmpty ? "未知系统" : "iOS \(deviceVersion)")"
                 + (buildVersion.isEmpty ? "。" : "（\(buildVersion)）。")
         }

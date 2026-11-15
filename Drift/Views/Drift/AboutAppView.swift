@@ -81,7 +81,9 @@ struct AboutAppView: View {
         .padding(.top, 6)
     }
 
-    private static var versionText: String { AppVersion.display }
+    // Next-version batch (Grace, 2026-11-15): like the update page
+    // (#328), the About page shows the version only — no build number.
+    private static var versionText: String { AppVersion.marketing }
 
     // MARK: - Author (#295)
 

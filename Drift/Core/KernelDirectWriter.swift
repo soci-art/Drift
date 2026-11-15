@@ -14,6 +14,8 @@ enum KernelDirectWriter {
     struct Outcome {
         let verification: PosterStoreVerification
         let installedCount: Int
+        /// What was placed, for the receipt journal (#334).
+        let placed: [Placed]
     }
 
     private struct Source {
@@ -23,11 +25,15 @@ enum KernelDirectWriter {
         let extract: (URL) throws -> Void
     }
 
-    private struct Placed {
+    struct Placed {
         let extensionID: String
         let folderName: String
         let parent: String
         let key: String
+        /// Source pack name and the randomized numeric id, kept for
+        /// the receipt journal (#334).
+        let pack: String
+        let numericID: Int
     }
 
     static func apply(
@@ -197,7 +203,9 @@ enum KernelDirectWriter {
                         extensionID: descriptor.extensionID,
                         folderName: folderName,
                         parent: parent,
-                        key: "\(descriptor.extensionID)/\(folderName)"
+                        key: "\(descriptor.extensionID)/\(folderName)",
+                        pack: source.name,
+                        numericID: numericID
                     ))
                     completed += 1
                     progress(Double(completed) / Double(planned) * 100)
@@ -242,7 +250,8 @@ enum KernelDirectWriter {
             enumeratedAfter: true
         )
         progress(100)
-        return Outcome(verification: verification, installedCount: placed.count)
+        return Outcome(verification: verification, installedCount: placed.count,
+                       placed: placed)
     }
 
     private static func generationDirectories(in storePath: String) -> [Int] {

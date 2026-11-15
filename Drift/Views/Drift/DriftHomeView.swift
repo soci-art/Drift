@@ -521,7 +521,7 @@ struct DriftHomeView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             if manualPick == .kernel {
-                NativeNote("内核直刷使用本页两种现有生效方式：上滑结束 PosterBoard，或确认后注销。")
+                NativeNote("内核直刷写完后，用这两种办法生效：上滑结束 PosterBoard，或者注销。")
             } else {
                 NativeNote("隧道通道（免注销 / 注销直刷）刷完会自动处理生效，不用在这里操作。")
             }

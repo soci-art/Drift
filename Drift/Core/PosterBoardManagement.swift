@@ -104,6 +104,14 @@ enum PosterBoardManagement {
         let local = receipts.filter { $0.resolvedChannel == .local }
         let tunnel = receipts.filter { $0.resolvedChannel.isTunnel }
 
+        // #334 (Grace, 2026-11-15): kernel receipts are recorded from
+        // this build on, but checking one against the store needs the
+        // writer-side kernel store access, which is not wired yet —
+        // say 未核对 plainly rather than guessing either way.
+        for receipt in receipts where receipt.resolvedChannel == .kernel {
+            states[receipt.id] = .unknown("内核回执的核对还没接上，等内核管理支持到位后才能核对。")
+        }
+
         if !local.isEmpty {
             do {
                 let present = try await PosterBoardLocal.existingReceiptIDs(local, log: log)
@@ -200,6 +208,12 @@ enum PosterBoardManagement {
         let collected = DeletionLog(forward: log)
         let log = collected.sink
         switch receipt.resolvedChannel {
+        case .kernel:
+            // #334 remainder: deleting a kernel receipt needs the
+            // writer-side store delete (construction sheet). Until it
+            // lands, the receipt stays listed and this says so.
+            throw DriftError("内核回执的删除还没接上，等内核管理支持到位后才能删。回执先保留。")
+
         case .local:
             try await PosterBoardLocal.delete(receipt: receipt, log: log)
             record(receipt, success: true,
