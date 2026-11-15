@@ -494,6 +494,8 @@ struct PackListView: View {
     private func handleTendiesPick(_ urls: [URL]) {
         Task {
             var problemPacks: [String] = []
+            var adaptedPacks: [String] = []
+            var compatibilityReview: [String] = []
             for url in urls {
                 do {
                     let packs = try await Task.detached {
@@ -501,6 +503,27 @@ struct PackListView: View {
                     }.value
                     for pack in packs {
                         Task.detached { _ = PosterBoardPreview.previews(for: pack) }
+
+                        // Import-time compatibility adaptation (#319): only
+                        // apply a byte-verified system template for the exact
+                        // OS build/provider it was extracted from. Unknown
+                        // builds and existing custom metadata are preserved.
+                        do {
+                            let adaptation = try await Task.detached(priority: .userInitiated) {
+                                try PackCompatibilityRepair.adaptIfNeeded(pack)
+                            }.value
+                            if case .adapted(let name, let changes) = adaptation {
+                                adaptedPacks.append("\(name)：\(changes.joined(separator: "、"))")
+                            } else if case .needsReview(let reason) = adaptation {
+                                compatibilityReview.append("\(pack.name)：\(reason)")
+                            } else if case .skipped(let reason) = adaptation,
+                                      reason.contains("尚无匹配的已验证模板") {
+                                compatibilityReview.append("\(pack.name)：\(reason)")
+                            }
+                        } catch {
+                            compatibilityReview.append("\(pack.name)：适配检查失败（\(error.localizedDescription)）")
+                        }
+
                         // Auto-repair already ran at import (#269); a
                         // pack still carrying blocking issues is one
                         // the repair could not fix.
@@ -515,10 +538,20 @@ struct PackListView: View {
                 }
             }
             imports = PosterBoardImports.load()
-            if !problemPacks.isEmpty {
-                session.noticeTitle = "有壁纸包需要修一下"
-                session.noticeText = problemPacks.map { "「\($0)」" }.joined(separator: "、")
-                    + "的结构有点问题，导入时自动修了一次没修好，现在刷可能会找不到壁纸。"
+            if !adaptedPacks.isEmpty || !compatibilityReview.isEmpty || !problemPacks.isEmpty {
+                var lines: [String] = []
+                if !adaptedPacks.isEmpty {
+                    lines.append("已生成适配副本（原包保留）：\(adaptedPacks.joined(separator: "；"))")
+                }
+                if !compatibilityReview.isEmpty {
+                    lines.append("需要人工检查：\(compatibilityReview.joined(separator: "；"))")
+                }
+                if !problemPacks.isEmpty {
+                    lines.append(problemPacks.map { "「\($0)」" }.joined(separator: "、")
+                        + "的结构问题仍未修好，刷入前请先处理。")
+                }
+                session.noticeTitle = !adaptedPacks.isEmpty ? "导入时已完成自动适配" : "壁纸包检查结果"
+                session.noticeText = lines.joined(separator: "\n")
             }
         }
     }
