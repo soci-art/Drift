@@ -26,7 +26,16 @@ struct DriftHomeView: View {
     private var identity: DeviceIdentity { identityMonitor.current }
     /// The user's method pick (2.0.0: a method, never a channel).
     private var manualPick: DriftMethodPick {
-        DriftMethodPick.fromStored(manualPickRaw)
+        let stored = DriftMethodPick.fromStored(manualPickRaw)
+        // Grace (2026-11-15): with the 实验性功能 switch off, the
+        // kernel method cannot be selected on this page at all —
+        // not by hand (its row is hidden) and not by 自动选择. A
+        // stored kernel pick therefore reads as 自动选择 for
+        // everything this page shows and gates on (selected row,
+        // can-apply, notes, the run's log line), matching how the
+        // judge already treats it.
+        if stored == .kernel && !kernelEnabled { return .auto }
+        return stored
     }
     /// The local channel's premise: the app's own system only. It never
     /// looks at the device read, pairing or the tunnel.
