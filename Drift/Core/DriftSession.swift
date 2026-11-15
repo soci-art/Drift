@@ -561,7 +561,7 @@ final class DriftSession: ObservableObject {
     /// is, as a 0...1 fraction — the same step markers the probe's own
     /// cover-stage translation keys off. Nil when the line carries no
     /// step news (the bar simply holds where it is).
-    private static func kernelProbeFraction(for line: String) -> Double? {
+    nonisolated private static func kernelProbeFraction(for line: String) -> Double? {
         if line.contains("全部通过") { return 1 }
         if line.contains("5/5") { return 0.85 }
         if line.contains("[容器定位]") || line.contains("4/5") { return 0.7 }
@@ -586,6 +586,17 @@ final class DriftSession: ObservableObject {
               !selection.fullReset,
               selection.resetModes.isEmpty else {
             return (false, "内核直刷当前只支持已选的 .tendies 描述文件，不处理视频或重置任务。")
+        }
+        // The channel's own gates, checked here as well as in the
+        // judge (Grace, 2026-11-15: 判定层面要做好): no caller may
+        // start a kernel write with the switch off or off-premise,
+        // whatever any earlier judgement said.
+        guard KernelDirectPremise.isEnabled else {
+            return (false, "内核直刷还没有打开：请先到「设置 → 实验性功能」里打开内核直刷，再回来刷入。")
+        }
+        let premise = KernelDirectPremise.evaluate(version: WorseQueryEscape.processVersion)
+        guard premise.ready else {
+            return (false, "内核直刷现在用不了：\(premise.reason)。")
         }
 
         flashCover = true

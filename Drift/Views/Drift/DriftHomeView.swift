@@ -569,12 +569,26 @@ struct DriftHomeView: View {
         runSelection.fullReset = false
         // Kernel Direct has its own on-device write flow. It verifies the
         // real PosterBoard container first, then writes the selected packs;
-        // no channel mode, pairing record or tunnel is involved. It is
-        // reached by a manual 内核直刷 pick and by 自动选择 landing on
-        // it (the judgement's `useKernel`).
-        if manualPick == .kernel || judgement.useKernel {
+        // no channel mode, pairing record or tunnel is involved. Dispatch
+        // follows the judgement alone, never the raw stored pick: a stored
+        // kernel pick with its 实验性功能 switch off judges as 自动选择
+        // and must not reach the writer (Grace, 2026-11-15).
+        if judgement.useKernel {
             Task {
                 defer { session.flashCover = false }
+                // Re-judge on the state as it is now, like every other
+                // channel's run below: the card's answer is not the run's
+                // answer if the switch or the premises moved in between.
+                let fresh = DriftJudge.judge(identity: identity, selection: selection,
+                                             pick: manualPick, tunnelReady: tunnelReady)
+                if fresh.isBlocked {
+                    session.errorText = fresh.blockedReason
+                    return
+                }
+                guard fresh.useKernel else {
+                    session.errorText = "刷入方式的判定刚刚变了，这次没有刷入。请再点一次「刷入」。"
+                    return
+                }
                 let outcome = await session.runKernelApply(identity: identity,
                                                             selection: selection)
                 if outcome.ok {
