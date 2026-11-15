@@ -515,6 +515,7 @@ struct PackListView: View {
         Task {
             defer { session.cover = nil; session.coverProgress = nil }
             var repairedNames: [String] = []
+            var depthNames: [String] = []
             var noNeed = 0
             for (index, target) in targets.enumerated() {
                 let issues = PackRepair.inspect(target, deviceVersion: version)
@@ -533,14 +534,21 @@ struct PackListView: View {
                         imports.append(repaired)
                     }
                     repairedNames.append(repaired.name)
+                    if issues.contains(.depthConfig) {
+                        depthNames.append(repaired.name)
+                    }
                 } catch {
                     session.errorText = error.localizedDescription
                 }
             }
             if !repairedNames.isEmpty {
+                var message = "修好的包已放进列表，就在原包下面：\(repairedNames.joined(separator: "、"))。"
+                if !depthNames.isEmpty {
+                    message += "其中 \(depthNames.joined(separator: "、")) 还补了景深配置，开着景深时锁屏时间不会再被浮动层盖住。"
+                }
                 repairSummary = RepairSummary(
                     title: "修好了",
-                    message: "修好的包已放进列表，就在原包下面：\(repairedNames.joined(separator: "、"))。")
+                    message: message)
             } else if noNeed == targets.count {
                 repairSummary = RepairSummary(
                     title: "壁纸修复",
