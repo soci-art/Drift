@@ -639,6 +639,13 @@ final class DriftSession: ObservableObject {
             }
             let verification = outcome.verification
             DriftEngine.shared.log("内核直刷写入完成：\(outcome.installedCount) 个描述符；\(verification.summary)")
+            // #319: dump the store through the same kernel session, after the
+            // write has settled and before the receipt is recorded, so the
+            // comparison lines travel with this run's log. Read-only.
+            await dumpKernelStore(container: containerPath,
+                                  store: storePath,
+                                  generation: verification.structureVersion,
+                                  placedFolders: Set(outcome.placed.map(\.folderName)))
             ApplyHistory.record(
                 mode: "内核直刷",
                 success: true,
@@ -676,6 +683,13 @@ final class DriftSession: ObservableObject {
         } catch {
             let message = error.localizedDescription
             DriftEngine.shared.log("内核直刷写入失败：\(message)")
+            // #319: the order asks for the dump once the probe has passed even
+            // when the write itself failed; the kernel session is still here.
+            await dumpKernelStore(container: containerPath,
+                                  store: storePath,
+                                  generation: report.structureVersions.first
+                                      ?? PosterBoard.fallbackStructureVersion,
+                                  placedFolders: [])
             ApplyHistory.record(
                 mode: "内核直刷",
                 success: false,
@@ -688,6 +702,25 @@ final class DriftSession: ObservableObject {
                 logSliceText: RunLog.shared.lines.joined(separator: "\n")
             )
             return (false, "内核直刷写入失败：\(message)")
+        }
+    }
+
+    /// #319: run the read-only store dump off the main thread.
+    private static func dumpKernelStore(container: String,
+                                        store: String,
+                                        generation: Int,
+                                        placedFolders: Set<String>) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global(qos: .utility).async {
+                _ = KernelDirectStoreDump.run(
+                    container: container,
+                    store: store,
+                    generation: generation,
+                    placedFolders: placedFolders,
+                    log: { DriftEngine.shared.log($0) }
+                )
+                continuation.resume()
+            }
         }
     }
 
