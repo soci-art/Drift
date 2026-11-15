@@ -52,6 +52,16 @@ enum PosterBoardEffectKind: String, Sendable {
     case closePosterBoard
     /// The write was followed by a respring (注销直刷).
     case respring
+
+    /// The short text the apply history stores and the settings list shows.
+    var historyLabel: String {
+        switch self {
+        case .noRespring: return "免注销"
+        case .manualRespring: return "写入后手动注销"
+        case .closePosterBoard: return "写入后关闭 PosterBoard"
+        case .respring: return "注销"
+        }
+    }
 }
 
 struct PosterBoardEffect: Equatable, Sendable {
@@ -65,14 +75,7 @@ struct PosterBoardEffect: Equatable, Sendable {
     var needsManualRespring: Bool { kind == .manualRespring }
 
     /// The short text the apply history stores and the settings list shows.
-    var historyLabel: String {
-        switch kind {
-        case .noRespring: return "免注销"
-        case .manualRespring: return "写入后手动注销"
-        case .closePosterBoard: return "写入后关闭 PosterBoard"
-        case .respring: return "注销"
-        }
-    }
+    var historyLabel: String { kind.historyLabel }
 }
 
 /// What one finished local write produced: the store read-back and the effect

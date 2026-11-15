@@ -295,11 +295,44 @@ enum KernelDirectProbe {
         Thread.detachNewThread {
             var buffer = [UInt8](repeating: 0, count: 4096)
             var pending = ""
+            // Fold and cap at the capture point: a chain stuck repeating
+            // one line must not flood the log and push the run's own lines
+            // out of the record slice and the uploaded log's kept tail.
+            // Consecutive duplicates collapse into one summary line, and
+            // past `emitCap` lines the rest are counted, not logged.
+            var lastLine: String?
+            var repeatCount = 0
+            var emitted = 0
+            var dropped = 0
+            let emitCap = 500
+            func emit(_ text: String) {
+                if emitted < emitCap {
+                    log("[内核链] \(text)")
+                    emitted += 1
+                } else {
+                    dropped += 1
+                }
+            }
+            func flushRepeats() {
+                if repeatCount > 0, let lastLine {
+                    emit("（上一行重复 \(repeatCount) 次，已折叠：\(lastLine.prefix(80))）")
+                    repeatCount = 0
+                }
+            }
+            func handle(_ line: String) {
+                if line == lastLine {
+                    repeatCount += 1
+                    return
+                }
+                flushRepeats()
+                lastLine = line
+                emit(line)
+            }
             func flushPending() {
                 while let idx = pending.firstIndex(of: "\n") {
                     let line = String(pending[..<idx])
                     pending = String(pending[pending.index(after: idx)...])
-                    if !line.isEmpty { log("[内核链] \(line)") }
+                    if !line.isEmpty { handle(line) }
                 }
             }
             while true {
@@ -308,7 +341,11 @@ enum KernelDirectProbe {
                 pending += String(decoding: buffer[0..<count], as: UTF8.self)
                 flushPending()
             }
-            if !pending.isEmpty { log("[内核链] \(pending)") }
+            if !pending.isEmpty { handle(pending) }
+            flushRepeats()
+            if dropped > 0 {
+                log("[内核链] （链输出超过 \(emitCap) 行上限，已省略 \(dropped) 行）")
+            }
             close(readFd)
         }
         return saved

@@ -340,7 +340,7 @@ enum PosterBoardStore {
             try write(db, items: items)
             let transactionRows = try registeredKeys(on: db, items: items)
             guard transactionRows.count == items.count else {
-                throw DriftError("BEGIN IMMEDIATE 内の行検証が不足：\(transactionRows.count)/\(items.count)。")
+                throw DriftError("事务内行验证不完整：\(transactionRows.count)/\(items.count)。")
             }
             log("事务内数据库行验证：\(transactionRows.count)/\(items.count)")
             lastFilePublishedAt = try installFiles()

@@ -501,7 +501,7 @@ final class DriftSession: ObservableObject {
                                 channel: mode == .backup ? nil : mode.shortTitle,
                                 provider: providers,
                                 verification: verification?.summary,
-                                packName: selection.tendies.map(\.name).joined(separator: "、"), packFiles: selection.tendies.map { $0.url.lastPathComponent }, logSliceText: RunLog.shared.lines.joined(separator: "\n"))
+                                packName: selection.tendies.map(\.name).joined(separator: "、"), packFiles: selection.tendies.map { $0.url.lastPathComponent }, logSliceText: RunLog.shared.recordSnapshot())
             // The reset flags are one-shot; the calling page clears its own
             // selection on success (this session only ever holds a copy).
             errorText = nil
@@ -542,7 +542,7 @@ final class DriftSession: ObservableObject {
                 ApplyHistory.record(mode: selectedLabel, success: false, error: "已取消",
                                     device: identity.describe,
                                     model: identity.productType, ios: iosVersion,
-                                    packName: selection.tendies.map(\.name).joined(separator: "、"), packFiles: selection.tendies.map { $0.url.lastPathComponent }, logSliceText: RunLog.shared.lines.joined(separator: "\n"))
+                                    packName: selection.tendies.map(\.name).joined(separator: "、"), packFiles: selection.tendies.map { $0.url.lastPathComponent }, logSliceText: RunLog.shared.recordSnapshot())
                 return (false, "刷入已取消", nil)
             }
             DriftEngine.shared.log("posterboard apply failed: \(error.localizedDescription)")
@@ -552,7 +552,7 @@ final class DriftSession: ObservableObject {
             ApplyHistory.record(mode: selectedLabel, success: false, error: message,
                                 device: identity.describe,
                                 model: identity.productType, ios: iosVersion,
-                                packName: selection.tendies.map(\.name).joined(separator: "、"), packFiles: selection.tendies.map { $0.url.lastPathComponent }, logSliceText: RunLog.shared.lines.joined(separator: "\n"))
+                                packName: selection.tendies.map(\.name).joined(separator: "、"), packFiles: selection.tendies.map { $0.url.lastPathComponent }, logSliceText: RunLog.shared.recordSnapshot())
             return (false, message, nil)
         }
     }
@@ -603,7 +603,7 @@ final class DriftSession: ObservableObject {
                 ios: WorseQueryEscape.processVersion,
                 packName: selection.tendies.map(\.name).joined(separator: "、"),
                 packFiles: selection.tendies.map { $0.url.lastPathComponent },
-                logSliceText: RunLog.shared.lines.joined(separator: "\n")
+                logSliceText: RunLog.shared.recordSnapshot()
             )
             return (false, "内核直刷前置验证失败：\(reason) 本次没有写入壁纸。")
         }
@@ -646,19 +646,6 @@ final class DriftSession: ObservableObject {
                                   store: storePath,
                                   generation: verification.structureVersion,
                                   placedFolders: Set(outcome.placed.map(\.folderName)))
-            ApplyHistory.record(
-                mode: "内核直刷",
-                success: true,
-                device: identity.describe,
-                model: identity.productType,
-                ios: WorseQueryEscape.processVersion,
-                channel: "内核直刷",
-                provider: verification.providersSeen.sorted().joined(separator: "、"),
-                verification: verification.summary,
-                packName: selection.tendies.map(\.name).joined(separator: "、"),
-                packFiles: selection.tendies.map { $0.url.lastPathComponent },
-                logSliceText: RunLog.shared.lines.joined(separator: "\n")
-            )
             // #334 (Grace, 2026-11-15): kernel writes join the receipt
             // journal like every other channel's, so the management
             // page can list and delete them later. Only the verified
@@ -675,7 +662,26 @@ final class DriftSession: ObservableObject {
             // forward so the user can swipe it away from the app switcher.
             // The existing, confirmed NeoSpring action remains available as
             // the alternative from the activation card below.
+            // The open attempt (and its result) happens before the history
+            // record so both land in this run's record and log slice; the
+            // record also carries the channel's effect line like every
+            // other channel's records do.
             let opened = await MainActor.run { PosterBoardLaunch.open() }
+            DriftEngine.shared.log("[内核直刷] 打开 PosterBoard：\(opened ? "已打开" : "未能打开")")
+            ApplyHistory.record(
+                mode: "内核直刷",
+                success: true,
+                device: identity.describe,
+                model: identity.productType,
+                ios: WorseQueryEscape.processVersion,
+                effect: PosterBoardEffectKind.closePosterBoard.historyLabel,
+                channel: "内核直刷",
+                provider: verification.providersSeen.sorted().joined(separator: "、"),
+                verification: verification.summary,
+                packName: selection.tendies.map(\.name).joined(separator: "、"),
+                packFiles: selection.tendies.map { $0.url.lastPathComponent },
+                logSliceText: RunLog.shared.recordSnapshot()
+            )
             let refreshHint = opened
                 ? "已打开 PosterBoard，请在应用切换器里上滑结束它，它重新打开后就会读到新壁纸。"
                 : "请打开锁定屏幕壁纸选择器刷新 PosterBoard，再从应用切换器上滑结束它。"
@@ -699,7 +705,7 @@ final class DriftSession: ObservableObject {
                 ios: WorseQueryEscape.processVersion,
                 packName: selection.tendies.map(\.name).joined(separator: "、"),
                 packFiles: selection.tendies.map { $0.url.lastPathComponent },
-                logSliceText: RunLog.shared.lines.joined(separator: "\n")
+                logSliceText: RunLog.shared.recordSnapshot()
             )
             return (false, "内核直刷写入失败：\(message)")
         }
