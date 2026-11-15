@@ -11,7 +11,7 @@ protocol LogSink: AnyObject, Sendable {
     func write(_ line: String)
 }
 
-/// `<Documents>/goldennugget.log` — append-only sink, rotated by dropping the older half.
+/// `<Documents>/drift.log` — append-only sink, rotated by dropping the older half.
 ///
 /// The on-screen list alone is not enough: it only ever shows the tail and dies
 /// with the process, so anything written there (the host-side delegate
@@ -172,7 +172,7 @@ final class MemoryLogSink: LogSink, @unchecked Sendable {
 ///
 /// The sinks are installed by this type itself rather than by an owner, because
 /// logging is the one dependency every other layer has — a helper that logs
-/// before the engine exists must still land in `goldennugget.log`.
+/// before the engine exists must still land in `drift.log`.
 final class AppLog: @unchecked Sendable {
     static let shared = AppLog()
 

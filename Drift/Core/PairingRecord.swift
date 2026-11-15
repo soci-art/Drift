@@ -210,7 +210,7 @@ enum PairingRecord {
         guard let raw = String(data: data, encoding: .utf8) else {
             throw DriftError("\(url.lastPathComponent) 不是 UTF-8 文本："
                 + "（\(data.count) 字节）。配对文件必须是 XML plist，因为"
-                + "minimuxer 解析的正是它——二进制 plist 必须先转换。")
+                + "App 解析的正是它——二进制 plist 必须先转换。")
         }
 
         let record = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -222,7 +222,7 @@ enum PairingRecord {
         guard usable(record) else {
             throw DriftError("\(url.lastPathComponent) 不是属性列表："
                 + "（\(sourceLabel(record))）。配对文件必须是 XML plist——"
-                + "minimuxer 不解析其他格式。")
+                + "App 不解析其他格式。")
         }
 
         let dest = AppPaths.pairingFile

@@ -97,7 +97,7 @@ enum KernelDirectProbe {
             return "内核读写能力已建立，正在确认目标容器访问状态"
         }
         if line.contains("2/5") || line.contains("[内核链]") {
-            return "正在建立 3106 内核读写能力，请保持 Drift 在前台"
+            return "正在建立内核读写能力，请保持 Drift 在前台"
         }
         if line.contains("1/5") {
             return "正在复查当前系统版本与设备支持条件"
@@ -265,7 +265,7 @@ enum KernelDirectProbe {
             return codeTimedOut
         }
         if let escapeResult = box.escapeResult {
-            log("[3106兼容] sandbox_escape 返回 \(escapeResult)；内核读写链已成功，继续验证目标容器")
+            log("[内核兼容] sandbox_escape 返回 \(escapeResult)；内核读写链已成功，继续验证目标容器")
         }
         return box.value
     }

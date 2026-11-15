@@ -557,7 +557,7 @@ final class DriftSession: ObservableObject {
         }
     }
 
-    /// 内核直刷：先验证 3106 kernel backend 对真实 PosterBoard store 的
+    /// 内核直刷：先验证内核后端对真实 PosterBoard store 的
     /// 读写能力，再将已选描述符以暂存 + 校验 + 原子改名方式写入。
     /// 不调用 WorseQuery、App Group 或隧道，也不处理生效刷新。
     func runKernelApply(identity: DeviceIdentity,

@@ -133,7 +133,7 @@ enum Diagnostics {
         // verdict.  Without it a shared diagnostics.txt cannot distinguish "the
         // device refused" from "we refused the device".
         let memory = AppLog.shared.memory
-        lines.append("  app log tail (last 80 of \(memory.count) lines, full file: goldennugget.log):\n"
+        lines.append("  app log tail (last 80 of \(memory.count) lines, full file: drift.log):\n"
             + memory.tail(80))
         lines.append("── end diagnostics ──")
 

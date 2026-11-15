@@ -312,14 +312,14 @@ struct PosterBoardTendie: Identifiable, Hashable {
         return copy
     }
 
-    /// A one-line description for the row, including the reference's warning.
+    /// A one-line description of the pack, used in the apply log.
     var summary: String {
         if isContainer {
             return isUnsafeContainer
-                ? "container, carries the database — upstream says reset all wallpapers first"
-                : "container snapshot"
+                ? "容器包，带着数据库——刷前先重置全部壁纸"
+                : "容器快照"
         }
-        return descriptorCount == 1 ? "1 descriptor" : "\(descriptorCount) descriptors"
+        return "\(descriptorCount) 个描述符"
     }
 
     /// Unpack into `destination`, exactly as `TendieFile.extract` does.
