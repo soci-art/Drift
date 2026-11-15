@@ -893,6 +893,10 @@ struct DriftModeJudgement {
     /// placeholder, and dispatchers must honour this flag instead
     /// (set for a manual 内核直刷 pick and for 自动选择 landing on it).
     var useKernel: Bool = false
+    /// Blocked only because the kernel method's 实验性功能 switch is
+    /// off (Grace, 2026-11-15): the flash button stays tappable and
+    /// the tap answers with the go-turn-it-on reminder, not an error.
+    var kernelNeedsSwitch: Bool = false
     var isBlocked: Bool { blockedReason != nil }
 }
 
@@ -1151,6 +1155,14 @@ enum DriftJudge {
         func sealedBlocked(_ reason: String) -> DriftModeJudgement {
             blocked(reason, notice: DriftRestoreGate.notice)
         }
+        /// Blocked only because the kernel switch is off: flagged so
+        /// the flash tap can answer with a reminder instead of an
+        /// error (Grace, 2026-11-15).
+        func kernelSwitchBlocked(_ reason: String, notice: String) -> DriftModeJudgement {
+            var judgement = blocked(reason, notice: notice)
+            judgement.kernelNeedsSwitch = true
+            return judgement
+        }
 
         // Hard limits: these leave only the restore method, and while it is
         // sealed the answer is "cannot flash now".
@@ -1177,7 +1189,7 @@ enum DriftJudge {
             // The switch comes first: off is not "unavailable", it is
             // "not turned on yet" — the answer points at the switch.
             guard KernelDirectPremise.isEnabled else {
-                return blocked("你手动选了内核直刷：它还没有打开。先到「设置 → 实验性功能」里打开内核直刷，再回来刷入。手动选定后不会自动改走别的通道。",
+                return kernelSwitchBlocked("你手动选了内核直刷：它还没有打开。先到「设置 → 实验性功能」里打开内核直刷，再回来刷入。手动选定后不会自动改走别的通道。",
                                notice: "请先到「设置 → 实验性功能」里打开内核直刷。")
             }
             let premise = KernelDirectPremise.evaluate(version: p.appVersion)
@@ -1236,7 +1248,7 @@ enum DriftJudge {
         // switch, 自动选择 says so instead of a bare dead end
         // (Grace, 2026-11-15): the reminder is the answer.
         if kernelPremise.ready, !KernelDirectPremise.isEnabled {
-            return blocked("自动选择：这台设备能用内核直刷（实验），但它还没有打开，其他方式现在也用不了。先到「设置 → 实验性功能」里打开内核直刷，就能刷了。",
+            return kernelSwitchBlocked("自动选择：这台设备能用内核直刷（实验），但它还没有打开，其他方式现在也用不了。先到「设置 → 实验性功能」里打开内核直刷，就能刷了。",
                            notice: "请先到「设置 → 实验性功能」里打开内核直刷。")
         }
         // #332 (Grace, 2026-11-14): this summary used to concatenate all

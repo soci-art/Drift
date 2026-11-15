@@ -46,8 +46,9 @@ struct DriftHomeView: View {
     }
     /// The method rows to draw: every pick, always — 内核直刷
     /// included (Grace, 2026-11-15, replacing the #329
-    /// hide-while-off rule). Its row carries the turn-it-on
-    /// reminder while the switch is off.
+    /// hide-while-off rule). Supported devices show it 可用 and
+    /// can pick it with the switch on or off; the switch is
+    /// enforced at the flash tap, with a reminder.
     private var visiblePicks: [DriftMethodPick] {
         DriftMethodPick.allCases
     }
@@ -55,11 +56,20 @@ struct DriftHomeView: View {
     private var overLimit: Bool { selectedDescriptors > PosterBoardImports.descriptorLimit }
     private var canApply: Bool {
         // Kernel Direct writes the selected descriptor packs directly into
-        // PosterBoard's container; no pairing or tunnel is required.
+        // PosterBoard's container; no pairing or tunnel is required. On a
+        // supported device the button stays tappable even while the
+        // 实验性功能 switch is off — the tap then answers with the
+        // go-turn-it-on reminder (Grace, 2026-11-15). An unsupported
+        // device cannot tap it at all.
         if manualPick == .kernel {
-            return kernelReady && !selection.tendies.isEmpty && !overLimit
+            return kernelPremiseReady && !selection.tendies.isEmpty && !overLimit
                 && selection.video == nil && !selection.fullReset
                 && selection.resetModes.isEmpty && !session.running
+        }
+        // 自动选择 blocked only by the kernel switch: same deal — the
+        // tap must reach the reminder.
+        if judgement.kernelNeedsSwitch {
+            return !selection.tendies.isEmpty && !overLimit && !session.running
         }
         // The in-process route is the one path that does not need a pairing
         // record; every other mode still does.
@@ -70,7 +80,15 @@ struct DriftHomeView: View {
     /// Ready only when the user turned it on in 实验性功能 and this
     /// device is in its band and offset table (#319/#329).
     private var kernelReady: Bool {
-        kernelEnabled && KernelDirectPremise.evaluate(version: localVersion).ready
+        kernelEnabled && kernelPremiseReady
+    }
+
+    /// Supported-or-not, device only: iOS 17 / 18 band and the model
+    /// in the offset table. The switch is not part of this — a
+    /// supported device shows 可用 and can be picked either way
+    /// (Grace, 2026-11-15).
+    private var kernelPremiseReady: Bool {
+        KernelDirectPremise.evaluate(version: localVersion).ready
     }
 
     private var headerSubtitle: String {
@@ -255,9 +273,12 @@ struct DriftHomeView: View {
         // availability is its own premise, judged on this device.
         let kernelEval = pick == .kernel
             ? KernelDirectPremise.evaluate(version: localVersion) : nil
-        let available = pick == .auto ? !judged.isBlocked
-            : (kernelEval.map { $0.ready && kernelEnabled }
-                ?? (option?.available ?? false))
+        // The kernel row's 可用 is about the device alone (Grace,
+        // 2026-11-15): supported shows 可用 whether or not the
+        // 实验性功能 switch is on; the switch only bites at the
+        // flash tap, as a reminder.
+        let available = pick == .auto ? (!judged.isBlocked || judged.kernelNeedsSwitch)
+            : (kernelEval?.ready ?? (option?.available ?? false))
         // Sealed (collection #142): the version is in range but this
         // install's signing grants no usable App Group — the row stays
         // visible like the sealed restore entry, but it cannot be picked;
@@ -265,12 +286,13 @@ struct DriftHomeView: View {
         let sealed = pick != .auto && (option?.sealed ?? false)
         let status: String
         if pick == .auto {
-            status = judged.isBlocked ? "不可用"
-                : (judged.useKernel ? "→ 内核直刷（实验）" : "→ \(judged.mode.shortTitle)")
+            status = judged.kernelNeedsSwitch ? "→ 内核直刷（实验）"
+                : (judged.isBlocked ? "不可用"
+                    : (judged.useKernel ? "→ 内核直刷（实验）" : "→ \(judged.mode.shortTitle)"))
         } else if sealed {
             status = "不可选"
-        } else if pick == .kernel, kernelEval?.ready == true, !kernelEnabled {
-            status = "未打开"
+        } else if pick == .kernel {
+            status = available ? "可用" : "不支持"
         } else {
             status = available ? "可用" : "不可用"
         }
@@ -311,11 +333,6 @@ struct DriftHomeView: View {
                     }
                     if let kernelEval, !kernelEval.ready {
                         Text(kernelEval.reason)
-                            .font(.caption2).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if pick == .kernel, kernelEval?.ready == true, !kernelEnabled {
-                        Text("还没打开：请到「设置 → 实验性功能」里打开内核直刷。")
                             .font(.caption2).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -575,7 +592,15 @@ struct DriftHomeView: View {
         // but a blocked selection must never even be shaped into one.)
         if judgement.isBlocked {
             session.flashCover = false
-            session.errorText = judgement.blockedReason
+            // Blocked only by the kernel switch (Grace, 2026-11-15):
+            // this tap is the reminder moment — a notice pointing at
+            // 实验性功能, not an error.
+            if judgement.kernelNeedsSwitch {
+                session.noticeTitle = "内核直刷还没有打开"
+                session.noticeText = "请先到「设置 → 实验性功能」里打开内核直刷，再回来刷入。"
+            } else {
+                session.errorText = judgement.blockedReason
+            }
             return
         }
         var runSelection = selection
@@ -584,9 +609,9 @@ struct DriftHomeView: View {
         // Kernel Direct has its own on-device write flow. It verifies the
         // real PosterBoard container first, then writes the selected packs;
         // no channel mode, pairing record or tunnel is involved. Dispatch
-        // follows the judgement alone, never the raw stored pick: a stored
-        // kernel pick with its 实验性功能 switch off judges as 自动选择
-        // and must not reach the writer (Grace, 2026-11-15).
+        // follows the judgement alone, never the raw stored pick: a kernel
+        // pick with its 实验性功能 switch off judges as blocked (the
+        // reminder above) and never reaches this point (Grace, 2026-11-15).
         if judgement.useKernel {
             Task {
                 defer { session.flashCover = false }
