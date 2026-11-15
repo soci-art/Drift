@@ -80,7 +80,7 @@ enum KernelDirectProbe {
         }
         if line.contains("[pathleak]") {
             if line.contains("开始") {
-                return "正在分段定位 PosterBoard 容器（pathleak）"
+                return "正在分段定位 PosterBoard 容器"
             }
             if line.contains("超时") {
                 return "PosterBoard 容器定位超时，正在整理诊断结果"

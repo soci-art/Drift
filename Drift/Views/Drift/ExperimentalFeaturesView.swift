@@ -55,7 +55,7 @@ struct ExperimentalFeaturesView: View {
                                             in: RoundedRectangle(cornerRadius: 4, style: .continuous))
                                 .foregroundStyle(.orange)
                         }
-                        Text("给 iOS 17 / 18 用的直刷方式，不用配对、不用开隧道。")
+                        Text("给 iOS 17 / 18 用的直刷方式，不用配对、不用开隧道、不要求签名。")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()

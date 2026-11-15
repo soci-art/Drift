@@ -832,7 +832,7 @@ enum DriftMethodPick: String, CaseIterable, Identifiable {
         case .noRespring: return "隧道写入 · 刷完即生效，无需注销"
         case .respring: return "隧道写入 · 注销后生效"
         case .local: return "本机写入，免配对、免隧道"
-        case .kernel: return "内核写入，免配对、免隧道"
+        case .kernel: return "内核写入，免配对、免隧道、不要求签名"
         }
     }
 
