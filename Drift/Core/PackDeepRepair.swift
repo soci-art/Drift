@@ -72,6 +72,10 @@ enum PackDeepRepair {
         var structuralBlocking: [String] = []
         /// The fixes a run would apply, one plain line each.
         var fixes: [String] = []
+        /// Plain-language notes about work this system does not get
+        /// (the iOS 27 format split below) — shown, never silently
+        /// dropped, so a shorter fix list never reads as a clean bill.
+        var notes: [String] = []
         var canApply: Bool { !fixes.isEmpty && structuralBlocking.isEmpty }
     }
 
@@ -82,8 +86,9 @@ enum PackDeepRepair {
 
     // MARK: - Stock-take (#260 first, then the fit checks)
 
-    static func analyze(_ pack: PosterBoardTendie, canvas: Canvas) async -> Report {
-        let session = await openSession(pack, canvas: canvas)
+    static func analyze(_ pack: PosterBoardTendie, canvas: Canvas,
+                        deviceVersion: String) async -> Report {
+        let session = await openSession(pack, canvas: canvas, deviceVersion: deviceVersion)
         let report = session.report
         session.discard()
         return report
@@ -98,14 +103,19 @@ enum PackDeepRepair {
     final class Session {
         let pack: PosterBoardTendie
         let canvas: Canvas
+        /// The target device's system version, resolved by the view
+        /// the same way the structural repair resolves it — the
+        /// format split in the scan is judged against it.
+        let deviceVersion: String
         let report: Report
         fileprivate let work: URL?
         fileprivate let scan: Scan?
 
-        fileprivate init(pack: PosterBoardTendie, canvas: Canvas, report: Report,
-                         work: URL?, scan: Scan?) {
+        fileprivate init(pack: PosterBoardTendie, canvas: Canvas, deviceVersion: String,
+                         report: Report, work: URL?, scan: Scan?) {
             self.pack = pack
             self.canvas = canvas
+            self.deviceVersion = deviceVersion
             self.report = report
             self.work = work
             self.scan = scan
@@ -121,7 +131,8 @@ enum PackDeepRepair {
 
     /// Take stock and hold the tree for a possible run: everything
     /// `analyze` does, without throwing the extraction away.
-    static func openSession(_ pack: PosterBoardTendie, canvas: Canvas) async -> Session {
+    static func openSession(_ pack: PosterBoardTendie, canvas: Canvas,
+                            deviceVersion: String) async -> Session {
         var report = Report()
         // #254 (Grace, 2026-11-13): a container pack that actually
         // carries wallpapers is a patient now. Its descriptors sit
@@ -132,7 +143,8 @@ enum PackDeepRepair {
         // 的毛病」while wearing a 393×852 canvas. A container
         // TEMPLATE (no descriptors by design) still returns at once.
         guard !(pack.isContainer && pack.descriptorCount == 0) else {
-            return Session(pack: pack, canvas: canvas, report: report, work: nil, scan: nil)
+            return Session(pack: pack, canvas: canvas, deviceVersion: deviceVersion,
+                           report: report, work: nil, scan: nil)
         }
 
         // What the structural repair already did to this pack.
@@ -156,8 +168,12 @@ enum PackDeepRepair {
             try fm.createDirectory(at: work, withIntermediateDirectories: true)
             do {
                 try pack.extract(to: work)
-                let scan = await scanTree(work, canvas: canvas)
+                let scan = await scanTree(work, canvas: canvas, deviceVersion: deviceVersion)
                 report.fixes = scan.fixLines
+                if scan.skippedModernConversion {
+                    report.notes.append("有几处修法要把包按 iOS 27 的新格式重做，"
+                        + "这个系统上不做：硬改成新格式，壁纸反而可能显示不出来。其他能修的照常修。")
+                }
                 heldWork = work
                 heldScan = scan
             } catch {
@@ -166,8 +182,8 @@ enum PackDeepRepair {
         } catch {
             // An unextractable pack has nothing deep repair can say.
         }
-        return Session(pack: pack, canvas: canvas, report: report,
-                       work: heldWork, scan: heldScan)
+        return Session(pack: pack, canvas: canvas, deviceVersion: deviceVersion,
+                       report: report, work: heldWork, scan: heldScan)
     }
 
     /// The tree-level findings, shared by the stock-take and the run
@@ -183,6 +199,10 @@ enum PackDeepRepair {
         var imageFixes: [(url: URL, targetPixels: (Int, Int)?, normalizeColor: Bool, line: String)] = []
         var previewFixes: [(preview: URL, source: URL, line: String)] = []
         var needsSkeletonRename = false
+        /// A descriptor needed the converter, but the target system
+        /// is not iOS 27+, so the conversion was held back (see the
+        /// split in `scanTree`). Surfaced as a note in the report.
+        var skippedModernConversion = false
 
         /// Whether the run has anything at all to do.
         var canApplyWork: Bool {
@@ -191,9 +211,23 @@ enum PackDeepRepair {
         }
     }
 
-    private static func scanTree(_ root: URL, canvas: Canvas) async -> Scan {
+    private static func scanTree(_ root: URL, canvas: Canvas,
+                                 deviceVersion: String) async -> Scan {
         var scan = Scan()
         let fm = FileManager.default
+
+        // System split (Grace, 2026-11-16): the descriptor conversion
+        // below re-derives planes through the modernising converter —
+        // it restamps the pack into the iOS 27 format (family,
+        // rendering configuration, synthesised foreground). That is
+        // the right medicine on iOS 27+ and unproven on anything
+        // older, so below iOS 27 the conversion is held back whole:
+        // video, still and preview fixes still run, and the held-back
+        // work is reported as a note instead of being done silently
+        // or faked. An unreadable version counts as not-27 — when in
+        // doubt, do not restamp the pack.
+        let allowModernConversion = PosterBoard.compareVersion(deviceVersion, "27")
+            .map { $0 >= 0 } ?? false
 
         // Descriptors: canvas fit, legacy form, home declaration.
         for descriptorDir in PosterBoardConverter.descriptorDirectories(under: root) {
@@ -213,12 +247,16 @@ enum PackDeepRepair {
             if legacy { reasons.append("还是老式布局，要按新布局重出") }
             if missingHome { reasons.append("主屏那份没声明，设到主屏会是空白") }
             if !reasons.isEmpty {
-                scan.convertDescriptors.append(descriptorDir)
-                scan.needsSkeletonRename = true
-                scan.fixLines.append("「\(descriptorDir.lastPathComponent)」"
-                    + reasons.joined(separator: "；")
-                    + "——按这台设备的 \(canvas.label) 重新出，各层一起对齐"
-                    + (missingHome ? "，并按锁屏内容补上主屏那份" : ""))
+                if allowModernConversion {
+                    scan.convertDescriptors.append(descriptorDir)
+                    scan.needsSkeletonRename = true
+                    scan.fixLines.append("「\(descriptorDir.lastPathComponent)」"
+                        + reasons.joined(separator: "；")
+                        + "——按这台设备的 \(canvas.label) 重新出，各层一起对齐"
+                        + (missingHome ? "，并按锁屏内容补上主屏那份" : ""))
+                } else {
+                    scan.skippedModernConversion = true
+                }
             }
 
             // A broken in-pack preview riding with this descriptor.
@@ -387,7 +425,7 @@ enum PackDeepRepair {
 
     /// Deep-repair a pack and register the result as a new imported
     /// pack. Returns the new pack and the lines of what was done.
-    static func repair(_ pack: PosterBoardTendie, canvas: Canvas,
+    static func repair(_ pack: PosterBoardTendie, canvas: Canvas, deviceVersion: String,
                        progress: @escaping (Double) -> Void) async throws -> (pack: PosterBoardTendie, done: [String]) {
         try preflightCheck(pack)
 
@@ -402,7 +440,7 @@ enum PackDeepRepair {
             throw error
         }
         progress(0.1)
-        let scan = await scanTree(work, canvas: canvas)
+        let scan = await scanTree(work, canvas: canvas, deviceVersion: deviceVersion)
         return try await repairScanned(pack, canvas: canvas, work: work, scan: scan,
                                        progress: progress)
     }
@@ -415,7 +453,8 @@ enum PackDeepRepair {
                        progress: @escaping (Double) -> Void) async throws -> (pack: PosterBoardTendie, done: [String]) {
         try preflightCheck(session.pack)
         guard let work = session.work, let scan = session.scan else {
-            return try await repair(session.pack, canvas: session.canvas, progress: progress)
+            return try await repair(session.pack, canvas: session.canvas,
+                                    deviceVersion: session.deviceVersion, progress: progress)
         }
         progress(0.1)
         return try await repairScanned(session.pack, canvas: session.canvas,

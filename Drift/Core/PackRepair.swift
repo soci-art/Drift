@@ -48,12 +48,23 @@ enum PackRepair {
         case nestedPack(name: String)
         /// Packaging junk files (counted once, however many).
         case junk
+        /// iOS 17/18 depth completion (Grace, 2026-11-16): the pack has
+        /// a real floating layer but ships without the rendering
+        /// configuration pair, so on iOS 17/18 the floating layer sits
+        /// on top of the lock-screen clock while depth is on. Only
+        /// ever reported by the version-aware inspect, and only when
+        /// all three gates pass (system 17/18, pair fully absent, a
+        /// floating layer with real image content) — a pack with no
+        /// usable depth is told so, never "repaired".
+        case depthConfig
 
         /// Blocking issues stop a flash from finding the wallpapers;
         /// junk alone never does, so junk alone earns no import notice.
         var isBlocking: Bool {
-            if case .junk = self { return false }
-            return true
+            switch self {
+            case .junk, .depthConfig: return false
+            default: return true
+            }
         }
 
         /// The problem in plain words, for logs and the repair result.
@@ -64,6 +75,7 @@ enum PackRepair {
             case .buriedDescriptors: return "descriptors 埋在别的层级下面"
             case .nestedPack(let name): return "包里还套着一个包（\(name)）"
             case .junk: return "混进了打包垃圾文件"
+            case .depthConfig: return "缺景深配置，开景深时锁屏时间会被浮动层盖住"
             }
         }
     }
@@ -111,6 +123,42 @@ enum PackRepair {
     /// The blocking subset — what the post-import notice names a pack for.
     static func blockingIssues(of pack: PosterBoardTendie) -> [Issue] {
         inspect(pack).filter { $0.isBlocking }
+    }
+
+    /// The structural findings plus, on iOS 17/18 only, the depth
+    /// completion check. The plain `inspect` stays version-blind on
+    /// purpose: the import-time automatic repair and the deep-repair
+    /// stock-take both read it, and neither may grow a depth opinion —
+    /// the completion is a manual repair, run from the pack list with
+    /// the target device's version in hand.
+    static func inspect(_ pack: PosterBoardTendie, deviceVersion: String?) -> [Issue] {
+        var issues = inspect(pack)
+        guard let deviceVersion,
+              let atLeast17 = PosterBoard.compareVersion(deviceVersion, "17"), atLeast17 >= 0,
+              let below19 = PosterBoard.compareVersion(deviceVersion, "19"), below19 < 0,
+              !pack.isContainer,
+              depthConfigMissing(pack) else { return issues }
+        issues.append(.depthConfig)
+        return issues
+    }
+
+    /// The depth gates, listing-level: the rendering-configuration
+    /// pair is fully absent (a half-present pair is a different
+    /// breakage, not this repair's business), and a floating layer
+    /// carrying at least one image file exists — no floating layer,
+    /// no usable depth, nothing to complete.
+    private static func depthConfigMissing(_ pack: PosterBoardTendie) -> Bool {
+        guard let archive = try? Archive(url: pack.url, accessMode: .read) else { return false }
+        let lower = archive.map { $0.path.lowercased() }
+        let optionsName = PosterBoardConverter.configurableOptionsName.lowercased()
+        let renderingName = PosterBoardConverter.renderingConfigurationName.lowercased()
+        guard !lower.contains(where: { $0.hasSuffix(optionsName) }),
+              !lower.contains(where: { $0.hasSuffix(renderingName) }) else { return false }
+        let imageExts = [".png", ".jpg", ".jpeg", ".heic"]
+        return lower.contains { path in
+            (path.contains("/floating.ca/") || path.hasPrefix("floating.ca/"))
+                && imageExts.contains(where: { path.hasSuffix($0) })
+        }
     }
 
     static func inspect(paths rawPaths: [String]) -> [Issue] {
@@ -181,7 +229,8 @@ enum PackRepair {
     /// flash does (conversion only exists on iOS 27+).
     static func repair(_ pack: PosterBoardTendie, deviceVersion: String,
                        progress: @escaping (Double) -> Void) throws -> PosterBoardTendie {
-        try repair(pack, issues: inspect(pack), deviceVersion: deviceVersion, progress: progress)
+        try repair(pack, issues: inspect(pack, deviceVersion: deviceVersion),
+                   deviceVersion: deviceVersion, progress: progress)
     }
 
     /// The same repair with the findings already in hand — callers
@@ -248,6 +297,14 @@ enum PackRepair {
            let atLeast27 = PosterBoard.compareVersion(deviceVersion, "27"), atLeast27 >= 0 {
             _ = try PosterBoardConverter.convertTree(work)
         }
+        // iOS 17/18 depth completion: only the configuration pair is
+        // added, per qualifying descriptor. The pack's format is NOT
+        // touched — no family change, no conversion; on these systems
+        // the pair alone is what the renderer reads (device-verified
+        // on iOS 18.3.1 正式版, pack family WWDC22).
+        if issues.contains(.depthConfig) {
+            applyDepthConfigs(in: work)
+        }
         progress(2.0 / 3.0)
 
         // Phase 3: rezip as name(patched).tendies and register it.
@@ -258,6 +315,57 @@ enum PackRepair {
         var repaired = try PosterBoardTendie(url: dest)
         repaired = repaired.settingPosterType(pack.posterType)
         return repaired
+    }
+
+    /// Write the depth configuration pair into every descriptor in
+    /// the extracted tree that passes the gates on its own merits:
+    /// the pair fully absent, and a floating layer with real image
+    /// content. The listing-level check in `depthConfigMissing` got
+    /// the repair started; this per-descriptor pass on the real tree
+    /// is what decides, so a multi-descriptor pack only completes
+    /// the descriptors that qualify. Wallpaper dirs are collected
+    /// first — writing into the tree while enumerating it is not
+    /// safe.
+    private static func applyDepthConfigs(in root: URL) {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: nil) else { return }
+        var wallpaperDirs: [URL] = []
+        for case let url as URL in enumerator {
+            if url.lastPathComponent == "Wallpaper.plist" {
+                wallpaperDirs.append(url.deletingLastPathComponent())
+            }
+        }
+        for wallpaperDir in wallpaperDirs {
+            let contentsDir = wallpaperDir.deletingLastPathComponent()
+            let versionDir = contentsDir.deletingLastPathComponent()
+            let optionsPath = contentsDir.appendingPathComponent(
+                PosterBoardConverter.configurableOptionsName)
+            let renderingPath = versionDir.appendingPathComponent(
+                PosterBoardConverter.renderingConfigurationName)
+            guard !fm.fileExists(atPath: optionsPath.path),
+                  !fm.fileExists(atPath: renderingPath.path) else { continue }
+            let floating = wallpaperDir.appendingPathComponent("floating.ca", isDirectory: true)
+            guard floatingHasImage(floating) else { continue }
+            try? PosterBoardConverter.writeDepthConfigs(wallpaperDir)
+        }
+    }
+
+    /// A floating layer counts as real when it carries at least one
+    /// non-empty image file; an empty shell earns no configuration.
+    private static func floatingHasImage(_ floatingDir: URL) -> Bool {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(at: floatingDir,
+                                             includingPropertiesForKeys: [.fileSizeKey]) else {
+            return false
+        }
+        let imageExts = ["png", "jpg", "jpeg", "heic"]
+        for case let url as URL in enumerator {
+            guard imageExts.contains(url.pathExtension.lowercased()) else { continue }
+            if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 {
+                return true
+            }
+        }
+        return false
     }
 
     // MARK: - Layout surgery on an extracted tree

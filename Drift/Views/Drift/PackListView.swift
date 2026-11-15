@@ -517,7 +517,7 @@ struct PackListView: View {
             var repairedNames: [String] = []
             var noNeed = 0
             for (index, target) in targets.enumerated() {
-                let issues = PackRepair.inspect(target)
+                let issues = PackRepair.inspect(target, deviceVersion: version)
                 if issues.isEmpty {
                     noNeed += 1
                     continue
