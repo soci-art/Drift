@@ -557,6 +557,20 @@ final class DriftSession: ObservableObject {
         }
     }
 
+    /// How far through its five steps a probe log line says the probe
+    /// is, as a 0...1 fraction — the same step markers the probe's own
+    /// cover-stage translation keys off. Nil when the line carries no
+    /// step news (the bar simply holds where it is).
+    private static func kernelProbeFraction(for line: String) -> Double? {
+        if line.contains("全部通过") { return 1 }
+        if line.contains("5/5") { return 0.85 }
+        if line.contains("[容器定位]") || line.contains("4/5") { return 0.7 }
+        if line.contains("3/5") { return 0.5 }
+        if line.contains("2/5") || line.contains("[内核链]") { return 0.3 }
+        if line.contains("1/5") { return 0.12 }
+        return nil
+    }
+
     /// 内核直刷：先验证内核后端对真实 PosterBoard store 的
     /// 读写能力，再将已选描述符以暂存 + 校验 + 原子改名方式写入。
     /// 不调用 WorseQuery、App Group 或隧道，也不处理生效刷新。
@@ -576,7 +590,11 @@ final class DriftSession: ObservableObject {
 
         flashCover = true
         flashStage = "正在验证内核与 PosterBoard 容器读写，期间不要切后台或锁屏"
-        defer { flashCover = false; flashStage = nil }
+        // One bar for the whole run, exactly like 本机直刷 (Grace,
+        // 2026-11-15): the probe's scan-and-locate phase fills the
+        // first 40%, the writer's per-descriptor progress the rest.
+        coverProgress = 0
+        defer { flashCover = false; flashStage = nil; coverProgress = nil }
         running = true
         lastEffect = nil
         RunLog.shared.clear()
@@ -588,6 +606,12 @@ final class DriftSession: ObservableObject {
 
         let report = await KernelDirectProbe.run(log: { line in
             DriftEngine.shared.log(line)
+            if let fraction = Self.kernelProbeFraction(for: line) {
+                Task { @MainActor in
+                    let current = DriftSession.shared.coverProgress ?? 0
+                    DriftSession.shared.coverProgress = max(current, fraction * 0.4)
+                }
+            }
         })
         guard report.passed,
               let containerPath = report.containerPath,
@@ -626,6 +650,11 @@ final class DriftSession: ObservableObject {
                             log: { DriftEngine.shared.log($0) },
                             progress: { value in
                                 DriftEngine.shared.log(String(format: "[内核写入] 进度 %.0f%%", value))
+                                Task { @MainActor in
+                                    let mapped = 0.4 + 0.6 * (value / 100)
+                                    let current = DriftSession.shared.coverProgress ?? 0
+                                    DriftSession.shared.coverProgress = max(current, mapped)
+                                }
                             }
                         )
                         DriftEngine.shared.log(String(format: "[内核直刷] KernelDirectWriter.apply() 返回：%d 个描述符，耗时 %.2f 秒",

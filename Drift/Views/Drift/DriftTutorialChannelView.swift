@@ -4,7 +4,7 @@ import SwiftUI
 /// three pages share one skeleton — status banner, 需要什么, 怎么刷,
 /// 刷完怎么生效, 常见问题 — and differ only in their copy and in how the
 /// wallpaper takes effect. The wording is the set Grace approved page by
-/// page: plain words, no 改签 anywhere (#232), every page teaches where
+/// page: plain words only (#232), every page teaches where
 /// the flashed wallpaper gets picked (#233), and the local page follows
 /// the real flow — after a flash the app brings the wallpaper interface
 /// to the front by itself (#235), then teaches the app-switcher flick
