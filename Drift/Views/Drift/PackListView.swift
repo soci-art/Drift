@@ -67,6 +67,7 @@ struct PackListView: View {
     @State private var legacyPrompt: LegacyConvertPrompt?
     @State private var confirmDelete = false
     @State private var repairSummary: RepairSummary?
+    @State private var depthNote: String?
     @State private var deepRepairTarget: PosterBoardTendie?
     @State private var previewPack: PosterBoardTendie?
     @State private var legacyURLs: Set<URL> = []
@@ -166,7 +167,10 @@ struct PackListView: View {
                 repairingCover
             }
         }
-        .task(id: selectionKey) { await refreshLegacyInfo() }
+        .task(id: selectionKey) {
+            await refreshLegacyInfo()
+            await refreshDepthNote()
+        }
         // Warm the legacy-family memo off the main thread (cleanup
         // round, 2026-11-13): the first tap on a pack used to open its
         // archive synchronously in `toggle`, and the selection refresh
@@ -245,6 +249,10 @@ struct PackListView: View {
                      ? first.posterType.blurb
                      : "自动判断为「\(first.detectedPosterType.shortLabel)」。"
                         + first.posterType.blurb)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let depthNote {
+                Text(depthNote)
                     .font(.caption).foregroundStyle(.secondary)
             }
             if !legacyURLs.isEmpty && needsConversionUI {
@@ -380,6 +388,27 @@ struct PackListView: View {
             }
         }
         legacyURLs = found
+    }
+
+    /// The pre-repair word on the depth configuration: it used to be
+    /// fixed silently (log only), so a selected pack that lacks it
+    /// says so here, before 壁纸修复 is even tapped. Same version
+    /// resolution and the same inspect the repair itself will run.
+    private func refreshDepthNote() async {
+        depthNote = nil
+        let targets = selectedPacks
+        guard !targets.isEmpty else { return }
+        let version = identity.version.isEmpty
+            ? WorseQueryEscape.processVersion : identity.version
+        let names = await Task.detached {
+            targets.filter {
+                PackRepair.inspect($0, deviceVersion: version).contains(.depthConfig)
+            }.map(\.name)
+        }.value
+        // The selection may have moved on while the packs were read.
+        guard Set(targets.map(\.url)) == Set(selectedPacks.map(\.url)) else { return }
+        depthNote = names.isEmpty ? nil
+            : "其中 \(names.joined(separator: "、")) 缺景深配置，点「壁纸修复」时会一并补上。"
     }
 
     /// The device's major version, or nil while identity is unread —
