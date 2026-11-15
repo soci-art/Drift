@@ -374,6 +374,116 @@ enum KernelDirectWriter {
         )
     }
 
+    struct StoreEntry {
+        let provider: String
+        let uuid: String
+        let name: String
+        let packageName: String
+        let generation: Int
+    }
+
+    /// Read the live PosterBoard store after the caller has completed the
+    /// kernel probe. This is deliberately a plain filesystem enumeration:
+    /// no second probe, WorseQuery call, or tunnel operation belongs here.
+    static func enumerateStore(
+        storePath: String,
+        log: @escaping @Sendable (String) -> Void
+    ) -> [StoreEntry] {
+        let normalizedStorePath = storePath.hasSuffix("/")
+            ? String(storePath.dropLast())
+            : storePath
+        let manager = FileManager.default
+        var entries: [StoreEntry] = []
+
+        for generation in generationDirectories(in: normalizedStorePath) {
+            let extensionsPath = normalizedStorePath + "/\(generation)/Extensions"
+            guard let providers = try? manager.contentsOfDirectory(atPath: extensionsPath) else {
+                continue
+            }
+            for provider in providers where PosterBoard.managedProviders.contains(provider) {
+                let descriptorsPath = extensionsPath + "/\(provider)/descriptors"
+                guard let uuids = try? manager.contentsOfDirectory(atPath: descriptorsPath) else {
+                    continue
+                }
+                for uuid in uuids {
+                    let descriptorPath = descriptorsPath + "/\(uuid)"
+                    var isDirectory: ObjCBool = false
+                    guard manager.fileExists(atPath: descriptorPath, isDirectory: &isDirectory),
+                          isDirectory.boolValue else {
+                        continue
+                    }
+
+                    var packageName = ""
+                    let versionsPath = descriptorPath + "/versions"
+                    if let versions = try? manager.contentsOfDirectory(atPath: versionsPath) {
+                        for version in versions {
+                            let contentsPath = versionsPath + "/\(version)/contents"
+                            if let contents = try? manager.contentsOfDirectory(atPath: contentsPath),
+                               let wallpaper = contents.first(where: { $0.hasSuffix(".wallpaper") }) {
+                                packageName = String(wallpaper.dropLast(".wallpaper".count))
+                                break
+                            }
+                        }
+                    }
+                    let name = packageName.isEmpty ? String(uuid.prefix(8)) : packageName
+                    entries.append(StoreEntry(
+                        provider: provider,
+                        uuid: uuid,
+                        name: name,
+                        packageName: packageName,
+                        generation: generation
+                    ))
+                }
+            }
+        }
+
+        log("[内核管理] 商店扫描：\(entries.count) 个描述符。")
+        return entries
+    }
+
+    /// Remove only the descriptor folder. PosterBoard reconciles its own
+    /// database registration; this operation must never edit SQLite rows.
+    static func deleteDescriptor(
+        storePath: String,
+        provider: String,
+        uuid: String,
+        generation: Int,
+        log: @escaping @Sendable (String) -> Void
+    ) throws {
+        let normalizedStorePath = storePath.hasSuffix("/")
+            ? String(storePath.dropLast())
+            : storePath
+        let path = normalizedStorePath
+            + "/\(generation)/Extensions/\(provider)/descriptors/\(uuid)"
+        let parent = (path as NSString).deletingLastPathComponent
+
+        guard generation > 0,
+              PosterBoard.managedProviders.contains(provider),
+              !uuid.isEmpty, uuid != ".", uuid != "..",
+              !uuid.contains("/"),
+              path.hasPrefix(normalizedStorePath + "/"),
+              path.contains(PosterBoard.storeDirectoryName) else {
+            throw DriftError("路径不在 PosterBoard 的商店目录里，拒绝删除。")
+        }
+
+        let manager = FileManager.default
+        var isDirectory: ObjCBool = false
+        guard manager.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            log("[内核管理] 描述符目录已经不在商店里：\(provider)/\(uuid)")
+            return
+        }
+        guard isDirectory.boolValue else {
+            throw DriftError("目标描述符不是目录，拒绝删除：\(path)")
+        }
+
+        try manager.removeItem(atPath: path)
+        fsyncDirectory(parent)
+        guard !manager.fileExists(atPath: path) else {
+            throw DriftError("内核删除后仍然能看到描述符目录，没有确认删除。")
+        }
+        log("[内核管理] 删除后核验：目录已不在商店（\(provider)/\(uuid)）。")
+    }
+
     private static func generationDirectories(in storePath: String) -> [Int] {
         (try? FileManager.default.contentsOfDirectory(atPath: storePath))?
             .compactMap(Int.init)

@@ -94,6 +94,26 @@ enum PosterBoardManagement {
         return root
     }
 
+    /// Re-establish the kernel access path for each management operation.
+    /// The exploit's access proof is intentionally not cached between actions.
+    private static func kernelStore(
+        log: @escaping @Sendable (String) -> Void
+    ) async -> (containerPath: String, storePath: String, structureVersions: [Int])? {
+        let report = await KernelDirectProbe.run(log: log)
+        guard report.passed else {
+            let reason = report.failure ?? "未提供失败原因"
+            log("[管理页内核] 探针未通过：\(reason)")
+            return nil
+        }
+        guard let container = report.containerPath, !container.isEmpty,
+              let store = report.storePath, !store.isEmpty else {
+            log("[管理页内核] 探针虽通过，但没有返回容器路径或商店路径。")
+            return nil
+        }
+        log("[管理页内核] 探针通过：容器=\(container)，商店=\(store)，结构版本=\(report.structureVersions.sorted())")
+        return (container, store, report.structureVersions)
+    }
+
     /// Compare every receipt with the store in its own channel. Local receipts
     /// are checked on disk; tunnel receipts by enumerating the device store
     /// when the tunnel premises are present.
@@ -104,12 +124,19 @@ enum PosterBoardManagement {
         let local = receipts.filter { $0.resolvedChannel == .local }
         let tunnel = receipts.filter { $0.resolvedChannel.isTunnel }
 
-        // #334 (Grace, 2026-11-15): kernel receipts are recorded from
-        // this build on, but checking one against the store needs the
-        // writer-side kernel store access, which is not wired yet —
-        // say 未核对 plainly rather than guessing either way.
-        for receipt in receipts where receipt.resolvedChannel == .kernel {
-            states[receipt.id] = .unknown("内核回执的核对还没接上，等内核管理支持到位后才能核对。")
+        let kernel = receipts.filter { $0.resolvedChannel == .kernel }
+        if !kernel.isEmpty {
+            if await kernelStore(log: log) != nil {
+                for receipt in kernel {
+                    states[receipt.id] = FileManager.default.fileExists(atPath: receipt.path)
+                        ? .inStore : .absent
+                }
+                log("[管理页内核] 已按描述符目录逐条核对\(kernel.count) 条内核回执。")
+            } else {
+                for receipt in kernel {
+                    states[receipt.id] = .unknown("内核探针未通过，详见管理页日志；本次未核对。")
+                }
+            }
         }
 
         if !local.isEmpty {
@@ -209,10 +236,33 @@ enum PosterBoardManagement {
         let log = collected.sink
         switch receipt.resolvedChannel {
         case .kernel:
-            // #334 remainder: deleting a kernel receipt needs the
-            // writer-side store delete (construction sheet). Until it
-            // lands, the receipt stays listed and this says so.
-            throw DriftError("内核回执的删除还没接上，等内核管理支持到位后才能删。回执先保留。")
+            guard receipt.generation > 0 else {
+                throw DriftError("内核回执缺少有效结构版本，无法定位描述符。")
+            }
+            guard let store = await kernelStore(log: log) else {
+                throw DriftError("内核探针未通过，无法删除这条回执；请查看日志中的具体原因。")
+            }
+            try KernelDirectWriter.deleteDescriptor(
+                storePath: store.storePath,
+                provider: receipt.extensionID,
+                uuid: receipt.folderName,
+                generation: receipt.generation,
+                log: log
+            )
+            guard !FileManager.default.fileExists(atPath: receipt.path) else {
+                record(receipt, success: false,
+                       verification: "内核删除后核验失败：目录仍在商店",
+                       logSlice: collected.text)
+                throw DriftError("内核删除后仍能看到描述符目录，回执保留。")
+            }
+            PosterBoardLocalReceipts.forget(id: receipt.id)
+            record(receipt, success: true,
+                   verification: "内核删除后：目录已不在商店",
+                   logSlice: collected.text)
+            return PosterBoardDeletionOutcome(
+                confirmed: true,
+                message: "已删除并核验不在册：\(receipt.pack) 的描述符已从商店移除。打开应用切换器，向上轻扫关闭 PosterBoard 后生效。",
+                channel: .kernel)
 
         case .local:
             try await PosterBoardLocal.delete(receipt: receipt, log: log)
@@ -385,6 +435,28 @@ enum PosterBoardManagement {
             }
         }
 
+        let kernelPremise = KernelDirectPremise.evaluate(version: WorseQueryEscape.processVersion)
+        if kernelPremise.inBand && kernelPremise.chipCovered {
+            guard KernelDirectPremise.isEnabled else {
+                return ([], "", "这台设备支持内核直刷，请到「设置 → 实验性功能」打开内核直刷后，再列出商店里的壁纸。")
+            }
+            guard let store = await kernelStore(log: log) else {
+                return ([], "内核", "内核探针未通过，无法列出商店；请查看管理页日志中的具体失败原因。")
+            }
+            let items = KernelDirectWriter.enumerateStore(storePath: store.storePath, log: log)
+            let entries = items.map { item in
+                ManagedEntry(
+                    id: "\(item.provider)/\(item.uuid)/\(item.generation)",
+                    provider: item.provider,
+                    uuid: item.uuid,
+                    name: item.name,
+                    packageName: item.packageName,
+                    generation: item.generation,
+                    containerPath: store.containerPath)
+            }
+            return (entries, "内核", nil)
+        }
+
         return ([], "", "需要配对文件、LocalDevVPN 和已连接的设备，或本机直刷可用，才能列出商店里的壁纸。")
     }
 
@@ -466,7 +538,40 @@ enum PosterBoardManagement {
             return (true, "已删除并在本机核验：\(entry.name) 的描述符已不在商店里。", "本机")
         }
 
-        throw DriftError("删不了：隧道和本机两条路现在都走不通。")
+        let kernelPremise = KernelDirectPremise.evaluate(version: WorseQueryEscape.processVersion)
+        if kernelPremise.inBand && kernelPremise.chipCovered {
+            guard KernelDirectPremise.isEnabled else {
+                throw DriftError("请先到「设置 → 实验性功能」打开内核直刷，再删除这条商店描述符。")
+            }
+            guard let store = await kernelStore(log: log) else {
+                throw DriftError("内核探针未通过，无法删除；请查看日志中的具体失败原因。")
+            }
+            try KernelDirectWriter.deleteDescriptor(
+                storePath: store.storePath,
+                provider: entry.provider,
+                uuid: entry.uuid,
+                generation: entry.generation,
+                log: log
+            )
+            let normalizedStorePath = store.storePath.hasSuffix("/")
+                ? String(store.storePath.dropLast()) : store.storePath
+            let path = normalizedStorePath
+                + "/\(entry.generation)/Extensions/\(entry.provider)/descriptors/\(entry.uuid)"
+            guard !FileManager.default.fileExists(atPath: path) else {
+                throw DriftError("内核删除后仍能看到描述符目录，没有确认删除。")
+            }
+            ApplyHistory.record(mode: "删除壁纸 · \(entry.name)",
+                                success: true,
+                                ios: WorseQueryEscape.processVersion,
+                                channel: "内核",
+                                provider: entry.provider,
+                                verification: "内核删除后：目录已不在商店",
+                                packName: entry.name,
+                                logSliceText: collected.text)
+            return (true, "已删除并核验不在册：\(entry.name) 的描述符已从商店移除。", "内核")
+        }
+
+        throw DriftError("删不了：隧道、本机和内核三条路现在都走不通。")
     }
 
     /// Every management deletion lands in the apply history, with the pack,
@@ -480,7 +585,7 @@ enum PosterBoardManagement {
         // is one, this device's own version otherwise. Never empty:
         // "未知系统" must be impossible, the log package depends on it.
         let tunnelVersion = DeviceIdentityMonitor.shared.current.version
-        let ios = receipt.resolvedChannel == .local
+        let ios = (receipt.resolvedChannel == .local || receipt.resolvedChannel == .kernel)
             ? WorseQueryEscape.processVersion
             : (tunnelVersion.isEmpty ? WorseQueryEscape.processVersion : tunnelVersion)
         // #308: the record names the pack file the wallpaper came
@@ -491,7 +596,7 @@ enum PosterBoardManagement {
                             success: success,
                             error: success ? "" : verification,
                             ios: ios,
-                            channel: receipt.channelLabel,
+                            channel: receipt.resolvedChannel == .kernel ? "内核" : receipt.channelLabel,
                             provider: receipt.extensionID,
                             verification: verification,
                             packName: receipt.pack,
