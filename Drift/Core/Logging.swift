@@ -229,7 +229,7 @@ final class AppLog: @unchecked Sendable {
             let bytes = [UInt8](line.utf8) + [0x0A]
             bytes.withUnsafeBufferPointer { buffer in
                 if let base = buffer.baseAddress {
-                    _ = write(fd, base, buffer.count)
+                    _ = Darwin.write(fd, base, buffer.count)
                 }
             }
         } else {
