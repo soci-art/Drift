@@ -22,6 +22,14 @@ struct DriftHomeView: View {
     @State private var importingPairing = false
     @State private var statusLine: String?
     @State private var confirmRespring = false
+    /// #337 (Grace, 2026-11-16): the signature notice's entry
+    /// window state — see `openEntryWindow()`.
+    @State private var signatureNotice = false
+    @State private var signatureNoticeDone = false
+    @State private var entryWindowOpen = false
+    @State private var entryWindowGeneration = 0
+    @State private var didFirstAppear = false
+    @Environment(\.scenePhase) private var scenePhase
 
     private var identity: DeviceIdentity { identityMonitor.current }
     /// The user's method pick (2.0.0: a method, never a channel).
@@ -91,6 +99,25 @@ struct DriftHomeView: View {
         KernelDirectPremise.evaluate(version: localVersion).ready
     }
 
+    /// The generations the kernel method belongs to (iOS 17 / 18),
+    /// whether or not this system sits inside its band (#338).
+    private var isKernelGeneration: Bool {
+        let major = Int(localVersion.split(separator: ".").first ?? "") ?? 0
+        return major == 17 || major == 18
+    }
+
+    /// #337's three conditions at once: the local channel is
+    /// blocked by the signature alone (system in range, no usable
+    /// storage area in the signature) and neither tunnel channel
+    /// is available either — the user has no working route, and
+    /// the signature is the one thing standing in the way.
+    private var signatureNoticeApplies: Bool {
+        InstallEnvironment.blockedBySignatureOnly(version: localVersion, build: localBuild)
+            && !judgement.options.contains {
+                ($0.mode == .direct || $0.mode == .airlift) && $0.available
+            }
+    }
+
     private var headerSubtitle: String {
         if kernelReady {
             return "内核直刷可用（本机 \(SystemVersionName.display(version: localVersion, build: localBuild))）：选择壁纸包后直接写入 PosterBoard 容器。"
@@ -100,6 +127,37 @@ struct DriftHomeView: View {
         }
         if !identity.version.isEmpty { return identity.describe }
         return "本机直刷不可用；要走两条隧道通道，请导入配对文件并打开 LocalDevVPN。"
+    }
+
+    /// #337 (Grace, 2026-11-16): every entry into the app opens a
+    /// short window in which the signature notice may present
+    /// once. The window gives the verdicts (device read, tunnel
+    /// state) a moment to settle before anything is concluded
+    /// from them, and it closes soon after entry, so a tunnel
+    /// dropping mid-session never pops the notice later.
+    private func openEntryWindow() {
+        signatureNoticeDone = false
+        entryWindowOpen = true
+        entryWindowGeneration += 1
+        let generation = entryWindowGeneration
+        Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            if generation == entryWindowGeneration {
+                presentSignatureNoticeIfNeeded()
+            }
+            try? await Task.sleep(nanoseconds: 8_500_000_000)
+            if generation == entryWindowGeneration {
+                entryWindowOpen = false
+            }
+        }
+    }
+
+    private func presentSignatureNoticeIfNeeded() {
+        guard entryWindowOpen, !signatureNoticeDone, !signatureNotice,
+              !session.running, !session.flashCover,
+              signatureNoticeApplies else { return }
+        signatureNoticeDone = true
+        signatureNotice = true
     }
 
     var body: some View {
@@ -143,7 +201,23 @@ struct DriftHomeView: View {
                     importingPairing = false
                 }
             }
-            .onAppear { AppLog.op("打开壁纸页") }
+            .driftActionSheet(isPresented: $signatureNotice,
+                              title: "本机直刷不可用",
+                              message: InstallEnvironment.noUsableGroupReason,
+                              actions: [DriftSheetAction("知道了") {}])
+            .onAppear {
+                AppLog.op("打开壁纸页")
+                if !didFirstAppear {
+                    didFirstAppear = true
+                    openEntryWindow()
+                }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { openEntryWindow() }
+            }
+            .onChange(of: signatureNoticeApplies) { _, _ in
+                presentSignatureNoticeIfNeeded()
+            }
         }
     }
 
@@ -194,6 +268,15 @@ struct DriftHomeView: View {
                 } else {
                     DriftPill(text: localReady ? "本机直刷可用" : "本机直刷不可用",
                               tint: localReady ? .green : .orange)
+                    // #338 (Grace, 2026-11-16): on iOS 17 / 18 the
+                    // card also carries the kernel method's state.
+                    // Until now it said nothing about the kernel
+                    // here, so a 17/18 user with the switch off saw
+                    // only the local and tunnel verdicts and never
+                    // learnt the kernel route existed but was off.
+                    if isKernelGeneration {
+                        DriftPill(text: "内核直刷不可用", tint: .orange)
+                    }
                 }
                 DriftPill(text: "本机 \(SystemVersionName.display(version: localVersion, build: localBuild))")
             }

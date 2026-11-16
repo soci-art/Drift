@@ -615,6 +615,13 @@ final class DriftSession: ObservableObject {
             + "iOS \(WorseQueryEscape.processVersion)，构建 \(WorseQueryEscape.processBuildVersion)，"
             + "设备读数 \(identity.describe)，包数 \(selection.tendies.count)）")
 
+        // Segment timing for the speed work (Grace, 2026-11-16):
+        // the probe segment and the round total land in the log as
+        // numbers, so the next device log shows where the time
+        // actually goes instead of leaving it to estimates. The
+        // writer already times itself.
+        let roundStarted = Date()
+        let probeStarted = Date()
         let report = await KernelDirectProbe.run(log: { line in
             DriftEngine.shared.log(line)
             if let fraction = Self.kernelProbeFraction(for: line) {
@@ -624,6 +631,9 @@ final class DriftSession: ObservableObject {
                 }
             }
         })
+        DriftEngine.shared.log(String(format: "[内核直刷] 分段计时：探针段 %.2f 秒（%@）",
+                                      Date().timeIntervalSince(probeStarted),
+                                      report.passed ? "通过" : "未通过"))
         guard report.passed,
               let containerPath = report.containerPath,
               let storePath = report.storePath else {
@@ -679,13 +689,12 @@ final class DriftSession: ObservableObject {
             }
             let verification = outcome.verification
             DriftEngine.shared.log("内核直刷写入完成：\(outcome.installedCount) 个描述符；\(verification.summary)")
-            // #319: dump the store through the same kernel session, after the
-            // write has settled and before the receipt is recorded, so the
-            // comparison lines travel with this run's log. Read-only.
-            await Self.dumpKernelStore(container: containerPath,
-                                  store: storePath,
-                                  generation: verification.structureVersion,
-                                  placedFolders: Set(outcome.placed.map(\.folderName)))
+            // The #319 post-write store dump is gone from the success
+            // path (Grace, 2026-11-16, speed work): that case is
+            // closed, and the dump walked the whole store tree on
+            // every successful run while the user waited. The
+            // failure path below still dumps — a failed write is
+            // exactly when the comparison lines earn their keep.
             // #334 (Grace, 2026-11-15): kernel writes join the receipt
             // journal like every other channel's, so the management
             // page can list and delete them later. Only the verified
@@ -725,6 +734,8 @@ final class DriftSession: ObservableObject {
             let refreshHint = opened
                 ? "已打开 PosterBoard，请在应用切换器里上滑结束它，它重新打开后就会读到新壁纸。"
                 : "请打开锁定屏幕壁纸选择器刷新 PosterBoard，再从应用切换器上滑结束它。"
+            DriftEngine.shared.log(String(format: "[内核直刷] 分段计时：本轮总耗时 %.2f 秒",
+                                          Date().timeIntervalSince(roundStarted)))
             return (true, "内核直刷已写入 \(outcome.installedCount) 个描述符，写后核验：\(verification.summary)。\(refreshHint) 也可以使用下方「注销」方式生效。")
         } catch {
             let message = error.localizedDescription
@@ -747,6 +758,8 @@ final class DriftSession: ObservableObject {
                 packFiles: selection.tendies.map { $0.url.lastPathComponent },
                 logSliceText: RunLog.shared.recordSnapshot()
             )
+            DriftEngine.shared.log(String(format: "[内核直刷] 分段计时：本轮总耗时 %.2f 秒（写入失败）",
+                                          Date().timeIntervalSince(roundStarted)))
             return (false, "内核直刷写入失败：\(message)")
         }
     }

@@ -63,7 +63,9 @@ struct DriftAboutView: View {
             }
             Text("✓ = 能用，— = 用不了。本机直刷还要证书签名带能用的组；没有能用的组，本机直刷这一列就全是 —。")
                 .font(.caption).foregroundStyle(.secondary)
-            Text("内核直刷是实验功能，要先在「设置 → 实验性功能」里打开；只支持 iOS 17.0–17.7 和 iOS 18.0–18.7.1，机型也要在支持表里。")
+            Text("iOS 18.7.2 起，内核直刷用不了，只能走两条隧道通道。")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("内核直刷是实验功能，要先在「设置 → 实验性功能」里打开；只支持 iOS 17.0–17.7.x 和 iOS 18.0–18.7.1，机型也要在支持表里。")
                 .font(.caption).foregroundStyle(.secondary)
             Text("刷完怎么生效：免注销直刷直接生效；注销直刷要注销一次；本机直刷、内核直刷要把壁纸界面从后台划掉。")
                 .font(.caption).foregroundStyle(.secondary)
@@ -96,9 +98,14 @@ struct DriftAboutView: View {
         // even though the offset table would reach; 18.7.2+ keeps
         // only its tunnel ticks. The model table stays in the
         // footnote under the table.
-        TableRow(version: "iOS 17.0 – 17.7", noRespring: false, respring: false, local: false, kernel: true),
+        // Finer wording (Grace, 2026-11-16): no vague 「18.x」 —
+        // the 17 row spells its patch tail (the whole iOS 17 line
+        // ends inside 17.7.x) and the post-gate 18 row reads
+        // 「18.7.2 起」, with a footnote under the table saying
+        // outright that the kernel method is closed there.
+        TableRow(version: "iOS 17.0 – 17.7.x", noRespring: false, respring: false, local: false, kernel: true),
         TableRow(version: "iOS 18.0 – 18.7.1", noRespring: true, respring: true, local: false, kernel: true),
-        TableRow(version: "iOS 18.7.2 – 18.x", noRespring: true, respring: true, local: false, kernel: false),
+        TableRow(version: "iOS 18.7.2 起", noRespring: true, respring: true, local: false, kernel: false),
         TableRow(version: "iOS 26.0 – 26.1 正式版", noRespring: false, respring: false, local: true),
         TableRow(version: "iOS 26.2 – 27.1 正式版", noRespring: true, respring: true, local: true),
         TableRow(version: "iOS 27.2 beta 1 / beta 2", noRespring: true, respring: true, local: true),

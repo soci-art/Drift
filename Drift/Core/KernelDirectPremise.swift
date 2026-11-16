@@ -33,19 +33,29 @@ enum KernelDirectPremise {
     struct Evaluation {
         let inBand: Bool
         let chipCovered: Bool
+        /// The system is one of the kernel generations (iOS 17 / 18)
+        /// but past the top of the band — iOS 18.7.2 and later. The
+        /// reason then names the top of the band instead of the
+        /// generations (Grace, 2026-11-16: the coarse 「只支持
+        /// iOS 17 / 18」 told an 18.7.7 user nothing about where
+        /// they stand).
+        var pastBandTop: Bool = false
         /// Both gates passed: the method may be offered as usable.
         var ready: Bool { inBand && chipCovered }
         /// Why not, in one user-facing line (empty when ready).
         var reason: String {
-            if !inBand { return "只支持 iOS 17 / 18" }
+            if !inBand { return pastBandTop ? "只支持到 iOS 18.7.1" : "只支持 iOS 17 / 18" }
             if !chipCovered { return "这台机型不在支持表里" }
             return ""
         }
     }
 
     static func evaluate(version: String) -> Evaluation {
-        Evaluation(inBand: isInBand(version: version),
-                   chipCovered: isChipCovered(model: modelIdentifier))
+        let band = isInBand(version: version)
+        let major = Int(version.split(separator: ".").first ?? "") ?? 0
+        return Evaluation(inBand: band,
+                          chipCovered: isChipCovered(model: modelIdentifier),
+                          pastBandTop: !band && (major == 17 || major == 18))
     }
 
     /// iOS 17.0–17.7.x and 18.0–18.7.1.
