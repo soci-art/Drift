@@ -19,6 +19,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7.0.1
 
+      # The probe / preview / release steps below key off marker words in
+      # the commit message. Only the subject (first line) counts: a marker
+      # mentioned in the body is prose, not an instruction. (Commit
+      # b2021ae described this very flow in its body and so triggered all
+      # three steps; the release step then failed on a notes file that
+      # never existed on main.) Every gate reads these outputs instead of
+      # scanning the full message.
+      - name: Parse commit-subject markers
+        id: markers
+        shell: bash
+        env:
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          subject="$(printf '%s' "$HEAD_MESSAGE" | head -n 1)"
+          probe=false
+          preview=false
+          release=false
+          case "$subject" in *'[probe]'*) probe=true ;; esac
+          case "$subject" in *'[preview]'*) preview=true ;; esac
+          case "$subject" in *'[release]'*) release=true ;; esac
+          {
+            echo "probe=$probe"
+            echo "preview=$preview"
+            echo "release=$release"
+          } >> "$GITHUB_OUTPUT"
+          echo "subject markers: probe=$probe preview=$preview release=$release"
+
       - name: Cache Rust dependencies and build
         uses: actions/cache@v4
         with:
@@ -95,7 +122,7 @@ jobs:
         env:
           # A [probe] commit compiles the temporary enumeration button in.
           # Ordinary pushes leave the flag empty, so the button is absent.
-          PROBE_BUILD: ${{ contains(github.event.head_commit.message, '[probe]') && '1' || '0' }}
+          PROBE_BUILD: ${{ steps.markers.outputs.probe == 'true' && '1' || '0' }}
         run: |
           set -o pipefail
           # GitHub runs bash with -e; the build is expected to fail on the
@@ -148,8 +175,8 @@ jobs:
         if: >-
           github.event_name == 'push' &&
           github.ref == 'refs/heads/main' &&
-          (contains(github.event.head_commit.message, '[probe]') ||
-           contains(github.event.head_commit.message, '[preview]'))
+          (steps.markers.outputs.probe == 'true' ||
+           steps.markers.outputs.preview == 'true')
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -215,7 +242,7 @@ jobs:
         if: >-
           github.event_name == 'push' &&
           github.ref == 'refs/heads/main' &&
-          contains(github.event.head_commit.message, '[release]')
+          steps.markers.outputs.release == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
