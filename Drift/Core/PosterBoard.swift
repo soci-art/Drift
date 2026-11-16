@@ -80,7 +80,11 @@ enum PosterBoard {
     static func descriptorsParentPath(container: String,
                                       structureVersion: Int,
                                       extensionID: String) -> String {
-        container + "Library/Application Support/" + storeDirectoryName
+        // Callers may preserve the kernel probe's exact container spelling,
+        // which intentionally has no trailing slash. Normalize at this shared
+        // boundary so every write route targets the real PosterBoard store.
+        let normalizedContainer = container.hasSuffix("/") ? container : container + "/"
+        return normalizedContainer + "Library/Application Support/" + storeDirectoryName
             + "/\(structureVersion)/Extensions/\(extensionID)/descriptors"
     }
 

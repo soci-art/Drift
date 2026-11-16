@@ -301,7 +301,7 @@ struct DriftSettingsView: View {
                     }
                 }
             }
-            Text("组名在运行时从安装包内嵌的签名描述文件读取。能用的组只有证书签名才带：免费 ID 签和 SideStore / AltStore 都用不了本机直刷。")
+            Text("组名在运行时从安装包内嵌的签名描述文件读取。能用的组只有证书签名才带，免费 ID 签的用不了本机直刷。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

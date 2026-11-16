@@ -52,6 +52,16 @@ enum PosterBoardEffectKind: String, Sendable {
     case closePosterBoard
     /// The write was followed by a respring (注销直刷).
     case respring
+
+    /// The short text the apply history stores and the settings list shows.
+    var historyLabel: String {
+        switch self {
+        case .noRespring: return "免注销"
+        case .manualRespring: return "写入后手动注销"
+        case .closePosterBoard: return "写入后关闭 PosterBoard"
+        case .respring: return "注销"
+        }
+    }
 }
 
 struct PosterBoardEffect: Equatable, Sendable {
@@ -65,14 +75,7 @@ struct PosterBoardEffect: Equatable, Sendable {
     var needsManualRespring: Bool { kind == .manualRespring }
 
     /// The short text the apply history stores and the settings list shows.
-    var historyLabel: String {
-        switch kind {
-        case .noRespring: return "免注销"
-        case .manualRespring: return "写入后手动注销"
-        case .closePosterBoard: return "写入后关闭 PosterBoard"
-        case .respring: return "注销"
-        }
-    }
+    var historyLabel: String { kind.historyLabel }
 }
 
 /// What one finished local write produced: the store read-back and the effect
@@ -94,7 +97,7 @@ enum PosterBoardLocal {
     /// `/private/var` rather than `/var`: that is the canonical path
     /// containermanagerd and `fsgetpath` report, and the escape's link target
     /// has to be the path the kernel will resolve.
-    private static let applicationsRoot = "/private/var/mobile/Containers/Data/Application"
+    private static let applicationsRoot = PosterBoardContainerLocator.applicationsRoot
 
     /// The same root the normal path enumerates, exposed only to the
     /// probe build's timing page.
@@ -601,11 +604,6 @@ enum PosterBoardLocal {
     private static var prewarmResultPending = false
     private static var prewarmStarted = false
 
-    /// Cold-location enumeration is split into contiguous inode ranges so a
-    /// hit near the front stops the rest of the scan. 200k is a starting
-    /// point chosen for device measurement, not a tuning claim.
-    private static let leakSegmentSize: UInt64 = 200_000
-
     private static func millis(since start: DispatchTime) -> Double {
         Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
     }
@@ -727,48 +725,33 @@ enum PosterBoardLocal {
             log("已知容器路径核对失败：商店目录不存在或不是目录（已知路径本应正确，此行诊断价值最高）")
         }
 
-        // 2. pathleak: walk contiguous inode ranges and probe each range as
-        // soon as it finishes. A hit near the front stops the rest of the walk.
-        let leakStart = DispatchTime.now()
+        // 2. Shared pathleak scan: same segmented inode discovery as 内核直刷.
+        // 本机直刷's validator consumes the candidate and checks the store;
+        // refused paths are retried serially after the full scan, as before.
         var refusedCandidates: [String] = []
-        if let limit = WorseQueryEscape.pathleakScanLimit() {
-            defer { limit.cleanup() }
-            let maxInode = limit.maxInode
-            var scanned: UInt64 = 0
-            var segments = 0
-            var candidates = 0
-            var enumerationMs: Double = 0
-
-            while scanned < maxInode {
-                let start = scanned + 1
-                let end = scanned + min(leakSegmentSize, maxInode - scanned)
-                let segmentStarted = DispatchTime.now()
-                let leaked = WorseQueryEscape.leakedChildren(in: applicationsRoot,
-                                                             from: start, to: end)
-                enumerationMs += millis(since: segmentStarted)
-                scanned = end
-                segments += 1
-                candidates += leaked.count
-                log("pathleak 段 \(segments)：inode \(start)–\(end)，本段 \(leaked.count) 个候选，累计 \(candidates) 个")
-
-                if let path = tryConsumePosterBoard(among: leaked,
-                                                    label: "pathleak 第 \(segments) 段",
-                                                    deferredRefused: &refusedCandidates,
-                                                    log: log) {
-                    let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
-                    cachedContainer = path
-                    log(String(format: "pathleak 命中：停在第 %d 段，实际扫过 %llu/%llu 个 inode，枚举耗时 %.0f ms",
-                               segments, scanned, maxInode, enumerationMs))
-                    log(String(format: "PosterBoard container resolved by pathleak: %@（handle %lld，总定位 %.0f ms）",
-                               path, handle, millis(since: locateStart)))
-                    return (path, handle)
-                }
-            }
-
+        let pathleak = PosterBoardContainerLocator.scanPathleak(
+            deadline: .distantFuture,
+            log: log
+        ) { leaked, segment in
+            tryConsumePosterBoard(among: leaked,
+                                  label: "pathleak 第 \(segment) 段",
+                                  deferredRefused: &refusedCandidates,
+                                  log: log)
+        }
+        if let path = pathleak.foundPath {
+            let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
+            cachedContainer = path
+            log(String(format: "pathleak 命中：停在第 %d 段，实际扫过 %llu/%llu 个 inode，枚举耗时 %.0f ms",
+                       pathleak.segments, pathleak.scannedInodes,
+                       pathleak.maxInode, pathleak.enumerationMilliseconds))
+            log(String(format: "PosterBoard container resolved by pathleak: %@（handle %lld，总定位 %.0f ms）",
+                       path, handle, millis(since: locateStart)))
+            return (path, handle)
+        }
+        if pathleak.available {
             log(String(format: "pathleak：在 %@ 下扫描 %llu 个 inode（%d 段），累计 %d 个路径（枚举耗时 %.0f ms）",
-                       applicationsRoot, maxInode, segments, candidates, enumerationMs))
-        } else {
-            log("pathleak：无法建立 inode 上限临时文件")
+                       applicationsRoot, pathleak.scannedInodes, pathleak.segments,
+                       pathleak.candidates, pathleak.enumerationMilliseconds))
         }
 
         // A refused candidate is not proof that it is not PosterBoard. Finish

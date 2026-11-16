@@ -4,7 +4,7 @@ import SwiftUI
 /// three pages share one skeleton — status banner, 需要什么, 怎么刷,
 /// 刷完怎么生效, 常见问题 — and differ only in their copy and in how the
 /// wallpaper takes effect. The wording is the set Grace approved page by
-/// page: plain words, no 改签 anywhere (#232), every page teaches where
+/// page: plain words only (#232), every page teaches where
 /// the flashed wallpaper gets picked (#233), and the local page follows
 /// the real flow — after a flash the app brings the wallpaper interface
 /// to the front by itself (#235), then teaches the app-switcher flick
@@ -95,7 +95,7 @@ struct DriftTutorialChannelView: View {
             ]
         case .kernel:
             return [
-                "先在「设置 → 实验性功能」里打开「内核直刷」开关（打开之后，主页的刷入方式里才会出现这一项）",
+                "先在「设置 → 实验性功能」里打开「内核直刷」开关（主页里能看到这一项，但不开开关刷不了，选了会先提醒你去打开）",
                 "系统在 iOS 17.0 到 iOS 18.7.1 之间",
                 "不用配对、不用隧道，也不用连 Wi-Fi",
                 "签名不限：哪种签名装的都行",
@@ -155,8 +155,8 @@ struct DriftTutorialChannelView: View {
             ]
         case .kernel:
             return [
-                ("在刷入方式里找不到「内核直刷」？",
-                 "先去「设置 → 实验性功能」里把「内核直刷」打开，主页的刷入方式里才会出现这一项。"),
+                ("选了「内核直刷」却刷不了？",
+                 "多半是还没打开：先去「设置 → 实验性功能」里把「内核直刷」打开，再回来刷。"),
                 ("提示用不了？",
                  "这个方式只支持 iOS 17 / 18：系统不在这个范围用不了，机型不在支持表里也用不了。"),
                 ("刷完了，壁纸没变？",

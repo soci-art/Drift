@@ -17,6 +17,46 @@ import UniformTypeIdentifiers
 ///     detail page — where the wallpaper lands, legacy handling, and
 ///     删除 / 壁纸修复 / 深度修复 — acting on the selected packs (#268);
 ///   * importing is the blue filled circle at the top right (#281).
+/// The five seats of the 刷完出现在哪里 picker (Grace, 2026-11-15):
+/// 自动 — the pack's own detected kind — plus the four kinds, each
+/// labelled with exactly two characters.
+private enum PackTypeChoice: String, CaseIterable, Identifiable {
+    case auto, collections, suggestedPhotos, mercury, container
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .auto: return "自动"
+        case .collections: return PosterBoardPosterType.collections.shortLabel
+        case .suggestedPhotos: return PosterBoardPosterType.suggestedPhotos.shortLabel
+        case .mercury: return PosterBoardPosterType.mercury.shortLabel
+        case .container: return PosterBoardPosterType.container.shortLabel
+        }
+    }
+
+    /// The kind a seat forces; 自动 forces nothing.
+    var specific: PosterBoardPosterType? {
+        switch self {
+        case .auto: return nil
+        case .collections: return .collections
+        case .suggestedPhotos: return .suggestedPhotos
+        case .mercury: return .mercury
+        case .container: return .container
+        }
+    }
+
+    static func of(_ pack: PosterBoardTendie) -> PackTypeChoice {
+        guard pack.isTypeManual else { return .auto }
+        switch pack.posterType {
+        case .collections: return .collections
+        case .suggestedPhotos: return .suggestedPhotos
+        case .mercury: return .mercury
+        case .container: return .container
+        }
+    }
+}
+
 struct PackListView: View {
     @Binding var imports: [PosterBoardTendie]
     @Binding var selection: PosterBoardSelection
@@ -27,6 +67,7 @@ struct PackListView: View {
     @State private var legacyPrompt: LegacyConvertPrompt?
     @State private var confirmDelete = false
     @State private var repairSummary: RepairSummary?
+    @State private var depthNote: String?
     @State private var deepRepairTarget: PosterBoardTendie?
     @State private var previewPack: PosterBoardTendie?
     @State private var legacyURLs: Set<URL> = []
@@ -126,7 +167,10 @@ struct PackListView: View {
                 repairingCover
             }
         }
-        .task(id: selectionKey) { await refreshLegacyInfo() }
+        .task(id: selectionKey) {
+            await refreshLegacyInfo()
+            await refreshDepthNote()
+        }
         // Warm the legacy-family memo off the main thread (cleanup
         // round, 2026-11-13): the first tap on a pack used to open its
         // archive synchronously in `toggle`, and the selection refresh
@@ -193,15 +237,22 @@ struct PackListView: View {
                     Text("已选 \(selectedPacks.count) 个").font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Picker("刷完出现在哪里", selection: posterTypeBinding) {
-                ForEach(PosterBoardPosterType.allCases) { type in
-                    Text(type.label).tag(type)
+            Picker("刷完出现在哪里", selection: typeChoiceBinding) {
+                ForEach(PackTypeChoice.allCases) { choice in
+                    Text(choice.label).tag(choice)
                 }
             }
             .pickerStyle(.segmented)
             .disabled(selectedPacks.isEmpty)
             if let first = selectedPacks.first {
-                Text(first.posterType.blurb)
+                Text(first.isTypeManual
+                     ? first.posterType.blurb
+                     : "自动判断为「\(first.detectedPosterType.shortLabel)」。"
+                        + first.posterType.blurb)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let depthNote {
+                Text(depthNote)
                     .font(.caption).foregroundStyle(.secondary)
             }
             if !legacyURLs.isEmpty && needsConversionUI {
@@ -339,6 +390,27 @@ struct PackListView: View {
         legacyURLs = found
     }
 
+    /// The pre-repair word on the depth configuration: it used to be
+    /// fixed silently (log only), so a selected pack that lacks it
+    /// says so here, before 壁纸修复 is even tapped. Same version
+    /// resolution and the same inspect the repair itself will run.
+    private func refreshDepthNote() async {
+        depthNote = nil
+        let targets = selectedPacks
+        guard !targets.isEmpty else { return }
+        let version = identity.version.isEmpty
+            ? WorseQueryEscape.processVersion : identity.version
+        let names = await Task.detached {
+            targets.filter {
+                PackRepair.inspect($0, deviceVersion: version).contains(.depthConfig)
+            }.map(\.name)
+        }.value
+        // The selection may have moved on while the packs were read.
+        guard Set(targets.map(\.url)) == Set(selectedPacks.map(\.url)) else { return }
+        depthNote = names.isEmpty ? nil
+            : "其中 \(names.joined(separator: "、")) 缺景深配置，点「壁纸修复」时会一并补上。"
+    }
+
     /// The device's major version, or nil while identity is unread —
     /// the conversion UI shows unless the device is known to be on
     /// iOS 26, the one supported system that never converts.
@@ -355,12 +427,17 @@ struct PackListView: View {
         return major >= 27
     }
 
-    private var posterTypeBinding: Binding<PosterBoardPosterType> {
+    private var typeChoiceBinding: Binding<PackTypeChoice> {
         Binding(
-            get: { selectedPacks.first?.posterType ?? .defaultForContainer(false) },
-            set: { type in
-                for pack in selectedPacks { setType(type, on: pack) }
-                AppLog.op("壁纸包页：把 \(selectedPacks.count) 个包的出现位置改成\(type.label)")
+            get: { selectedPacks.first.map(PackTypeChoice.of) ?? .auto },
+            set: { choice in
+                if let specific = choice.specific {
+                    for pack in selectedPacks { setType(specific, on: pack) }
+                    AppLog.op("壁纸包页：把 \(selectedPacks.count) 个包的出现位置改成\(specific.label)")
+                } else {
+                    for pack in selectedPacks { setAutoType(on: pack) }
+                    AppLog.op("壁纸包页：把 \(selectedPacks.count) 个包的出现位置改回自动判断")
+                }
             })
     }
 
@@ -413,6 +490,16 @@ struct PackListView: View {
         }
     }
 
+    private func setAutoType(on pack: PosterBoardTendie) {
+        let updated = pack.settingAutoType()
+        if let index = imports.firstIndex(where: { $0.url == updated.url }) {
+            imports[index] = updated
+        }
+        if let index = selection.tendies.firstIndex(where: { $0.url == updated.url }) {
+            selection.tendies[index] = updated
+        }
+    }
+
     private func setConvert(_ convert: Bool, on pack: PosterBoardTendie) {
         let updated = pack.settingAutoConvert(convert)
         if let index = imports.firstIndex(where: { $0.url == updated.url }) {
@@ -457,9 +544,10 @@ struct PackListView: View {
         Task {
             defer { session.cover = nil; session.coverProgress = nil }
             var repairedNames: [String] = []
+            var depthNames: [String] = []
             var noNeed = 0
             for (index, target) in targets.enumerated() {
-                let issues = PackRepair.inspect(target)
+                let issues = PackRepair.inspect(target, deviceVersion: version)
                 if issues.isEmpty {
                     noNeed += 1
                     continue
@@ -475,14 +563,21 @@ struct PackListView: View {
                         imports.append(repaired)
                     }
                     repairedNames.append(repaired.name)
+                    if issues.contains(.depthConfig) {
+                        depthNames.append(repaired.name)
+                    }
                 } catch {
                     session.errorText = error.localizedDescription
                 }
             }
             if !repairedNames.isEmpty {
+                var message = "修好的包已放进列表，就在原包下面：\(repairedNames.joined(separator: "、"))。"
+                if !depthNames.isEmpty {
+                    message += "其中 \(depthNames.joined(separator: "、")) 还补了景深配置，开着景深时锁屏时间不会再被浮动层盖住。"
+                }
                 repairSummary = RepairSummary(
                     title: "修好了",
-                    message: "修好的包已放进列表，就在原包下面：\(repairedNames.joined(separator: "、"))。")
+                    message: message)
             } else if noNeed == targets.count {
                 repairSummary = RepairSummary(
                     title: "壁纸修复",
@@ -572,7 +667,9 @@ private struct PackListRow: View {
                 Text(pack.url.lastPathComponent).font(.subheadline.weight(.medium)).lineLimit(2)
                 HStack(spacing: 6) {
                     DriftPill(text: "\(pack.descriptorCount) 张")
-                    DriftPill(text: pack.posterType.label)
+                    DriftPill(text: pack.isTypeManual
+                              ? pack.posterType.shortLabel
+                              : "\(pack.posterType.shortLabel) · 自动判断")
                     if kind == .repaired {
                         DriftPill(text: "修复版", tint: .blue)
                     }
@@ -628,7 +725,9 @@ private struct PackCoverPreview: View {
                     .multilineTextAlignment(.center)
                 HStack(spacing: 6) {
                     DriftPill(text: "\(pack.descriptorCount) 张")
-                    DriftPill(text: pack.posterType.label)
+                    DriftPill(text: pack.isTypeManual
+                              ? pack.posterType.shortLabel
+                              : "\(pack.posterType.shortLabel) · 自动判断")
                     if PackDeepRepair.isDeepRepaired(pack) {
                         DriftPill(text: "深度修复版", tint: .blue)
                     } else if PackRepair.isRepaired(pack) {

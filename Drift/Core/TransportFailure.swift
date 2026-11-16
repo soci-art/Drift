@@ -288,9 +288,9 @@ enum TransportFailure: Error, LocalizedError {
             // per-port sender when the connection is torn down, so a DEVICE-SIDE
             // close and a local pump failure look identical here.  It therefore
             // cannot be read as "the device refused us".
-            return "\(label)把通道弄断了：\(raw)。\"channel closed\" 是 jktcp 对连接关闭的通用"
+            return "\(label)把通道弄断了：\(raw)。\"channel closed\" 是通道层对连接关闭的通用"
                 + "报告——它区分不了是设备端拆的还是本地协议栈出的故障。"
-                + "真正的出错步骤见 minimuxer.log（Rust，DEBUG）。"
+                + "真正的出错步骤见日志。"
 
         case .deviceRejected(let label, let raw):
             return "设备拒绝了\(label)：\(raw)。这是校验层面的答复，不是通道断开，"

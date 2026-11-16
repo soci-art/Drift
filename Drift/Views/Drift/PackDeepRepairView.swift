@@ -14,6 +14,16 @@ struct PackDeepRepairView: View {
     let onDone: (PosterBoardTendie) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var identityMonitor: DeviceIdentityMonitor
+    private var identity: DeviceIdentity { identityMonitor.current }
+    /// The target device's version, resolved exactly as the pack
+    /// list's repair run resolves it: the tunnel identity when there
+    /// is one, the phone's own version otherwise (kernel users on
+    /// iOS 17/18 never pair, so for them the identity is empty and
+    /// the phone's own version is the only truth there is).
+    private var deviceVersion: String {
+        identity.version.isEmpty ? WorseQueryEscape.processVersion : identity.version
+    }
     @State private var report: PackDeepRepair.Report?
     /// The held stock-take: its extracted tree is what the run below
     /// works on, instead of unpacking the pack a second time.
@@ -44,8 +54,9 @@ struct PackDeepRepairView: View {
         }
         .task {
             let canvas = PackDeepRepair.Canvas.current
+            let version = deviceVersion
             let opened = await Task.detached {
-                await PackDeepRepair.openSession(pack, canvas: canvas)
+                await PackDeepRepair.openSession(pack, canvas: canvas, deviceVersion: version)
             }.value
             session = opened
             report = opened.report
@@ -138,6 +149,12 @@ struct PackDeepRepairView: View {
             }
             .padding(.top, 4)
         }
+        if !report.notes.isEmpty {
+            ForEach(report.notes, id: \.self) { line in
+                Label(line, systemImage: "info.circle")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+        }
     }
 
     private func run() {
@@ -145,6 +162,7 @@ struct PackDeepRepairView: View {
         progress = 0
         failure = nil
         let canvas = PackDeepRepair.Canvas.current
+        let version = deviceVersion
         let target = pack
         let held = session
         session = nil
@@ -163,7 +181,8 @@ struct PackDeepRepairView: View {
                             throw error
                         }
                     }
-                    return try await PackDeepRepair.repair(target, canvas: canvas) { phase in
+                    return try await PackDeepRepair.repair(target, canvas: canvas,
+                                                           deviceVersion: version) { phase in
                         Task { @MainActor in progress = phase }
                     }
                 }.value

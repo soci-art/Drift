@@ -26,6 +26,10 @@ struct DriftHomeView: View {
     private var identity: DeviceIdentity { identityMonitor.current }
     /// The user's method pick (2.0.0: a method, never a channel).
     private var manualPick: DriftMethodPick {
+        // The stored pick stands as-is (Grace, 2026-11-15): the
+        // kernel row is always shown and selectable, and the judge
+        // answers a kernel pick whose switch is off with a
+        // go-turn-it-on reminder — the pick is never rewritten.
         DriftMethodPick.fromStored(manualPickRaw)
     }
     /// The local channel's premise: the app's own system only. It never
@@ -40,29 +44,56 @@ struct DriftHomeView: View {
         DriftJudge.judge(identity: identity, selection: selection, pick: manualPick,
                          tunnelReady: tunnelReady)
     }
-    /// The method rows to draw: every pick, plus 内核直刷 only while
-    /// its 实验性功能 switch is on (#329).
+    /// The method rows to draw: every pick, always — 内核直刷
+    /// included (Grace, 2026-11-15, replacing the #329
+    /// hide-while-off rule). Supported devices show it 可用 and
+    /// can pick it with the switch on or off; the switch is
+    /// enforced at the flash tap, with a reminder.
     private var visiblePicks: [DriftMethodPick] {
-        DriftMethodPick.allCases.filter { $0 != .kernel || kernelEnabled }
+        DriftMethodPick.allCases
     }
     private var selectedDescriptors: Int { selection.tendies.reduce(0) { $0 + $1.descriptorCount } }
     private var overLimit: Bool { selectedDescriptors > PosterBoardImports.descriptorLimit }
     private var canApply: Bool {
+        // Kernel Direct writes the selected descriptor packs directly into
+        // PosterBoard's container; no pairing or tunnel is required. On a
+        // supported device the button stays tappable even while the
+        // 实验性功能 switch is off — the tap then answers with the
+        // go-turn-it-on reminder (Grace, 2026-11-15). An unsupported
+        // device cannot tap it at all.
+        if manualPick == .kernel {
+            return kernelPremiseReady && !selection.tendies.isEmpty && !overLimit
+                && selection.video == nil && !selection.fullReset
+                && selection.resetModes.isEmpty && !session.running
+        }
+        // 自动选择 blocked only by the kernel switch: same deal — the
+        // tap must reach the reminder.
+        if judgement.kernelNeedsSwitch {
+            return !selection.tendies.isEmpty && !overLimit && !session.running
+        }
         // The in-process route is the one path that does not need a pairing
         // record; every other mode still does.
-        (session.paired || judgement.mode == .worseQuery)
+        return (session.paired || judgement.mode == .worseQuery)
             && !selection.tendies.isEmpty && !overLimit && !session.running
     }
     /// The kernel channel's premise, judged on this device alone.
     /// Ready only when the user turned it on in 实验性功能 and this
     /// device is in its band and offset table (#319/#329).
     private var kernelReady: Bool {
-        kernelEnabled && KernelDirectPremise.evaluate(version: localVersion).ready
+        kernelEnabled && kernelPremiseReady
+    }
+
+    /// Supported-or-not, device only: iOS 17 / 18 band and the model
+    /// in the offset table. The switch is not part of this — a
+    /// supported device shows 可用 and can be picked either way
+    /// (Grace, 2026-11-15).
+    private var kernelPremiseReady: Bool {
+        KernelDirectPremise.evaluate(version: localVersion).ready
     }
 
     private var headerSubtitle: String {
         if kernelReady {
-            return "内核直刷可用（本机 \(SystemVersionName.display(version: localVersion, build: localBuild))）：现在就能刷，不用配对，也不用开隧道。"
+            return "内核直刷可用（本机 \(SystemVersionName.display(version: localVersion, build: localBuild))）：选择壁纸包后直接写入 PosterBoard 容器。"
         }
         if localReady {
             return "本机直刷可用（本机 \(SystemVersionName.display(version: localVersion, build: localBuild))）：现在就能刷，不用配对，也不用开隧道。"
@@ -242,7 +273,11 @@ struct DriftHomeView: View {
         // availability is its own premise, judged on this device.
         let kernelEval = pick == .kernel
             ? KernelDirectPremise.evaluate(version: localVersion) : nil
-        let available = pick == .auto ? !judged.isBlocked
+        // The kernel row's 可用 is about the device alone (Grace,
+        // 2026-11-15): supported shows 可用 whether or not the
+        // 实验性功能 switch is on; the switch only bites at the
+        // flash tap, as a reminder.
+        let available = pick == .auto ? (!judged.isBlocked || judged.kernelNeedsSwitch)
             : (kernelEval?.ready ?? (option?.available ?? false))
         // Sealed (collection #142): the version is in range but this
         // install's signing grants no usable App Group — the row stays
@@ -251,9 +286,13 @@ struct DriftHomeView: View {
         let sealed = pick != .auto && (option?.sealed ?? false)
         let status: String
         if pick == .auto {
-            status = judged.isBlocked ? "不可用" : "→ \(judged.mode.shortTitle)"
+            status = judged.kernelNeedsSwitch ? "→ 内核直刷（实验）"
+                : (judged.isBlocked ? "不可用"
+                    : (judged.useKernel ? "→ 内核直刷（实验）" : "→ \(judged.mode.shortTitle)"))
         } else if sealed {
             status = "不可选"
+        } else if pick == .kernel {
+            status = available ? "可用" : "不支持"
         } else {
             status = available ? "可用" : "不可用"
         }
@@ -450,7 +489,9 @@ struct DriftHomeView: View {
                 }
                 .driftGlassButton()
             }
-            if judgement.mode == .worseQuery {
+            if manualPick == .kernel || judgement.useKernel {
+                NativeNote("内核直刷会把已选壁纸描述文件写入 PosterBoard 容器并逐项核验；写入后会打开 PosterBoard，可上滑结束它，也可使用下方「注销」方式生效。")
+            } else if judgement.mode == .worseQuery {
                 NativeNote("本机直刷在本机写入，不需要配对文件，也不用开隧道。刷完先打开 PosterBoard 刷新集合，再从应用切换器上滑关闭它，系统重新拉起后壁纸生效。App 不会自动注销。")
             } else if !session.paired {
                 NativeNote("两条隧道通道都需要先导入配对文件；本机直刷不需要，但只有证书签名才能用。")
@@ -477,11 +518,11 @@ struct DriftHomeView: View {
             // difference and all four line up.
             homeBarButton(icon: "arrow.triangle.2.circlepath",
                           title: "结束 PosterBoard",
-                          disabled: !localReady) {
+                          disabled: !(localReady || ((manualPick == .kernel || judgement.useKernel) && kernelReady))) {
                 openPosterBoard()
             }
             .padding(.horizontal, -4)
-            if !localReady {
+            if !localReady && !((manualPick == .kernel || judgement.useKernel) && kernelReady) {
                 Text(InstallEnvironment.localReason(version: localVersion,
                                                     build: localBuild))
                     .font(.caption).foregroundStyle(.secondary)
@@ -511,7 +552,11 @@ struct DriftHomeView: View {
                 Text("正在刷入，刷完再注销。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            NativeNote("隧道通道（免注销 / 注销直刷）刷完会自动处理生效，不用在这里操作。")
+            if manualPick == .kernel || judgement.useKernel {
+                NativeNote("内核直刷写完后，用这两种办法生效：上滑结束 PosterBoard，或者注销。")
+            } else {
+                NativeNote("隧道通道（免注销 / 注销直刷）刷完会自动处理生效，不用在这里操作。")
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
@@ -547,12 +592,53 @@ struct DriftHomeView: View {
         // but a blocked selection must never even be shaped into one.)
         if judgement.isBlocked {
             session.flashCover = false
-            session.errorText = judgement.blockedReason
+            // Blocked only by the kernel switch (Grace, 2026-11-15):
+            // this tap is the reminder moment — a notice pointing at
+            // 实验性功能, not an error.
+            if judgement.kernelNeedsSwitch {
+                session.noticeTitle = "内核直刷还没有打开"
+                session.noticeText = "请先到「设置 → 实验性功能」里打开内核直刷，再回来刷入。"
+            } else {
+                session.errorText = judgement.blockedReason
+            }
             return
         }
         var runSelection = selection
         runSelection.resetModes = []
         runSelection.fullReset = false
+        // Kernel Direct has its own on-device write flow. It verifies the
+        // real PosterBoard container first, then writes the selected packs;
+        // no channel mode, pairing record or tunnel is involved. Dispatch
+        // follows the judgement alone, never the raw stored pick: a kernel
+        // pick with its 实验性功能 switch off judges as blocked (the
+        // reminder above) and never reaches this point (Grace, 2026-11-15).
+        if judgement.useKernel {
+            Task {
+                defer { session.flashCover = false }
+                // Re-judge on the state as it is now, like every other
+                // channel's run below: the card's answer is not the run's
+                // answer if the switch or the premises moved in between.
+                let fresh = DriftJudge.judge(identity: identity, selection: selection,
+                                             pick: manualPick, tunnelReady: tunnelReady)
+                if fresh.isBlocked {
+                    session.errorText = fresh.blockedReason
+                    return
+                }
+                guard fresh.useKernel else {
+                    session.errorText = "刷入方式的判定刚刚变了，这次没有刷入。请再点一次「刷入」。"
+                    return
+                }
+                let outcome = await session.runKernelApply(identity: identity,
+                                                            selection: selection)
+                if outcome.ok {
+                    statusLine = outcome.message
+                } else {
+                    statusLine = nil
+                    session.errorText = outcome.message
+                }
+            }
+            return
+        }
         Task {
             defer { session.flashCover = false }
             // Collection #228: judge once on the state already on

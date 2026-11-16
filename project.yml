@@ -96,6 +96,11 @@ packages:
   # the vendored golden-nugget stack under Vendor/.
   WorseQuery:
     path: WorseQuery
+  # The iOS 17/18 kernel chain for 内核直刷 (#319), taken from
+  # QuinnTang74/3106. Same shape as WorseQuery: a local, self-contained
+  # Objective-C package (GPL-3.0, compatible with this app's AGPL-3.0).
+  KernelDirect:
+    path: KernelDirect
 
 settings:
   base:
@@ -138,13 +143,13 @@ settings:
     # is the next formal release; its first build is 48. (Shipped
     # briefly as 3.0.16, renamed to 3.1.0 the same day at Grace's
     # word — a major update earns a major number.)
-    CURRENT_PROJECT_VERSION: 58
+    CURRENT_PROJECT_VERSION: 82
     # 3.0.0 is the four-method refactor: three independent channels (本机直刷 /
     # 免注销直刷 / 注销直刷) with their own write and effect flows, the
-    # 3106-style transactional local installer with receipts, and the sealed
+    # transactional local installer with receipts, and the sealed
     # restore route. The CI release step reads MARKETING_VERSION, so the tag,
     # the release notes and the built IPA stay in step.
-    MARKETING_VERSION: 3.2.5
+    MARKETING_VERSION: 3.2.6
     # The app icon is an Icon Composer document (`Assets.xcassets/AppIcon.icon`),
     # not loose PNGs: it layers one glass image over an `automatic-gradient`
     # fill, and actool expands that into the light/dark/tintable renditions the
@@ -253,6 +258,12 @@ targets:
       # there is no framework to embed or re-sign.
       - package: WorseQuery
         product: WorseQuery
+      # Same C-module rule again: `import KernelDirect` needs this line as
+      # well as the one in Package.swift.
+      - package: KernelDirect
+        product: KernelDirect
+      # The kernel chain allocates IOSurfaces for its physical-page spray.
+      - sdk: IOSurface.framework
       - sdk: libsqlite3.tbd
       # NeoSpring resprings by loading a payload into a WKWebView
       # (Drift/Core/NeoSpring.swift), so WebKit has to be linked. It is a

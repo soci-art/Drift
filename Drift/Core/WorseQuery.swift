@@ -251,7 +251,7 @@ enum WorseQueryEscape {
         }
         if groupContainer == nil {
             return "本机直刷需要签名授予可用的 App Group，但这份签名没有可用的组。"
-                + "App 会读取安装包里签名授予的组名单并逐个试开；只有证书签名能用，免费 ID 签、SideStore / AltStore 改签都不行。"
+                + "App 会读取安装包里签名授予的组名单并逐个试开；只有证书签名能用，免费 ID 签不行。"
         }
         return ""
     }

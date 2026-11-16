@@ -119,18 +119,27 @@ struct DriftRootView: View {
                             .controlSize(.large)
                         Text(session.flashCover ? "正在刷入" : (session.cover?.title ?? ""))
                             .font(.headline)
-                        Text("请勿熄屏或退出 App")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        if let stage = session.flashStage {
-                            Text(stage)
-                                .font(.caption)
+                        // Grace (2026-11-15): while a flash runs, the
+                        // cover shows 「正在刷入」 and nothing else —
+                        // no caution line, no stage text, no progress
+                        // bar, for every channel. Only the outcome
+                        // carries information (the error alert, the
+                        // success line). The other covers (repair,
+                        // respring) keep their lines below.
+                        if !session.flashCover {
+                            Text("请勿熄屏或退出 App")
+                                .font(.subheadline)
                                 .foregroundStyle(.secondary)
-                        }
-                        if let progress = session.coverProgress {
-                            ProgressView(value: progress)
-                                .progressViewStyle(.linear)
-                                .frame(width: 220)
+                            if let stage = session.flashStage {
+                                Text(stage)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if let progress = session.coverProgress {
+                                ProgressView(value: progress)
+                                    .progressViewStyle(.linear)
+                                    .frame(width: 220)
+                            }
                         }
                     }
                     .padding(.horizontal, 36)

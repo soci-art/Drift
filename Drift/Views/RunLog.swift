@@ -49,7 +49,46 @@ final class RunLog: ObservableObject {
     /// The same window the old `if logs.count > 600 { removeFirst }` kept.
     private let windowSize = 600
 
+    // MARK: - Record snapshots
+
+    /// Head/tail retention for history-record log slices. The UI window
+    /// above keeps only the last 600 lines, which silently drops a long
+    /// run's beginning — probe steps included — from its record slice.
+    /// Records therefore snapshot from this buffer instead: the first
+    /// `recordHeadSize` lines verbatim, the last `recordTailSize`, and one
+    /// omission marker between them when the middle had to be dropped.
+    /// Mutated only in `flush` and `clear`, both main-thread.
+    private let recordHeadSize = 300
+    private let recordTailSize = 300
+    private var recordHead: [String] = []
+    private var recordTail: [String] = []
+    private var recordTotal = 0
+
     private init() {}
+
+    /// The run's lines for a history record: head + tail, never tail-only.
+    func recordSnapshot() -> String {
+        if recordTotal <= recordHeadSize {
+            return recordHead.joined(separator: "\n")
+        }
+        if recordTotal <= recordHeadSize + recordTailSize {
+            let overlap = recordHeadSize + recordTailSize - recordTotal
+            return (recordHead + Array(recordTail.dropFirst(overlap)))
+                .joined(separator: "\n")
+        }
+        let omitted = recordTotal - recordHeadSize - recordTailSize
+        return (recordHead + ["……（中间省略 \(omitted) 行）……"] + recordTail)
+            .joined(separator: "\n")
+    }
+
+    private func noteForRecord(_ batch: [String]) {
+        recordTotal += batch.count
+        for line in batch {
+            if recordHead.count < recordHeadSize { recordHead.append(line) }
+            recordTail.append(line)
+            if recordTail.count > recordTailSize { recordTail.removeFirst() }
+        }
+    }
 
     /// Append a line.  Safe from any thread; never invalidates a view directly.
     func append(_ line: String) {
@@ -68,6 +107,9 @@ final class RunLog: ObservableObject {
         pending.removeAll()
         flushScheduled = false
         lock.unlock()
+        recordHead.removeAll()
+        recordTail.removeAll()
+        recordTotal = 0
         if !lines.isEmpty { lines.removeAll() }
     }
 
@@ -79,6 +121,7 @@ final class RunLog: ObservableObject {
         flushScheduled = false
         lock.unlock()
         guard !batch.isEmpty else { return }
+        noteForRecord(batch)
         lines.append(contentsOf: batch)
         if lines.count > windowSize {
             let dropped = lines.count - windowSize

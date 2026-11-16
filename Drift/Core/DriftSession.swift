@@ -501,7 +501,7 @@ final class DriftSession: ObservableObject {
                                 channel: mode == .backup ? nil : mode.shortTitle,
                                 provider: providers,
                                 verification: verification?.summary,
-                                packName: selection.tendies.map(\.name).joined(separator: "、"), packFiles: selection.tendies.map { $0.url.lastPathComponent }, logSliceText: RunLog.shared.lines.joined(separator: "\n"))
+                                packName: selection.tendies.map(\.name).joined(separator: "、"), packFiles: selection.tendies.map { $0.url.lastPathComponent }, logSliceText: RunLog.shared.recordSnapshot())
             // The reset flags are one-shot; the calling page clears its own
             // selection on success (this session only ever holds a copy).
             errorText = nil
@@ -542,7 +542,7 @@ final class DriftSession: ObservableObject {
                 ApplyHistory.record(mode: selectedLabel, success: false, error: "已取消",
                                     device: identity.describe,
                                     model: identity.productType, ios: iosVersion,
-                                    packName: selection.tendies.map(\.name).joined(separator: "、"), packFiles: selection.tendies.map { $0.url.lastPathComponent }, logSliceText: RunLog.shared.lines.joined(separator: "\n"))
+                                    packName: selection.tendies.map(\.name).joined(separator: "、"), packFiles: selection.tendies.map { $0.url.lastPathComponent }, logSliceText: RunLog.shared.recordSnapshot())
                 return (false, "刷入已取消", nil)
             }
             DriftEngine.shared.log("posterboard apply failed: \(error.localizedDescription)")
@@ -552,8 +552,221 @@ final class DriftSession: ObservableObject {
             ApplyHistory.record(mode: selectedLabel, success: false, error: message,
                                 device: identity.describe,
                                 model: identity.productType, ios: iosVersion,
-                                packName: selection.tendies.map(\.name).joined(separator: "、"), packFiles: selection.tendies.map { $0.url.lastPathComponent }, logSliceText: RunLog.shared.lines.joined(separator: "\n"))
+                                packName: selection.tendies.map(\.name).joined(separator: "、"), packFiles: selection.tendies.map { $0.url.lastPathComponent }, logSliceText: RunLog.shared.recordSnapshot())
             return (false, message, nil)
+        }
+    }
+
+    /// How far through its five steps a probe log line says the probe
+    /// is, as a 0...1 fraction — the same step markers the probe's own
+    /// cover-stage translation keys off. Nil when the line carries no
+    /// step news (the bar simply holds where it is).
+    nonisolated private static func kernelProbeFraction(for line: String) -> Double? {
+        if line.contains("全部通过") { return 1 }
+        if line.contains("5/5") { return 0.85 }
+        if line.contains("[容器定位]") || line.contains("4/5") { return 0.7 }
+        if line.contains("3/5") { return 0.5 }
+        if line.contains("2/5") || line.contains("[内核链]") { return 0.3 }
+        if line.contains("1/5") { return 0.12 }
+        return nil
+    }
+
+    /// 内核直刷：先验证内核后端对真实 PosterBoard store 的
+    /// 读写能力，再将已选描述符以暂存 + 校验 + 原子改名方式写入。
+    /// 不调用 WorseQuery、App Group 或隧道，也不处理生效刷新。
+    func runKernelApply(identity: DeviceIdentity,
+                         selection: PosterBoardSelection) async -> (ok: Bool, message: String) {
+        guard !InFlightCall.shared.hasLiveRun else {
+            return (false, "已有一轮刷入正在进行")
+        }
+        guard !selection.tendies.isEmpty else {
+            return (false, "先在「壁纸包」里选择要写入的 .tendies 包。")
+        }
+        guard selection.video == nil,
+              !selection.fullReset,
+              selection.resetModes.isEmpty else {
+            return (false, "内核直刷当前只支持已选的 .tendies 描述文件，不处理视频或重置任务。")
+        }
+        // The channel's own gates, checked here as well as in the
+        // judge (Grace, 2026-11-15: 判定层面要做好): no caller may
+        // start a kernel write with the switch off or off-premise,
+        // whatever any earlier judgement said.
+        guard KernelDirectPremise.isEnabled else {
+            return (false, "内核直刷还没有打开：请先到「设置 → 实验性功能」里打开内核直刷，再回来刷入。")
+        }
+        let premise = KernelDirectPremise.evaluate(version: WorseQueryEscape.processVersion)
+        guard premise.ready else {
+            return (false, "内核直刷现在用不了：\(premise.reason)。")
+        }
+
+        flashCover = true
+        flashStage = "正在验证内核与 PosterBoard 容器读写，期间不要切后台或锁屏"
+        // One bar for the whole run, exactly like 本机直刷 (Grace,
+        // 2026-11-15): the probe's scan-and-locate phase fills the
+        // first 40%, the writer's per-descriptor progress the rest.
+        coverProgress = 0
+        defer { flashCover = false; flashStage = nil; coverProgress = nil }
+        running = true
+        lastEffect = nil
+        RunLog.shared.clear()
+        defer { running = false }
+
+        DriftEngine.shared.log("内核直刷：开始（本机 \(KernelDirectPremise.modelIdentifier)，"
+            + "iOS \(WorseQueryEscape.processVersion)，构建 \(WorseQueryEscape.processBuildVersion)，"
+            + "设备读数 \(identity.describe)，包数 \(selection.tendies.count)）")
+
+        let report = await KernelDirectProbe.run(log: { line in
+            DriftEngine.shared.log(line)
+            if let fraction = Self.kernelProbeFraction(for: line) {
+                Task { @MainActor in
+                    let current = DriftSession.shared.coverProgress ?? 0
+                    DriftSession.shared.coverProgress = max(current, fraction * 0.4)
+                }
+            }
+        })
+        guard report.passed,
+              let containerPath = report.containerPath,
+              let storePath = report.storePath else {
+            let reason = report.failure ?? "没有取得 PosterBoard 容器路径"
+            DriftEngine.shared.log("内核直刷：前置验证失败 —— \(reason)")
+            ApplyHistory.record(
+                mode: "内核直刷",
+                success: false,
+                error: reason,
+                device: identity.describe,
+                model: identity.productType,
+                ios: WorseQueryEscape.processVersion,
+                packName: selection.tendies.map(\.name).joined(separator: "、"),
+                packFiles: selection.tendies.map { $0.url.lastPathComponent },
+                logSliceText: RunLog.shared.recordSnapshot()
+            )
+            return (false, "内核直刷前置验证失败：\(reason) 本次没有写入壁纸。")
+        }
+
+        flashStage = "内核读写已建立，正在写入 PosterBoard 描述文件"
+        DriftEngine.shared.log("[内核直刷] 探针通过，进入正式写入阶段")
+        let writerStarted = Date()
+        do {
+            let outcome: KernelDirectWriter.Outcome = try await withCheckedThrowingContinuation {
+                continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        DriftEngine.shared.log("[内核直刷] KernelDirectWriter.apply() 已启动")
+                        let result = try KernelDirectWriter.apply(
+                            selection: selection,
+                            containerPath: containerPath,
+                            storePath: storePath,
+                            structureVersions: report.structureVersions,
+                            deviceVersion: WorseQueryEscape.processVersion,
+                            log: { DriftEngine.shared.log($0) },
+                            progress: { value in
+                                DriftEngine.shared.log(String(format: "[内核写入] 进度 %.0f%%", value))
+                                Task { @MainActor in
+                                    let mapped = 0.4 + 0.6 * (value / 100)
+                                    let current = DriftSession.shared.coverProgress ?? 0
+                                    DriftSession.shared.coverProgress = max(current, mapped)
+                                }
+                            }
+                        )
+                        DriftEngine.shared.log(String(format: "[内核直刷] KernelDirectWriter.apply() 返回：%d 个描述符，耗时 %.2f 秒",
+                                                       result.installedCount, Date().timeIntervalSince(writerStarted)))
+                        continuation.resume(returning: result)
+                    } catch {
+                        DriftEngine.shared.log("[内核直刷] KernelDirectWriter.apply() 抛出错误：\(error.localizedDescription)")
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+            let verification = outcome.verification
+            DriftEngine.shared.log("内核直刷写入完成：\(outcome.installedCount) 个描述符；\(verification.summary)")
+            // #319: dump the store through the same kernel session, after the
+            // write has settled and before the receipt is recorded, so the
+            // comparison lines travel with this run's log. Read-only.
+            await Self.dumpKernelStore(container: containerPath,
+                                  store: storePath,
+                                  generation: verification.structureVersion,
+                                  placedFolders: Set(outcome.placed.map(\.folderName)))
+            // #334 (Grace, 2026-11-15): kernel writes join the receipt
+            // journal like every other channel's, so the management
+            // page can list and delete them later. Only the verified
+            // placements are recorded.
+            PosterBoardLocalReceipts.remember(
+                outcome.placed.map {
+                    PosterBoardLocalReceipts.KernelWrite(
+                        pack: $0.pack, extensionID: $0.extensionID,
+                        folderName: $0.folderName, numericID: $0.numericID,
+                        parent: $0.parent)
+                },
+                confirmed: verification.confirmed)
+            // Match Drift's existing WorseQuery activation: bring PosterBoard
+            // forward so the user can swipe it away from the app switcher.
+            // The existing, confirmed NeoSpring action remains available as
+            // the alternative from the activation card below.
+            // The open attempt (and its result) happens before the history
+            // record so both land in this run's record and log slice; the
+            // record also carries the channel's effect line like every
+            // other channel's records do.
+            let opened = await MainActor.run { PosterBoardLaunch.open() }
+            DriftEngine.shared.log("[内核直刷] 打开 PosterBoard：\(opened ? "已打开" : "未能打开")")
+            ApplyHistory.record(
+                mode: "内核直刷",
+                success: true,
+                device: identity.describe,
+                model: identity.productType,
+                ios: WorseQueryEscape.processVersion,
+                effect: PosterBoardEffectKind.closePosterBoard.historyLabel,
+                channel: "内核直刷",
+                provider: verification.providersSeen.sorted().joined(separator: "、"),
+                verification: verification.summary,
+                packName: selection.tendies.map(\.name).joined(separator: "、"),
+                packFiles: selection.tendies.map { $0.url.lastPathComponent },
+                logSliceText: RunLog.shared.recordSnapshot()
+            )
+            let refreshHint = opened
+                ? "已打开 PosterBoard，请在应用切换器里上滑结束它，它重新打开后就会读到新壁纸。"
+                : "请打开锁定屏幕壁纸选择器刷新 PosterBoard，再从应用切换器上滑结束它。"
+            return (true, "内核直刷已写入 \(outcome.installedCount) 个描述符，写后核验：\(verification.summary)。\(refreshHint) 也可以使用下方「注销」方式生效。")
+        } catch {
+            let message = error.localizedDescription
+            DriftEngine.shared.log("内核直刷写入失败：\(message)")
+            // #319: the order asks for the dump once the probe has passed even
+            // when the write itself failed; the kernel session is still here.
+            await Self.dumpKernelStore(container: containerPath,
+                                  store: storePath,
+                                  generation: report.structureVersions.first
+                                      ?? PosterBoard.fallbackStructureVersion,
+                                  placedFolders: [])
+            ApplyHistory.record(
+                mode: "内核直刷",
+                success: false,
+                error: message,
+                device: identity.describe,
+                model: identity.productType,
+                ios: WorseQueryEscape.processVersion,
+                packName: selection.tendies.map(\.name).joined(separator: "、"),
+                packFiles: selection.tendies.map { $0.url.lastPathComponent },
+                logSliceText: RunLog.shared.recordSnapshot()
+            )
+            return (false, "内核直刷写入失败：\(message)")
+        }
+    }
+
+    /// #319: run the read-only store dump off the main thread.
+    private static func dumpKernelStore(container: String,
+                                        store: String,
+                                        generation: Int,
+                                        placedFolders: Set<String>) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global(qos: .utility).async {
+                _ = KernelDirectStoreDump.run(
+                    container: container,
+                    store: store,
+                    generation: generation,
+                    placedFolders: placedFolders,
+                    log: { DriftEngine.shared.log($0) }
+                )
+                continuation.resume()
+            }
         }
     }
 
@@ -600,8 +813,8 @@ struct DriftModeAvailability: Identifiable, Equatable {
 
 /// The user's method pick. Five methods, exactly as named: 自动选择 and the
 /// four channels. The sealed restore route is not a pick — since #329 it
-/// has no Home entry at all and never runs. The kernel pick exists in the
-/// list only while its 实验性功能 switch is on (#329); its channel is not
+/// has no Home entry at all and never runs. The kernel pick is always in
+/// the list (Grace, 2026-11-15); its channel is not
 /// a `PosterBoardApplyMode` — the judge handles the pick directly.
 enum DriftMethodPick: String, CaseIterable, Identifiable {
     case auto
@@ -630,7 +843,7 @@ enum DriftMethodPick: String, CaseIterable, Identifiable {
         case .noRespring: return "隧道写入 · 刷完即生效，无需注销"
         case .respring: return "隧道写入 · 注销后生效"
         case .local: return "本机写入，免配对、免隧道"
-        case .kernel: return "内核写入，免配对、免隧道"
+        case .kernel: return "内核写入，免配对、免隧道、不要求签名"
         }
     }
 
@@ -675,6 +888,15 @@ struct DriftModeJudgement {
     var options: [DriftModeAvailability] = []
     /// How the chosen channel is expected to take effect.
     var expectedEffect: String = ""
+    /// The run goes to the kernel writer, which has no
+    /// `PosterBoardApplyMode` of its own: `mode` is then the local
+    /// placeholder, and dispatchers must honour this flag instead
+    /// (set for a manual 内核直刷 pick and for 自动选择 landing on it).
+    var useKernel: Bool = false
+    /// Blocked only because the kernel method's 实验性功能 switch is
+    /// off (Grace, 2026-11-15): the flash button stays tappable and
+    /// the tap answers with the go-turn-it-on reminder, not an error.
+    var kernelNeedsSwitch: Bool = false
     var isBlocked: Bool { blockedReason != nil }
 }
 
@@ -913,11 +1135,10 @@ enum DriftJudge {
     static func judge(identity: DeviceIdentity, selection: PosterBoardSelection,
                       pick: DriftMethodPick,
                       tunnelReady: Bool = false) -> DriftModeJudgement {
-        // A stored kernel pick with its 实验性功能 switch off reads
-        // as 自动选择 (#329): the method does not exist while the
-        // switch is off, so it cannot block a run either.
-        let pick = (pick == .kernel && !KernelDirectPremise.isEnabled)
-            ? DriftMethodPick.auto : pick
+        // The kernel pick is always visible and selectable (Grace,
+        // 2026-11-15, replacing the #329 hide-while-off rule): with
+        // its 实验性功能 switch off it judges as blocked with a
+        // go-turn-it-on reminder below, never as another pick.
         let p = premises(identity: identity, tunnelReady: tunnelReady)
         let rows = optionRows(p, identity: identity)
 
@@ -933,6 +1154,14 @@ enum DriftJudge {
         /// Blocked because the selection can only travel the sealed method.
         func sealedBlocked(_ reason: String) -> DriftModeJudgement {
             blocked(reason, notice: DriftRestoreGate.notice)
+        }
+        /// Blocked only because the kernel switch is off: flagged so
+        /// the flash tap can answer with a reminder instead of an
+        /// error (Grace, 2026-11-15).
+        func kernelSwitchBlocked(_ reason: String, notice: String) -> DriftModeJudgement {
+            var judgement = blocked(reason, notice: notice)
+            judgement.kernelNeedsSwitch = true
+            return judgement
         }
 
         // Hard limits: these leave only the restore method, and while it is
@@ -954,10 +1183,15 @@ enum DriftJudge {
         }
 
         if pick == .kernel {
-            // The kernel channel lands separately (#319); until it
-            // does, a kernel pick is always blocked with the honest
-            // reason, and 自动选择 never considers it. Manual picks
-            // still never reroute to another channel.
+            // A manual kernel pick is used as-is when its premise
+            // passes and blocked with the honest reason when it does
+            // not; manual picks never reroute to another channel.
+            // The switch comes first: off is not "unavailable", it is
+            // "not turned on yet" — the answer points at the switch.
+            guard KernelDirectPremise.isEnabled else {
+                return kernelSwitchBlocked("你手动选了内核直刷：它还没有打开。先到「设置 → 实验性功能」里打开内核直刷，再回来刷入。手动选定后不会自动改走别的通道。",
+                               notice: "请先到「设置 → 实验性功能」里打开内核直刷。")
+            }
             let premise = KernelDirectPremise.evaluate(version: p.appVersion)
             if !premise.inBand {
                 return blocked("你手动选了内核直刷：它只支持 iOS 17 / 18，这台的系统是 iOS \(p.appVersion)，不在这个范围。手动选定后不会自动改走别的通道。",
@@ -967,8 +1201,16 @@ enum DriftJudge {
                 return blocked("你手动选了内核直刷：这台机型不在它的支持表里。手动选定后不会自动改走别的通道。",
                                notice: "这台机型不在内核直刷的支持表里。")
             }
-            return blocked("你手动选了内核直刷：通道正在接入，现在还刷不了。手动选定后不会自动改走别的通道。",
-                           notice: "内核直刷正在接入，现在还刷不了。")
+            // Kernel Direct is a separate on-device writer, not a
+            // PosterBoardApplyMode channel. Home dispatches it directly.
+            return DriftModeJudgement(
+                pick: pick,
+                mode: .worseQuery,
+                reason: "已手动选择内核直刷：会先验证 PosterBoard 容器读写，再写入已选描述文件；不用配对、不用隧道，对签名没要求。",
+                blockedReason: nil,
+                options: rows,
+                expectedEffect: "写完提示：打开应用切换器，上滑关闭 PosterBoard，系统重新拉起后生效",
+                useKernel: true)
         }
 
         if let channel = pick.channel {
@@ -979,8 +1221,35 @@ enum DriftJudge {
                            notice: "\(pick.label)现在不可用：\(p.why(channel))。")
         }
 
+        // 自动选择把内核直刷也算进去 (Grace, 2026-11-15): on its own
+        // band it asks the least of the user — no pairing, no tunnel,
+        // no signing gate — and that band (iOS 17 / 18) never overlaps
+        // the local channel's, so it is judged before the channel
+        // order. It exists as a candidate only while its 实验性功能
+        // switch is on, and an automatic landing on it still wears
+        // the 实验 marking, in the reason itself.
+        let kernelPremise = KernelDirectPremise.evaluate(version: p.appVersion)
+        if KernelDirectPremise.isEnabled, kernelPremise.ready {
+            return DriftModeJudgement(
+                pick: pick,
+                mode: .worseQuery,
+                reason: "自动选择：走内核直刷（实验）——会先验证 PosterBoard 容器读写，再写入已选描述文件；不用配对、不用隧道，对签名没要求。",
+                blockedReason: nil,
+                options: rows,
+                expectedEffect: "写完提示：打开应用切换器，上滑关闭 PosterBoard，系统重新拉起后生效",
+                useKernel: true)
+        }
+
         if let channel = firstAvailable(p) {
             return judged(channel, autoReason(channel))
+        }
+        // Nothing else can run. If this device could flash through
+        // the kernel channel and the only thing missing is its
+        // switch, 自动选择 says so instead of a bare dead end
+        // (Grace, 2026-11-15): the reminder is the answer.
+        if kernelPremise.ready, !KernelDirectPremise.isEnabled {
+            return kernelSwitchBlocked("自动选择：这台设备能用内核直刷（实验），但它还没有打开，其他方式现在也用不了。先到「设置 → 实验性功能」里打开内核直刷，就能刷了。",
+                           notice: "请先到「设置 → 实验性功能」里打开内核直刷。")
         }
         // #332 (Grace, 2026-11-14): this summary used to concatenate all
         // three channels' full reasons into one paragraph — the same

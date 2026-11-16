@@ -24,6 +24,11 @@ struct PosterBoardManagerView: View {
     @State private var notice: ManagerNotice?
     @State private var showActivationPrompt = false
     @State private var activationKind: ActivationKind = .respring
+    /// The last batch deleted at least one entry through the kernel
+    /// channel (Grace, 2026-11-15): those take effect by closing
+    /// PosterBoard, never by an automatic respring — a respring is
+    /// the user's own manual step on Home if closing did not take.
+    @State private var kernelBatch = false
     @State private var activationMessage = ""
 
     /// How a deletion is made to take effect, keyed to how the wallpaper was
@@ -41,9 +46,22 @@ struct PosterBoardManagerView: View {
             buildVersion: WorseQueryEscape.processBuildVersion)
     }
 
+    /// The kernel route, judged exactly as the store listing judges
+    /// it: switch on and premise ready. This gate was missing when
+    /// the kernel source was added to the page (#334) — on a 17/18
+    /// device the label fell through to 不可用 and the delete button
+    /// stayed disabled no matter what was selected (user report,
+    /// 2026-11-15).
+    private var kernelAvailable: Bool {
+        KernelDirectPremise.isEnabled
+            && KernelDirectPremise.evaluate(
+                version: WorseQueryEscape.processVersion).ready
+    }
+
     private var routeLabel: String {
         if tunnelReady { return "隧道" }
         if localAvailable { return "本机" }
+        if kernelAvailable { return "内核" }
         return "不可用"
     }
 
@@ -114,7 +132,10 @@ struct PosterBoardManagerView: View {
         // Settings deletion chain's「删除完成」ask — one look for the
         // same question everywhere. Wording and choices unchanged.
         .driftActionSheet(isPresented: $showActivationPrompt, title: "删除完成",
-                          message: activationMessage + "\n\n" + activationKind.needText,
+                          message: activationMessage + "\n\n" + activationKind.needText
+                            + (kernelBatch && activationKind == .endPosterBoard
+                                ? "\n如果上滑关掉后还没生效，可以去主页手动注销一次。"
+                                : ""),
                           actions: [
                             DriftSheetAction(activationKind.actionTitle) {
                                 runActivation()
@@ -245,6 +266,7 @@ struct PosterBoardManagerView: View {
         let targets = selectedEntries
         var messages: [String] = []
         var succeeded: [PosterBoardManagement.ManagedEntry] = []
+        var kernelDeletedIDs: Set<PosterBoardManagement.ManagedEntry.ID> = []
         for entry in targets {
             do {
                 if let receipt = receipt(for: entry) {
@@ -257,12 +279,18 @@ struct PosterBoardManagerView: View {
                         receipt, tunnelReady: tunnelReady) { line in
                         DriftEngine.shared.log(line)
                     }
+                    if outcome.channel == .kernel {
+                        kernelDeletedIDs.insert(entry.id)
+                    }
                     messages.append(outcome.message)
                 } else {
                     let outcome = try await PosterBoardManagement.deleteManagedEntry(
                         entry, tunnelReady: tunnelReady,
                         identityVersion: identity.version) { line in
                         DriftEngine.shared.log(line)
+                    }
+                    if outcome.channelLabel == "内核" {
+                        kernelDeletedIDs.insert(entry.id)
                     }
                     messages.append(outcome.message)
                 }
@@ -292,11 +320,22 @@ struct PosterBoardManagerView: View {
                 // there is no channel to key on, so choose by the
                 // methods usable right now (Grace, 2026-11-11) — the
                 // local channel usable → end PosterBoard; otherwise
-                // respring.
-                activationKind = WorseQueryEscape.isAvailable(
-                    deviceVersion: WorseQueryEscape.processVersion,
-                    buildVersion: WorseQueryEscape.processBuildVersion)
-                    ? .endPosterBoard : .respring
+                // respring. One exception (Grace, 2026-11-15): an
+                // entry THIS deletion removed through the kernel
+                // channel takes effect by closing PosterBoard, never
+                // by an automatic respring.
+                let nilDeletedViaKernel = succeeded.contains {
+                    flashedChannel(of: $0) == nil
+                        && kernelDeletedIDs.contains($0.id)
+                }
+                if nilDeletedViaKernel {
+                    activationKind = .endPosterBoard
+                } else {
+                    activationKind = WorseQueryEscape.isAvailable(
+                        deviceVersion: WorseQueryEscape.processVersion,
+                        buildVersion: WorseQueryEscape.processBuildVersion)
+                        ? .endPosterBoard : .respring
+                }
             } else if channels.contains(.airlift) {
                 activationKind = .respring
             } else if channels.contains(.direct) {
@@ -304,6 +343,10 @@ struct PosterBoardManagerView: View {
             } else {
                 activationKind = .endPosterBoard
             }
+            // Remember the batch went through the kernel, for the
+            // completion sheet's pointer at Home's manual respring
+            // (Grace, 2026-11-15).
+            kernelBatch = !kernelDeletedIDs.isEmpty
             activationMessage = messages.joined(separator: "\n\n")
             showActivationPrompt = true
         }

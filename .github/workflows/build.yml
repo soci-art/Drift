@@ -19,6 +19,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7.0.1
 
+      # The probe / preview / release steps below key off marker words in
+      # the commit message. Only the subject (first line) counts: a marker
+      # mentioned in the body is prose, not an instruction. (Commit
+      # b2021ae described this very flow in its body and so triggered all
+      # three steps; the release step then failed on a notes file that
+      # never existed on main.) Every gate reads these outputs instead of
+      # scanning the full message.
+      - name: Parse commit-subject markers
+        id: markers
+        shell: bash
+        env:
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          subject="$(printf '%s' "$HEAD_MESSAGE" | head -n 1)"
+          probe=false
+          preview=false
+          release=false
+          case "$subject" in *'[probe]'*) probe=true ;; esac
+          case "$subject" in *'[preview]'*) preview=true ;; esac
+          case "$subject" in *'[release]'*) release=true ;; esac
+          {
+            echo "probe=$probe"
+            echo "preview=$preview"
+            echo "release=$release"
+          } >> "$GITHUB_OUTPUT"
+          echo "subject markers: probe=$probe preview=$preview release=$release"
+
       - name: Cache Rust dependencies and build
         uses: actions/cache@v4
         with:
@@ -95,7 +122,7 @@ jobs:
         env:
           # A [probe] commit compiles the temporary enumeration button in.
           # Ordinary pushes leave the flag empty, so the button is absent.
-          PROBE_BUILD: ${{ contains(github.event.head_commit.message, '[probe]') && '1' || '0' }}
+          PROBE_BUILD: ${{ steps.markers.outputs.probe == 'true' && '1' || '0' }}
         run: |
           set -o pipefail
           # GitHub runs bash with -e; the build is expected to fail on the
@@ -133,17 +160,23 @@ jobs:
           path: build/Drift.ipa
           if-no-files-found: error
 
-      # Replace the IPA attachment on the existing pre-release, without
-      # creating a release or touching its title, notes, tag or any non-IPA
-      # asset. [probe] builds the timing package; [preview] builds the formal
-      # handover package without the probe switch. Both leave the tag as a
-      # pre-release and only swap the IPA.
-      - name: Replace the pre-release IPA with this build
+      # Replace the IPA attachment on the rolling `nightly` pre-release
+      # (Grace, 2026-11-14, SideStore's shape): pre-releases carry no
+      # version — one fixed tag `nightly`, title "Nightly", asset
+      # `Drift-unsigned.ipa` — so test builds never consume a formal
+      # version number. A formal release is never touched: if `nightly`
+      # exists and is not a pre-release the step fails rather than
+      # swapping a shipped IPA. The release is created as an empty
+      # pre-release only when it does not exist at all; its title, notes
+      # and non-IPA assets are never edited afterwards. [probe] builds
+      # the probe package; [preview] builds the formal handover package
+      # without the probe switch.
+      - name: Replace the nightly pre-release IPA with this build
         if: >-
           github.event_name == 'push' &&
           github.ref == 'refs/heads/main' &&
-          (contains(github.event.head_commit.message, '[probe]') ||
-           contains(github.event.head_commit.message, '[preview]'))
+          (steps.markers.outputs.probe == 'true' ||
+           steps.markers.outputs.preview == 'true')
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -155,9 +188,35 @@ jobs:
             echo "error: VERSION or BUILD missing from project.yml" >&2
             exit 1
           fi
-          TAG="v$VERSION"
-          ASSET="build/Drift-$VERSION-unsigned.ipa"
+          TAG="nightly"
+          ASSET="build/Drift-unsigned.ipa"
           cp build/Drift.ipa "$ASSET"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "no release $TAG yet — creating it as an empty pre-release"
+            # Created with curl rather than gh: both `gh release create`
+            # and `gh api` failed here with an EMPTY message, so this form
+            # records the HTTP status and response body, which can be put
+            # on the public run page when it fails.
+            RESP="$(mktemp)"
+            ERR="$(mktemp)"
+            BODY="$(printf '{"tag_name":"%s","target_commitish":"%s","name":"Nightly","body":"预发行构建（滚动更新），供测试使用。未签名 IPA，安装者自行签名；不影响正式版。","prerelease":true}' \
+              "$TAG" "$GITHUB_SHA")"
+            CODE="$(curl -sS -o "$RESP" -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases" \
+              --data-binary "$BODY" 2>"$ERR")" || CODE="${CODE:-000}"
+            if [ "$CODE" != "201" ]; then
+              # The run page's log needs a sign-in; an annotation is the
+              # only part of a failure a public reader can see, so the
+              # reason goes there as well as into the log.
+              echo "::error::release create $TAG failed: HTTP ${CODE}; $(head -c 400 "$RESP" | tr '\n' ' '); $(head -c 300 "$ERR" | tr '\n' ' ')"
+              head -c 2000 "$RESP" >&2; echo >&2; cat "$ERR" >&2
+              exit 1
+            fi
+            rm -f "$RESP" "$ERR"
+          fi
           if [ "$(gh release view "$TAG" --json isPrerelease --jq '.isPrerelease')" != "true" ]; then
             echo "error: $TAG is not a pre-release; refusing to replace its IPA" >&2
             exit 1
@@ -180,14 +239,10 @@ jobs:
       # the accepted cost is that an in-place asset swap under the same
       # version no longer prompts an in-app update.
       - name: Publish unsigned IPA to Releases
-        # Formal line (Grace, 2026-11-14): formal releases ship from the
-        # `formal` branch, never from main (main is the pre-release
-        # line). This branch's copy of the workflow therefore gates the
-        # step to refs/heads/formal; main's copy keeps its own gating.
         if: >-
           github.event_name == 'push' &&
-          github.ref == 'refs/heads/formal' &&
-          contains(github.event.head_commit.message, '[release]')
+          github.ref == 'refs/heads/main' &&
+          steps.markers.outputs.release == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// A destination for one already-formatted log line.
 ///
@@ -10,7 +11,7 @@ protocol LogSink: AnyObject, Sendable {
     func write(_ line: String)
 }
 
-/// `<Documents>/goldennugget.log` — append-only sink, rotated by dropping the older half.
+/// `<Documents>/drift.log` — append-only sink, rotated by dropping the older half.
 ///
 /// The on-screen list alone is not enough: it only ever shows the tail and dies
 /// with the process, so anything written there (the host-side delegate
@@ -171,7 +172,7 @@ final class MemoryLogSink: LogSink, @unchecked Sendable {
 ///
 /// The sinks are installed by this type itself rather than by an owner, because
 /// logging is the one dependency every other layer has — a helper that logs
-/// before the engine exists must still land in `goldennugget.log`.
+/// before the engine exists must still land in `drift.log`.
 final class AppLog: @unchecked Sendable {
     static let shared = AppLog()
 
@@ -212,10 +213,28 @@ final class AppLog: @unchecked Sendable {
     /// Flush the file sink — for readers about to open the log file.
     func flushFile() { file.flush() }
 
+    /// Where the console echo goes while the kernel chain's stdout
+    /// capture is live (#335). During capture fd 1 points at the
+    /// capture pipe, so echoing a line with `print()` feeds it back
+    /// into the capture, which logs it again — an echo loop that
+    /// ballooned one run's log to 9 MB of repeats and destroyed the
+    /// real lines. The probe sets this to the saved real stdout for
+    /// the capture's duration; nil means the ordinary `print()`.
+    static var consoleEchoFd: Int32?
+
     func log(_ line: String) {
         // Console first: if a sink below throws or a lock is held by a wedged
         // thread, the line still reaches the device console.
-        print(line)
+        if let fd = AppLog.consoleEchoFd {
+            let bytes = [UInt8](line.utf8) + [0x0A]
+            bytes.withUnsafeBufferPointer { buffer in
+                if let base = buffer.baseAddress {
+                    _ = Darwin.write(fd, base, buffer.count)
+                }
+            }
+        } else {
+            print(line)
+        }
         lock.lock()
         memory.write(line)
         file.write(line)
