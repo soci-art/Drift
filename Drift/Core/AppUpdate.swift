@@ -180,7 +180,7 @@ final class AppUpdateChecker: ObservableObject {
     /// nightly asset name is fixed (Drift-unsigned.ipa) and carries
     /// neither number, so this stamp is the only place a nightly
     /// check can learn what the current nightly actually is.
-    static func nightlyStamp(in body: String) -> (version: String, build: Int)? {
+    nonisolated static func nightlyStamp(in body: String) -> (version: String, build: Int)? {
         guard let start = body.range(of: "<!-- drift-nightly:"),
               let end = body.range(of: "-->", range: start.upperBound..<body.endIndex)
         else { return nil }
@@ -192,7 +192,7 @@ final class AppUpdateChecker: ObservableObject {
 
     /// The nightly body with the stamp removed — what a human
     /// reader (the announcement) should see.
-    static func strippingNightlyStamp(_ body: String) -> String {
+    nonisolated static func strippingNightlyStamp(_ body: String) -> String {
         guard let start = body.range(of: "<!-- drift-nightly:"),
               let end = body.range(of: "-->", range: start.upperBound..<body.endIndex)
         else { return body }
