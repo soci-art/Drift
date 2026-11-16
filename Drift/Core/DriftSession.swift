@@ -653,6 +653,54 @@ final class DriftSession: ObservableObject {
             return (false, "内核直刷前置验证失败：\(reason) 本次没有写入壁纸。")
         }
 
+        // 防重复刷 (Grace, 2026-11-17): the shared funnel refuses a
+        // re-flash of an in-store pack outright (#143); the kernel
+        // channel instead skips it and counts it as done, so the rest
+        // of the round still goes in. A pack counts as in-store only
+        // when every receipt the journal holds for it still matches a
+        // live store entry — same provider / folder / generation key
+        // the management page reconciles by. A pack with no receipts,
+        // or with any receipt no longer verifiable, is written as
+        // usual. The check runs here, after the probe, because only
+        // then can this channel read the store at all.
+        let storeEntries = KernelDirectWriter.enumerateStore(
+            storePath: storePath, log: { DriftEngine.shared.log($0) })
+        let inStore = Set(storeEntries.map {
+            "\($0.provider)/\($0.uuid)/\($0.generation)"
+        })
+        let journal = PosterBoardLocalReceipts.load()
+        var skippedPacks: [String] = []
+        var writeSelection = selection
+        writeSelection.tendies = selection.tendies.filter { tendie in
+            let packReceipts = journal.filter { $0.pack == tendie.name }
+            guard !packReceipts.isEmpty,
+                  packReceipts.allSatisfy({
+                      inStore.contains("\($0.extensionID)/\($0.folderName)/\($0.generation)")
+                  }) else { return true }
+            skippedPacks.append(tendie.name)
+            return false
+        }
+        if !skippedPacks.isEmpty {
+            DriftEngine.shared.log("[内核直刷] 防重复刷：\(skippedPacks.joined(separator: "、")) 已在商店里，本轮跳过")
+        }
+        if writeSelection.tendies.isEmpty {
+            ApplyHistory.record(
+                mode: "内核直刷",
+                success: true,
+                device: identity.describe,
+                model: identity.productType,
+                ios: WorseQueryEscape.processVersion,
+                channel: "内核直刷",
+                verification: "选的包都已在商店里，跳过重复刷入",
+                packName: selection.tendies.map(\.name).joined(separator: "、"),
+                packFiles: selection.tendies.map { $0.url.lastPathComponent },
+                logSliceText: RunLog.shared.recordSnapshot()
+            )
+            DriftEngine.shared.log(String(format: "[内核直刷] 分段计时：本轮总耗时 %.2f 秒（全部跳过）",
+                                          Date().timeIntervalSince(roundStarted)))
+            return (true, "选的包都已经在壁纸商店里了，不用重复刷。")
+        }
+
         flashStage = "内核读写已建立，正在写入 PosterBoard 描述文件"
         DriftEngine.shared.log("[内核直刷] 探针通过，进入正式写入阶段")
         let writerStarted = Date()
@@ -663,7 +711,7 @@ final class DriftSession: ObservableObject {
                     do {
                         DriftEngine.shared.log("[内核直刷] KernelDirectWriter.apply() 已启动")
                         let result = try KernelDirectWriter.apply(
-                            selection: selection,
+                            selection: writeSelection,
                             containerPath: containerPath,
                             storePath: storePath,
                             structureVersions: report.structureVersions,
@@ -736,7 +784,9 @@ final class DriftSession: ObservableObject {
                 : "请打开锁定屏幕壁纸选择器刷新 PosterBoard，再从应用切换器上滑结束它。"
             DriftEngine.shared.log(String(format: "[内核直刷] 分段计时：本轮总耗时 %.2f 秒",
                                           Date().timeIntervalSince(roundStarted)))
-            return (true, "内核直刷已写入 \(outcome.installedCount) 个描述符，写后核验：\(verification.summary)。\(refreshHint) 也可以使用下方「注销」方式生效。")
+            let skipNote = skippedPacks.isEmpty ? ""
+                : "另有 \(skippedPacks.count) 个包已在商店里，本轮跳过：\(skippedPacks.joined(separator: "、"))。"
+            return (true, "内核直刷已写入 \(outcome.installedCount) 个描述符，写后核验：\(verification.summary)。\(skipNote)\(refreshHint) 也可以使用下方「注销」方式生效。")
         } catch {
             let message = error.localizedDescription
             DriftEngine.shared.log("内核直刷写入失败：\(message)")

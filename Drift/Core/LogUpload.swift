@@ -25,12 +25,14 @@ enum LogUpload {
     /// The inbox's big-package door (collection #237): one apply record's
     /// bundle — record + that run's log slice + the original wallpaper
     /// pack — posted only when the user taps 导出并上传 on that record.
-    /// Its rate counter is separate from the log door's (5 per hour of
-    /// its own), and its ceiling is 24 MB.
+    /// Its rate counter is separate from the log door's (10 per hour of
+    /// its own), and its ceiling is 50 MB (Grace, 2026-11-17: raised
+    /// from 24 MB; the inbox stores oversize bundles in chunks, so the
+    /// old 25 MB single-value store limit no longer binds).
     static let bigEndpoint = URL(string: "https://log.86419753.xyz/upload-big")!
 
     /// The big door's per-package cap.
-    static let bigMaxBytes = 24 * 1024 * 1024
+    static let bigMaxBytes = 50 * 1024 * 1024
 
     /// Post a packaged log zip. Throws a plain-language DriftError for
     /// every failure the user can act on.
@@ -43,7 +45,7 @@ enum LogUpload {
     /// wording as the log door, including the shared 429 line.
     static func uploadBig(package: URL) async throws {
         try await upload(package: package, endpoint: bigEndpoint,
-                         maxBytes: bigMaxBytes, oversize: "记录包太大了（超过 24 MB）")
+                         maxBytes: bigMaxBytes, oversize: "记录包太大了（超过 50 MB）")
     }
 
     private static func upload(package: URL, endpoint: URL,
