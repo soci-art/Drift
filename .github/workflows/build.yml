@@ -241,7 +241,7 @@ jobs:
       - name: Publish unsigned IPA to Releases
         if: >-
           github.event_name == 'push' &&
-          github.ref == 'refs/heads/main' &&
+          github.ref == 'refs/heads/formal' &&
           steps.markers.outputs.release == 'true'
         shell: bash
         env:
