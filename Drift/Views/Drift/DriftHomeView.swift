@@ -183,8 +183,25 @@ struct DriftHomeView: View {
                     .driftPageWidth()
                 }
             }
-            .navigationTitle("Drift")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationTitle(AppVersion.channel == .nightly ? "" : "Drift")
+            .navigationBarTitleDisplayMode(AppVersion.channel == .nightly ? .inline : .large)
+            // #340 (Grace, 2026-11-16): a nightly package says so right
+            // beside the app name on the home page, so which line a
+            // build belongs to is visible at a glance. Release builds
+            // keep the plain large title above and never show this.
+            .toolbar {
+                if AppVersion.channel == .nightly {
+                    ToolbarItem(placement: .principal) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text("Drift")
+                                .font(.headline)
+                            Text("预发行版")
+                                .font(.subheadline)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+            }
             // Collection #223 (Grace, 2026-11-12): no toolbar pairing
             // shortcut — it duplicated the status card's full-width
             // 「导入配对文件」button directly below it.
