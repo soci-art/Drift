@@ -166,6 +166,24 @@ struct DriftHomeView: View {
                 DriftBackground()
                 ScrollView {
                     VStack(spacing: 14) {
+                        // #340 (Grace, 2026-11-16): a nightly package says
+                        // so beside the app name. The name stays in the
+                        // large title's place at the same size — this row
+                        // is drawn where the system large title sits, with
+                        // an orange 「预发行版」 to its right; the name
+                        // itself never moves. Release builds keep the
+                        // system large title and never show this row.
+                        if AppVersion.channel == .nightly {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text("Drift")
+                                    .font(.largeTitle)
+                                    .fontWeight(.bold)
+                                Text("预发行版")
+                                    .font(.headline)
+                                    .foregroundStyle(.orange)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                         headerCard
                         tutorialEntryCard
                         if updateChecker.updateAvailable, let latest = updateChecker.latest {
@@ -185,23 +203,6 @@ struct DriftHomeView: View {
             }
             .navigationTitle(AppVersion.channel == .nightly ? "" : "Drift")
             .navigationBarTitleDisplayMode(AppVersion.channel == .nightly ? .inline : .large)
-            // #340 (Grace, 2026-11-16): a nightly package says so right
-            // beside the app name on the home page, so which line a
-            // build belongs to is visible at a glance. Release builds
-            // keep the plain large title above and never show this.
-            .toolbar {
-                if AppVersion.channel == .nightly {
-                    ToolbarItem(placement: .principal) {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text("Drift")
-                                .font(.headline)
-                            Text("预发行版")
-                                .font(.subheadline)
-                                .foregroundStyle(.orange)
-                        }
-                    }
-                }
-            }
             // Collection #223 (Grace, 2026-11-12): no toolbar pairing
             // shortcut — it duplicated the status card's full-width
             // 「导入配对文件」button directly below it.

@@ -235,11 +235,11 @@ jobs:
           # build's version stamp from the start: the nightly asset
           # name is fixed and carries neither number, so the stamp is
           # how a nightly build's update check learns what the current
-          # nightly is; the human sentence above it stays exactly as
-          # written.
+          # nightly is; the announcement text above it is what
+          # nightly users see in the app (#343).
           RESP="$(mktemp)"
           ERR="$(mktemp)"
-          BODY="$(printf '{"tag_name":"%s","target_commitish":"%s","name":"Nightly","body":"预发行构建（滚动更新），供测试使用。未签名 IPA，安装者自行签名；不影响正式版。\\n\\n<!-- drift-nightly: %s %s -->","prerelease":true}' \
+          BODY="$(printf '{"tag_name":"%s","target_commitish":"%s","name":"Nightly","body":"这是预发行版，滚动更新，供测试使用，不影响正式版。装的时候自己签名。\\n\\n这次请重点帮忙测 iOS 17 的内核直刷：\\n- 上一版在 iOS 17.0 正式版和 iOS 17.0.3 正式版上，点刷入会让手机重启。这一版针对这个问题做了修复，预期不会再重启，但还没有真机验证过，就是拿这一版来测的。\\n- 刷入前，先把手机里的重要东西备份好。\\n- 要是没刷成功，请在设置里把日志上传回来。这一版把刷入过程的日志补全了，靠日志才能知道卡在哪一步。\\n- 本机定位改成边找边问，手机里东西多的时候能快些找到。\\n\\n主页名字右边标了「预发行版」，装的是哪条线一眼就能看清。\\n\\n<!-- drift-nightly: %s %s -->","prerelease":true}' \
             "$TAG" "$GITHUB_SHA" "$VERSION" "$BUILD")"
           CODE="$(curl -sS -o "$RESP" -w '%{http_code}' -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
