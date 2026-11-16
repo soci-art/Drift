@@ -71,6 +71,11 @@ final class AppUpdateChecker: ObservableObject {
 
     static let releasesAPI = "https://api.github.com/repos/soci-art/Drift/releases/latest"
     static let latestPage = "https://github.com/soci-art/Drift/releases/latest"
+    /// The nightly line's fixed pre-release, fetched by tag: the
+    /// /latest endpoint above never returns a pre-release, which is
+    /// exactly why the two lines can share it no longer (Grace,
+    /// 2026-11-16 — each line checks on its own line now).
+    static let nightlyAPI = "https://api.github.com/repos/soci-art/Drift/releases/tags/nightly"
     /// Domestic accelerator prefix — verified working 2026-11-11.
     /// RE-VERIFY AND REPLACE AT EVERY RELEASE (Grace's rule).
     static let mirrorPrefix = "https://gh.86419753.xyz/"
@@ -119,6 +124,12 @@ final class AppUpdateChecker: ObservableObject {
     // MARK: - Check
 
     private static func fetchLatest() async throws -> ReleaseInfo {
+        // The two lines check separately (Grace, 2026-11-16): a
+        // nightly build only ever looks at the nightly pre-release,
+        // so a formal release can never be offered to it (and a
+        // nightly swap finally reaches its own users); a release
+        // build keeps the historical route below unchanged.
+        if AppVersion.channel == .nightly { return try await fetchNightly() }
         // Three tiers (#310): her accelerator, the public domestic
         // accelerator, then direct — the API first, and the release
         // page as the last route (its redirect target carries the
@@ -158,6 +169,80 @@ final class AppUpdateChecker: ObservableObject {
         return ReleaseInfo(version: version,
                            build: Self.buildNumber(fromAssetName: name, version: version),
                            notes: notes, dateLine: dateLine, assetName: name,
+                           assetSize: asset["size"] as? Int ?? 0, directURL: assetURL)
+    }
+
+    // MARK: - Nightly line
+
+    /// The machine-readable stamp the workflow writes into the
+    /// nightly release body on every swap:
+    /// `<!-- drift-nightly: 3.3.0 83 -->` (version, then build). The
+    /// nightly asset name is fixed (Drift-unsigned.ipa) and carries
+    /// neither number, so this stamp is the only place a nightly
+    /// check can learn what the current nightly actually is.
+    static func nightlyStamp(in body: String) -> (version: String, build: Int)? {
+        guard let start = body.range(of: "<!-- drift-nightly:"),
+              let end = body.range(of: "-->", range: start.upperBound..<body.endIndex)
+        else { return nil }
+        let parts = body[start.upperBound..<end.lowerBound]
+            .split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" || $0 == "\r" })
+        guard parts.count == 2, let build = Int(parts[1]) else { return nil }
+        return (String(parts[0]), build)
+    }
+
+    /// The nightly body with the stamp removed — what a human
+    /// reader (the announcement) should see.
+    static func strippingNightlyStamp(_ body: String) -> String {
+        guard let start = body.range(of: "<!-- drift-nightly:"),
+              let end = body.range(of: "-->", range: start.upperBound..<body.endIndex)
+        else { return body }
+        return (String(body[..<start.lowerBound]) + String(body[end.upperBound...]))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func fetchNightly() async throws -> ReleaseInfo {
+        // The same three API tiers as the release line. There is no
+        // page fallback here: the version lives in the body stamp,
+        // which only the API returns.
+        if let info = try? await fetchNightlyViaAPI(base: mirrorPrefix) { return info }
+        if let info = try? await fetchNightlyViaAPI(base: secondMirrorPrefix) { return info }
+        return try await fetchNightlyViaAPI(base: "")
+    }
+
+    private static func fetchNightlyViaAPI(base: String) async throws -> ReleaseInfo {
+        guard let url = URL(string: base + nightlyAPI) else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 12
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let tag = object?["tag_name"] as? String, tag == "nightly" else {
+            throw URLError(.cannotParseResponse)
+        }
+        let rawBody = object?["body"] as? String ?? ""
+        guard let stamp = nightlyStamp(in: rawBody) else {
+            throw URLError(.cannotParseResponse)
+        }
+        let assets = object?["assets"] as? [[String: Any]] ?? []
+        guard let asset = assets.first(where: { ($0["name"] as? String) == "Drift-unsigned.ipa" })
+                ?? assets.first(where: { ($0["name"] as? String)?.hasSuffix(".ipa") == true }),
+              let name = asset["name"] as? String,
+              let download = asset["browser_download_url"] as? String,
+              let assetURL = URL(string: download) else {
+            throw URLError(.cannotParseResponse)
+        }
+        // The nightly release was created once and is never
+        // republished, so its published_at is the creation date;
+        // the asset's updated_at is when this build actually landed.
+        let dateLine = (asset["updated_at"] as? String)
+            .flatMap(AppAnnouncement.dateLine(fromISO:))
+        return ReleaseInfo(version: stamp.version,
+                           build: stamp.build,
+                           notes: strippingNightlyStamp(rawBody),
+                           dateLine: dateLine, assetName: name,
                            assetSize: asset["size"] as? Int ?? 0, directURL: assetURL)
     }
 

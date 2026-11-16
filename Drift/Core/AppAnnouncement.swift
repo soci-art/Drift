@@ -113,7 +113,12 @@ enum AppAnnouncement {
             AppLog.info("公告：复用查更新取到的 \(version) 发行说明，内容标识 \(contentKey(for: notes.body))")
             return notes
         }
-        let api = "https://api.github.com/repos/soci-art/Drift/releases/tags/v\(version)"
+        // Each line reads its own line's notes (Grace, 2026-11-16):
+        // a nightly build's release is the nightly pre-release, not
+        // the formal tag that happens to carry the same number.
+        let api = AppVersion.channel == .nightly
+            ? "https://api.github.com/repos/soci-art/Drift/releases/tags/nightly"
+            : "https://api.github.com/repos/soci-art/Drift/releases/tags/v\(version)"
         for base in [AppUpdateChecker.mirrorPrefix, AppUpdateChecker.secondMirrorPrefix, ""] {
             if let notes = try? await fetchNotes(base: base, api: api) {
                 UserDefaults.standard.set(notes.body, forKey: cacheBodyKey)
@@ -141,8 +146,18 @@ enum AppAnnouncement {
         guard let body = object?["body"] as? String,
               !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { throw URLError(.cannotParseResponse) }
-        let date = (object?["published_at"] as? String).flatMap(Self.dateLine(fromISO:))
-        return Notes(body: body, dateLine: date)
+        var date = (object?["published_at"] as? String).flatMap(Self.dateLine(fromISO:))
+        if AppVersion.channel == .nightly,
+           let assets = object?["assets"] as? [[String: Any]],
+           let updated = assets.first(where: {
+               ($0["name"] as? String)?.hasSuffix(".ipa") == true
+           })?["updated_at"] as? String,
+           let assetDate = Self.dateLine(fromISO: updated) {
+            // The nightly release's published_at is its one-time
+            // creation date; the asset's updated_at is this build's.
+            date = assetDate
+        }
+        return Notes(body: AppUpdateChecker.strippingNightlyStamp(body), dateLine: date)
     }
 
     /// Shared with the update checker, which parses the same

@@ -14,6 +14,14 @@ cd "$(dirname "$0")/.."
 CONFIG="Release"
 CLEAN=0
 XCODE_PROBE_SETTINGS=()
+# The workflow stamps the release line through the environment
+# (DRIFT_CHANNEL=nightly for preview/probe builds); project.yml
+# defaults the setting to the release line when the variable
+# never arrives.
+XCODE_CHANNEL_SETTINGS=()
+if [[ -n "${DRIFT_CHANNEL:-}" ]]; then
+  XCODE_CHANNEL_SETTINGS+=("DRIFT_CHANNEL=$DRIFT_CHANNEL")
+fi
 for arg in "$@"; do
   case "$arg" in
     Debug|Release) CONFIG="$arg" ;;
@@ -44,6 +52,7 @@ xcodebuild -project Drift.xcodeproj \
   -destination 'generic/platform=iOS' \
   -derivedDataPath "$DERIVED" \
   "${XCODE_PROBE_SETTINGS[@]}" \
+  "${XCODE_CHANNEL_SETTINGS[@]}" \
   CODE_SIGNING_ALLOWED=NO build
 
 APP_PATH="$DERIVED/Build/Products/${CONFIG}-iphoneos/Drift.app"
