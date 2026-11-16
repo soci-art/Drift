@@ -24,6 +24,17 @@ enum KernelDirectPremise {
     /// UserDefaults key of the 实验性功能 switch for this method.
     static let enabledKey = "DriftKernelDirectEnabled"
 
+    /// Formal-line suspension (#341, Grace, 2026-11-16): on the
+    /// formal line the kernel channel is closed for now — the build
+    /// it carries predates the fix for the iOS 17.0.3 whole-device
+    /// restart, and the fixes land on the nightly line first. A
+    /// device that would otherwise be ready reads as not ready,
+    /// with the closure itself as the reason, so every surface
+    /// (Home row, judge, flash entry) refuses in the same words.
+    /// This constant exists only in the formal tree; the nightly
+    /// tree does not carry it.
+    static let channelSuspended = true
+
     /// Whether the user has turned the method on in Settings.
     static var isEnabled: Bool {
         UserDefaults.standard.bool(forKey: enabledKey)
@@ -40,10 +51,16 @@ enum KernelDirectPremise {
         /// iOS 17 / 18」 told an 18.7.7 user nothing about where
         /// they stand).
         var pastBandTop: Bool = false
-        /// Both gates passed: the method may be offered as usable.
-        var ready: Bool { inBand && chipCovered }
+        /// The formal line's closure (#341): set when this device
+        /// would be ready but the channel is suspended — see
+        /// `channelSuspended`.
+        var suspended: Bool = false
+        /// Both gates passed and the channel is not suspended: the
+        /// method may be offered as usable.
+        var ready: Bool { inBand && chipCovered && !suspended }
         /// Why not, in one user-facing line (empty when ready).
         var reason: String {
+            if suspended { return "内核直刷暂时关闭" }
             if !inBand { return pastBandTop ? "只支持到 iOS 18.7.1" : "只支持 iOS 17 / 18" }
             if !chipCovered { return "这台机型不在支持表里" }
             return ""
@@ -52,10 +69,12 @@ enum KernelDirectPremise {
 
     static func evaluate(version: String) -> Evaluation {
         let band = isInBand(version: version)
+        let covered = isChipCovered(model: modelIdentifier)
         let major = Int(version.split(separator: ".").first ?? "") ?? 0
         return Evaluation(inBand: band,
-                          chipCovered: isChipCovered(model: modelIdentifier),
-                          pastBandTop: !band && (major == 17 || major == 18))
+                          chipCovered: covered,
+                          pastBandTop: !band && (major == 17 || major == 18),
+                          suspended: channelSuspended && band && covered)
     }
 
     /// iOS 17.0–17.7.x and 18.0–18.7.1.

@@ -10,7 +10,10 @@ import SwiftUI
 ///   未打开 with a pointer back here, its status group leads the
 ///   status card only once it is ready, and the judge blocks a
 ///   kernel pick with the turn-it-on reminder. Turning it off is
-///   silent.
+///   silent. On the formal line the channel is suspended (#341,
+///   Grace, 2026-11-16): an iOS 17 / 18 device tapping the switch
+///   on gets the closure notice instead of the confirmation, and
+///   the switch stays off — see `KernelDirectPremise.channelSuspended`.
 /// * 恢复刷 — the switch is a surface only: any tap answers
 ///   「恢复刷暂不可用」 and the switch stays off. The restore seal
 ///   itself is untouched (`DriftRestoreGate` still decides), this
@@ -19,16 +22,32 @@ import SwiftUI
 struct ExperimentalFeaturesView: View {
     @AppStorage(KernelDirectPremise.enabledKey) private var kernelEnabled = false
     @State private var confirmKernelOn = false
+    @State private var kernelSuspendedNotice = false
     @State private var restoreNotice = false
+
+    /// This device is one of the kernel generations (iOS 17 / 18) —
+    /// the only systems the kernel channel could ever serve, and so
+    /// the only ones the formal line's suspension notice addresses.
+    private var isKernelGeneration: Bool {
+        let major = Int(WorseQueryEscape.processVersion.split(separator: ".").first ?? "") ?? 0
+        return major == 17 || major == 18
+    }
 
     /// Turning the kernel switch on goes through the confirmation
     /// sheet; the stored value only changes when the user confirms.
+    /// On a kernel-generation device the formal line's suspension
+    /// answers instead (#341): the closure notice, and the switch
+    /// stays off.
     private var kernelBinding: Binding<Bool> {
         Binding(
             get: { kernelEnabled },
             set: { newValue in
                 if newValue {
-                    confirmKernelOn = true
+                    if isKernelGeneration {
+                        kernelSuspendedNotice = true
+                    } else {
+                        confirmKernelOn = true
+                    }
                 } else {
                     kernelEnabled = false
                 }
@@ -88,6 +107,15 @@ struct ExperimentalFeaturesView: View {
             actions: [
                 DriftSheetAction("确定") { kernelEnabled = true },
             ])
+        // #341 (Grace, 2026-11-16): the suspension notice is two
+        // lines and one button — no actions of its own, and the
+        // sheet's dismiss button reads 「确定」, not 「取消」.
+        .driftActionSheet(
+            isPresented: $kernelSuspendedNotice,
+            title: "内核直刷暂时关闭",
+            message: "如需启用请开启预发行版开关并检查更新",
+            actions: [],
+            cancelTitle: "确定")
         .driftActionSheet(
             isPresented: $restoreNotice,
             title: "提示",
