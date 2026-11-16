@@ -110,6 +110,9 @@ enum KernelDirectProbe {
     private static func execute(version: String,
                                 model: String,
                                 log: @escaping (String) -> Void) -> Report {
+        executionLock.lock()
+        defer { executionLock.unlock() }
+
         // 1. The band and the table, re-checked here: a stale card, a
         //    restored pick or a future caller cannot wave the chain through.
         log("[内核探针] 1/5 后端复查：iOS \(version)，机型 \(model)")
@@ -187,11 +190,50 @@ enum KernelDirectProbe {
         }
         let selfTestStarted = Date()
         log("[内核探针] 5/5 自检：开始在真实 Store 创建临时文件")
-        let probe = writeReadDelete(in: located.store, log: log)
+        var probe = writeReadDelete(in: located.store, log: log)
         log(String(format: "[内核探针] 5/5 自检结束：耗时 %.2f 秒", Date().timeIntervalSince(selfTestStarted)))
+
+        if let firstFailure = probe.failure {
+            log("[内核探针] 5/5 首次自检失败：\(firstFailure)")
+            let proc = currentKernelSelfProc()
+            if proc == 0 {
+                log("[内核探针] 脱沙盒重试跳过：没有可复用的 proc_self 指针")
+            } else {
+                while !pastDeadline(deadline) {
+                    // access-style check only: no files are created or modified here.
+                    let reportsWritable = FileManager.default.isWritableFile(atPath: located.store)
+                    log("[内核探针] 重试前只读权限检查：Store \(reportsWritable ? "报告可写" : "报告不可写")")
+                    if reportsWritable {
+                        log("[内核探针] 只读检查报告可写，不重复修改内核结构；保留自检失败结果")
+                        break
+                    }
+                    guard let retryNumber = reserveEscapeRetry() else {
+                        log("[内核探针] 脱沙盒重试已达到本进程上限 3 次")
+                        break
+                    }
+                    log("[内核探针] 脱沙盒重试 \(retryNumber)/3：只重新执行 sandbox_escape，不重打内核链")
+                    guard let escapeCode = runEscapeWithDeadline(proc: proc,
+                                                                 deadline: deadline,
+                                                                 log: log) else {
+                        log("[内核探针] 脱沙盒重试 \(retryNumber)/3 超时；本进程内核链标记为不可再次进入")
+                        chainLock.lock(); chainFailedInThisProcess = true; chainLock.unlock()
+                        return timeoutReport(log: log, step: "5/5 脱沙盒重试")
+                    }
+                    log("[内核探针] 脱沙盒重试 \(retryNumber)/3 返回 \(escapeCode)；返回值不作硬门槛，立即重新自检")
+                    probe = writeReadDelete(in: located.store, log: log)
+                    if probe.failure == nil {
+                        log("[内核探针] 脱沙盒重试 \(retryNumber)/3 后自检通过")
+                        break
+                    }
+                    log("[内核探针] 脱沙盒重试 \(retryNumber)/3 后自检仍失败：\(probe.failure ?? "未知原因")")
+                }
+            }
+        }
+
         if let failure = probe.failure {
-            log("[内核探针] 5/5 失败：\(failure)")
-            return Report(passed: false, failure: "PosterBoard 容器写-读-删自检没有通过：\(failure)。")
+            log("[内核探针] 5/5 最终失败：\(failure)；本进程脱沙盒重试计数 \(escapeRetryCountForLog())/3")
+            return Report(passed: false,
+                          failure: "PosterBoard 容器写-读-删自检没有通过：\(failure)。请完全关闭 Drift 后重新打开，再重试一次。")
         }
         log("[内核探针] 5/5 通过：\(probe.path ?? "临时文件") 写入、读回一致、已删除")
         log("[内核探针] 全部通过：PosterBoard 容器可读写，未改动任何壁纸")
@@ -217,15 +259,44 @@ enum KernelDirectProbe {
     private static let codeTimedOut: Int32 = -999
 
     private static let chainLock = NSLock()
-    /// A failed or timed-out chain is not run again in this process: the
-    /// order requires a relaunch, and the chain is not re-entrant.
+    private static let executionLock = NSLock()
+    /// A failed or timed-out kernel chain is never re-entered in this process.
     private static var chainFailedInThisProcess = false
-    /// A successful kernel R/W chain is never re-entered in this process.
+    /// The expensive kernel R/W chain is established at most once per process.
     private static var chainSucceededInThisProcess = false
+    /// proc_self() captured from the successful chain; escape-only retries reuse it.
+    private static var kernelSelfProc: UInt64 = 0
+    /// At most three escape-only retries are allowed in one process.
+    private static var escapeRetriesInThisProcess = 0
 
     private final class CodeBox: @unchecked Sendable {
         var value: Int32 = -1
         var escapeResult: Int32?
+        var selfProc: UInt64 = 0
+    }
+
+    private final class EscapeBox: @unchecked Sendable {
+        var value: Int32 = -1
+    }
+
+    private static func currentKernelSelfProc() -> UInt64 {
+        chainLock.lock()
+        defer { chainLock.unlock() }
+        return kernelSelfProc
+    }
+
+    private static func reserveEscapeRetry() -> Int? {
+        chainLock.lock()
+        defer { chainLock.unlock() }
+        guard escapeRetriesInThisProcess < 3 else { return nil }
+        escapeRetriesInThisProcess += 1
+        return escapeRetriesInThisProcess
+    }
+
+    private static func escapeRetryCountForLog() -> Int {
+        chainLock.lock()
+        defer { chainLock.unlock() }
+        return escapeRetriesInThisProcess
     }
 
     /// Runs `kexploit_opa334` + `sandbox_escape` on a dedicated thread and
@@ -252,6 +323,7 @@ enum KernelDirectProbe {
                 if proc == 0 {
                     box.value = -2
                 } else {
+                    box.selfProc = proc
                     box.escapeResult = sandbox_escape(proc)
                     box.value = 0
                 }
@@ -264,6 +336,11 @@ enum KernelDirectProbe {
         if finished.wait(timeout: .now() + remaining) == .timedOut {
             return codeTimedOut
         }
+        if box.selfProc != 0 {
+            chainLock.lock()
+            kernelSelfProc = box.selfProc
+            chainLock.unlock()
+        }
         if let escapeResult = box.escapeResult {
             log("[内核兼容] sandbox_escape 返回 \(escapeResult)；内核读写链已成功，继续验证目标容器")
         }
@@ -271,6 +348,29 @@ enum KernelDirectProbe {
     }
 
     // MARK: - Chain output capture
+
+    /// Re-run only sandbox_escape on the already-established kernel R/W backend.
+    /// The same 60-second deadline applies; a timed-out worker cannot be killed.
+    private static func runEscapeWithDeadline(proc: UInt64,
+                                              deadline: Date,
+                                              log: @escaping (String) -> Void) -> Int32? {
+        let savedStdout = startStdoutCapture(log: log)
+        defer {
+            if let savedStdout { stopStdoutCapture(saved: savedStdout) }
+        }
+
+        let box = EscapeBox()
+        let finished = DispatchSemaphore(value: 0)
+        Thread.detachNewThread {
+            box.value = sandbox_escape(proc)
+            finished.signal()
+        }
+        let remaining = max(0, deadline.timeIntervalSinceNow)
+        if finished.wait(timeout: .now() + remaining) == .timedOut {
+            return nil
+        }
+        return box.value
+    }
 
     /// Point fd 1 at a pipe and log every line the chain writes, on a reader
     /// thread so a full pipe can never stall the exploit. Returns the saved
