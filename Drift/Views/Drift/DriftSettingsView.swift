@@ -36,6 +36,10 @@ struct DriftSettingsView: View {
     @State private var exportPopupMessage: String?
     @State private var recordBusy = false
     @ObservedObject private var updateChecker = AppUpdateChecker.shared
+    /// #339 (Grace, 2026-11-16): the 预发行版更新 switch — while on,
+    /// the update check also looks at the nightly line. The checker
+    /// reads the same defaults key.
+    @AppStorage(AppUpdateChecker.nightlyOptInKey) private var checkNightlyUpdates = false
     @State private var cacheBreakdown: AppCache.Breakdown?
     @State private var confirmClearCache = false
     // #312 (Grace, 2026-11-13): the clear-cache outcome is a popup
@@ -52,6 +56,7 @@ struct DriftSettingsView: View {
             List {
                 aboutEntrySection
                 announcementSection
+                nightlyUpdateSection
                 connectionSection
                 localRouteSection
                 restoreSealedSection
@@ -215,6 +220,26 @@ struct DriftSettingsView: View {
             Button { showAnnouncement = true } label: {
                 Label("更新公告", systemImage: "megaphone")
             }
+        }
+    }
+
+    // MARK: - Nightly updates opt-in (#339)
+
+    /// One row and a switch, nothing else (Grace's final shape,
+    /// 2026-11-16): the orange one-way warning stands under the
+    /// switch only while it is on. Turning it on checks right away,
+    /// so the update page and the Settings badge can speak without
+    /// waiting for the next launch.
+    private var nightlyUpdateSection: some View {
+        Section {
+            Toggle("预发行版更新", isOn: $checkNightlyUpdates)
+            if checkNightlyUpdates {
+                Text("装上预发行版之后，这个 App 就按预发行版走，只查预发行版的更新；想回正式版，要重新下载正式版装回来。")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+        }
+        .onChange(of: checkNightlyUpdates) { _, isOn in
+            if isOn { Task { await updateChecker.refresh() } }
         }
     }
 
@@ -762,6 +787,12 @@ struct DriftSettingsView: View {
                     Spacer()
                     if updateChecker.updateAvailable, let latest = updateChecker.latest {
                         Text("有新版 \(latest.version)")
+                            .foregroundStyle(.red)
+                    } else if updateChecker.nightlyUpdateAvailable {
+                        // #339: the nightly offer shows here too, so
+                        // the switch's effect is visible without
+                        // opening the update page.
+                        Text("预发行版有新版")
                             .foregroundStyle(.red)
                     } else {
                         Text(updateChecker.currentVersion).foregroundStyle(.secondary)
