@@ -40,6 +40,19 @@ enum InstallEnvironment {
 
     // MARK: - Wording
 
+    /// The one line for "the system is in range, the install is a
+    /// normal one, and the signature carries no usable storage area".
+    /// The status card and the method row print it, and #337's
+    /// entry popup keys on exactly this state.
+    static let noUsableGroupReason = "签名没有能用的存储区，本机直刷用不了，证书签才行。"
+
+    /// #337 (Grace, 2026-11-16): whether the local channel stands
+    /// blocked by the signature alone — system in range, a normal
+    /// install, no usable storage area in the signature.
+    static func blockedBySignatureOnly(version: String, build: String) -> Bool {
+        localReason(version: version, build: build) == noUsableGroupReason
+    }
+
     /// The local channel's unavailable reason, with the install-method
     /// explanation swapped in when that is the actual blocker.
     static func localReason(version: String, build: String) -> String {
@@ -55,6 +68,6 @@ enum InstallEnvironment {
         // #332 (Grace, 2026-11-14): one line — header card and method
         // row both print this, and the named install methods were the
         // first thing she cut.
-        return "签名没有能用的存储区，本机直刷用不了，证书签才行。"
+        return noUsableGroupReason
     }
 }
