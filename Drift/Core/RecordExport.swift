@@ -25,11 +25,13 @@ enum RecordExport {
         /// Plain-language lines naming what the bundle could NOT include.
         let missing: [String]
 
-        /// The big-upload door caps at 24 MB (the inbox's own ceiling).
-        /// Past it the upload no longer refuses (#257, Grace 2026-11-12):
-        /// the bundle is rebuilt WITHOUT the wallpaper packs and the
-        /// log-only bundle goes up instead, its 缺失说明 saying the pack
-        /// stayed behind for size. 导出/分享 always keep the full bundle.
+        /// The big-upload door caps at 50 MB. Past it the upload no
+        /// longer refuses (#257, Grace 2026-11-12) and no longer drops
+        /// every pack at once either (Grace, 2026-11-17): the bundle is
+        /// rebuilt with a byte limit and the packs are fitted in one
+        /// by one, in the order the run flashed them — see
+        /// `build(for:packByteLimit:)`. 导出/分享 always keep the
+        /// full bundle.
         var tooBigToUpload: Bool { bytes > LogUpload.bigMaxBytes }
 
         var sizeText: String {
@@ -40,11 +42,19 @@ enum RecordExport {
 
     /// Build the zip for one record. Throws only for real I/O failures;
     /// missing contents are reported in the bundle, not thrown.
-    /// `includePacks: false` builds the log-only variant the oversize
-    /// upload falls back to (#257): record + log slice, packs declared
-    /// in the 缺失说明 as left behind for size.
+    ///
+    /// With `packByteLimit` set (the upload rebuild), the packs are
+    /// fitted in under that total, one by one in the order the run
+    /// flashed them: a pack that still fits goes in, a pack that does
+    /// not is left behind and named in the 缺失说明， and later —
+    /// smaller — packs still get their turn (Grace, 2026-11-17;
+    /// replaces the #257 all-or-nothing log-only fallback). The
+    /// record and the log slice always go in and count against the
+    /// limit first. Sizes are the files' own sizes plus a per-entry
+    /// allowance for zip bookkeeping, so the finished bundle stays
+    /// under the limit.
     static func build(for record: ApplyHistory.Record,
-                      includePacks: Bool = true) throws -> Bundle {
+                      packByteLimit: Int? = nil) throws -> Bundle {
         let fm = FileManager.default
         let name = "Drift记录-\(fileStamp(from: record.timestamp)).zip"
         let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -52,14 +62,21 @@ enum RecordExport {
         try? fm.removeItem(at: url)
         let archive = try Archive(url: url, accessMode: .create)
         var missing: [String] = []
+        // Bytes already spoken for, for the byte-limit fitting below:
+        // the record text, the log slice, and a flat reserve for the
+        // 缺失说明 and zip bookkeeping.
+        var usedBytes = 8192
 
         // 1 — the record itself.
-        try addText(archive, name: "刷入记录.txt", text: describe(record))
+        let recordText = describe(record)
+        usedBytes += recordText.utf8.count
+        try addText(archive, name: "刷入记录.txt", text: recordText)
 
         // 2 — this run's log slice.
         if let slice = record.logSlice {
             let sliceURL = ApplyHistory.sliceURL(slice)
             if fm.fileExists(atPath: sliceURL.path) {
+                usedBytes += fileSize(sliceURL, fm)
                 try archive.addEntry(with: "本次日志.txt", fileURL: sliceURL)
             } else {
                 missing.append("这次的日志片段（文件已不在）")
@@ -71,17 +88,21 @@ enum RecordExport {
         // 3 — the original pack file(s) that run flashed.
         if let files = record.packFiles, !files.isEmpty {
             for file in files {
-                if !includePacks {
-                    missing.append("原始壁纸包「\(file)」（包太大，这次没带，只传了记录和日志）")
-                    continue
-                }
                 let packURL = PosterBoardImports.directory
                     .appendingPathComponent(file)
-                if fm.fileExists(atPath: packURL.path) {
-                    try archive.addEntry(with: file, fileURL: packURL)
-                } else {
+                guard fm.fileExists(atPath: packURL.path) else {
                     missing.append("原始壁纸包「\(file)」（已不在壁纸包里）")
+                    continue
                 }
+                if let limit = packByteLimit {
+                    let packBytes = fileSize(packURL, fm)
+                    if usedBytes + packBytes > limit {
+                        missing.append("原始壁纸包「\(file)」（包太大，这次没带）")
+                        continue
+                    }
+                    usedBytes += packBytes + 512
+                }
+                try archive.addEntry(with: file, fileURL: packURL)
             }
         } else {
             missing.append("原始壁纸包（这条记录没记下刷的是哪个包）")
@@ -152,6 +173,10 @@ enum RecordExport {
             .replacingOccurrences(of: ":", with: "-")
             .replacingOccurrences(of: "T", with: "-")
             .prefix(17).description
+    }
+
+    private static func fileSize(_ url: URL, _ fm: FileManager) -> Int {
+        ((try? fm.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.intValue ?? 0
     }
 
     private static func addText(_ archive: Archive, name: String, text: String) throws {

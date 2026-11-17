@@ -179,17 +179,16 @@ struct PosterBoardManagerView: View {
         entries.filter { selected.contains($0.id) }
     }
 
+    private func toggleSelection(_ entry: PosterBoardManagement.ManagedEntry) {
+        if selected.contains(entry.id) { selected.remove(entry.id) }
+        else { selected.insert(entry.id) }
+    }
+
     @ViewBuilder
     private func row(_ entry: PosterBoardManagement.ManagedEntry) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            Button {
-                if selected.contains(entry.id) { selected.remove(entry.id) }
-                else { selected.insert(entry.id) }
-            } label: {
-                Image(systemName: selected.contains(entry.id)
-                      ? "checkmark.square.fill" : "square")
-            }
-            .buttonStyle(.plain)
+            Image(systemName: selected.contains(entry.id)
+                  ? "checkmark.square.fill" : "square")
             VStack(alignment: .leading, spacing: 4) {
                 Text(entry.name).font(.subheadline.weight(.medium))
                 Text(entry.provider).font(.caption2).foregroundStyle(.secondary)
@@ -205,6 +204,11 @@ struct PosterBoardManagerView: View {
             // The #275 labels that briefly sat at this edge are gone.
         }
         .padding(.vertical, 2)
+        // Grace, 2026-11-17: the whole row selects, not just the
+        // little checkbox at the front — a tap anywhere on the row
+        // toggles it.
+        .contentShape(Rectangle())
+        .onTapGesture { toggleSelection(entry) }
     }
 
     /// The receipt that proves Drift flashed this entry, if any

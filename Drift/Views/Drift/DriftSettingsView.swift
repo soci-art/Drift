@@ -509,13 +509,16 @@ struct DriftSettingsView: View {
             }
             var uploadURL = bundle.url
             if bundle.tooBigToUpload {
-                // #257 (Grace, 2026-11-12): over the 24 MB door the pack
-                // stays behind — rebuild without the wallpaper packs and
-                // upload record + log only, the 缺失说明 inside saying
-                // exactly that. The full bundle is already saved above.
+                // Over the 50 MB door the bundle is rebuilt with a byte
+                // limit (#257's no-refusal rule, Grace 2026-11-12; the
+                // fitting rule is Grace 2026-11-17): packs go in one by
+                // one in the order the run flashed them until the limit
+                // is reached, the rest are named in the 缺失说明. The
+                // full bundle is already saved above.
                 do {
-                    let slim = try RecordExport.build(for: record, includePacks: false)
-                    uploadURL = slim.url
+                    let fitted = try RecordExport.build(for: record,
+                                                        packByteLimit: LogUpload.bigMaxBytes)
+                    uploadURL = fitted.url
                 } catch {
                     presentExportOutcome(title: "出错了",
                                          message: "文件已存好，但打包上传版失败：\(error.localizedDescription)")
