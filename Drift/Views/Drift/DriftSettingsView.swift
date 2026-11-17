@@ -268,7 +268,7 @@ struct DriftSettingsView: View {
     // MARK: - In-process route
 
     /// The in-process route's premise, shown where the user can act on it:
-    /// whether this system is in range, and which App Group the installed
+    /// whether this system is in range, and which App Group the process
     /// signing profile actually granted.
     private var localRouteSection: some View {
         Section("本机直刷") {
@@ -290,18 +290,26 @@ struct DriftSettingsView: View {
                 VStack(alignment: .trailing, spacing: 2) {
                     if let group = WorseQueryEscape.discoveredGroupIdentifier {
                         Text(group).font(.caption.monospaced())
-                        Text("签名授予，容器可打开")
+                        Text("进程实际带着，容器可打开")
                             .font(.caption2).foregroundStyle(.secondary)
+                    } else if WorseQueryEscape.backend(
+                        deviceVersion: WorseQueryEscape.processVersion,
+                        buildVersion: WorseQueryEscape.processBuildVersion) == .badQuery {
+                        Text("bad_query 不需要 App Group")
+                            .foregroundStyle(.secondary)
+                        Text("iOS 26.0–26.6.1 走 bad_query，直接按路径授权")
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
                     } else {
                         Text("没有可用的组")
                             .foregroundStyle(.orange)
-                        Text("签名没有授予 App Group，或授予的组都打不开")
+                        Text("进程没有带着 App Group，或带着的组都打不开")
                             .font(.caption2).foregroundStyle(.secondary)
                             .multilineTextAlignment(.trailing)
                     }
                 }
             }
-            Text("组名在运行时从安装包内嵌的签名描述文件读取。能用的组只有证书签名才带，免费 ID 签的用不了本机直刷。")
+            Text("组名在运行时向系统查询（SecTask，问的是本进程实际带着的组），逐个试开，第一个能打开的才用；不再读安装包里的描述文件。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

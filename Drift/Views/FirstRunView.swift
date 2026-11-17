@@ -253,7 +253,7 @@ struct FirstRunView: View {
         {
             VStack(alignment: .leading, spacing: 12) {
                 if localReady {
-                    NativeNote("本机直刷可用（iOS \(WorseQueryEscape.processVersion)，签名授予了可用的 App Group）：直接点「完成设置」就能刷，下面的隧道与配对只是要走两条隧道通道时才需要。")
+                    NativeNote("本机直刷可用（iOS \(WorseQueryEscape.processVersion)，进程带着可用的访问权限）：直接点「完成设置」就能刷，下面的隧道与配对只是要走两条隧道通道时才需要。")
                 }
                 stepCard(number: 1, title: "隧道", done: tunnel.isReady,
                          working: tunnel == .peerUnreachable, status: tunnel.shortText,

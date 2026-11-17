@@ -771,7 +771,10 @@ enum PosterBoardLocal {
 
     private static func locateContainerOnce(deadline: Date,
                                             log: @escaping @Sendable (String) -> Void) throws -> (path: String, handle: Int64) {
-        log("本机通道 App Group：\(WorseQueryEscape.discoveredGroupIdentifier ?? "没有可用的组")")
+        let backendName = WorseQueryEscape.backend(
+            deviceVersion: WorseQueryEscape.processVersion,
+            buildVersion: WorseQueryEscape.processBuildVersion).rawValue
+        log("本机通道后端：\(backendName)，App Group：\(WorseQueryEscape.discoveredGroupIdentifier ?? "没有可用的组")")
         let locateStart = DispatchTime.now()
         log("正在定位壁纸商店，第一次会慢一些")
 
