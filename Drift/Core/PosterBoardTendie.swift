@@ -608,7 +608,18 @@ enum PosterBoardImports {
         // that joins the list is already clean. Best-effort: any
         // failure keeps the pack exactly as imported.
         PackIdentity.normalizeStoredPack(at: tendie.url, siblings: load().map(\.url))
-        let clean = (try? PosterBoardTendie(url: tendie.url)) ?? tendie
+        var clean = (try? PosterBoardTendie(url: tendie.url)) ?? tendie
+        let version = DeviceIdentityMonitor.shared.current.version.isEmpty
+            ? WorseQueryEscape.processVersion
+            : DeviceIdentityMonitor.shared.current.version
+        // iOS 17 only (Grace, 2026-11-17): complete the descriptor
+        // instance configurations a pack may not ship — on that
+        // system a missing rendering configuration leaves a flashed
+        // layered wallpaper static. Best-effort and in place, like
+        // the steps around it; other systems are not touched.
+        if let completed = PackInstanceConfigs.completeIfNeeded(clean, deviceVersion: version) {
+            clean = completed
+        }
         var result = [clean]
         // #269: structural problems are repaired at import too, the
         // same repair the detail flow offered by hand. Best-effort —
@@ -616,9 +627,6 @@ enum PosterBoardImports {
         // caller still checks for blocking issues afterwards.
         let importIssues = PackRepair.inspect(clean)
         if !importIssues.isEmpty {
-            let version = DeviceIdentityMonitor.shared.current.version.isEmpty
-                ? WorseQueryEscape.processVersion
-                : DeviceIdentityMonitor.shared.current.version
             if let repaired = try? PackRepair.repair(clean, issues: importIssues,
                                                      deviceVersion: version,
                                                      progress: { _ in }) {
