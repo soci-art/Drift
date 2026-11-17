@@ -779,9 +779,16 @@ final class DriftSession: ObservableObject {
                 packFiles: selection.tendies.map { $0.url.lastPathComponent },
                 logSliceText: RunLog.shared.recordSnapshot()
             )
-            let refreshHint = opened
-                ? "已打开 PosterBoard，请在应用切换器里上滑结束它，它重新打开后就会读到新壁纸。"
-                : "请打开锁定屏幕壁纸选择器刷新 PosterBoard，再从应用切换器上滑结束它。"
+            // The iOS 17.0 import-only route has no database row, so the
+            // system has to discover the descriptor itself (#施工单 1).
+            let refreshHint: String
+            if outcome.systemImportOnly {
+                refreshHint = "这是 iOS 17.0 的系统导入实验：本次没有写数据库登记。请重启手机，或打开 PosterBoard 后从应用切换器上滑结束它，让系统自己导入，再看壁纸能否交互。"
+            } else if opened {
+                refreshHint = "已打开 PosterBoard，请在应用切换器里上滑结束它，它重新打开后就会读到新壁纸。"
+            } else {
+                refreshHint = "请打开锁定屏幕壁纸选择器刷新 PosterBoard，再从应用切换器上滑结束它。"
+            }
             DriftEngine.shared.log(String(format: "[内核直刷] 分段计时：本轮总耗时 %.2f 秒",
                                           Date().timeIntervalSince(roundStarted)))
             let skipNote = skippedPacks.isEmpty ? ""

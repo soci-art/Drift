@@ -6,9 +6,11 @@ import KernelDirect
 /// /delete access inside the actual wallpaper store. It never writes a
 /// wallpaper descriptor; that is the next stage in KernelDirectWriter.
 ///
-/// The probe re-checks the device premise, runs the chain under one hard
-/// 60-second ceiling, then tests the target store itself. sandbox_escape is
-/// attempted for compatibility, but its return value is not the write gate.
+/// The probe re-checks the device premise, then runs two independent
+/// 60-second windows: one for the chain (including its sandbox-escape
+/// retries) and one for locating and testing the store. Neither window can
+/// spend the other's budget. sandbox_escape is attempted for compatibility,
+/// but its return value is not the write gate.
 ///
 /// Success requires all five. A failure returns an error and leaves the device
 /// untouched; the app stays alive because 3106's longjmp path is what runs
@@ -16,8 +18,10 @@ import KernelDirect
 /// requires a relaunch before another attempt, and the chain is not safe to
 /// run twice.
 enum KernelDirectProbe {
-    /// The whole chain, from its start to its return, gets this long.
-    static let timeout: TimeInterval = 60
+    /// The chain, from its start through any sandbox-escape retries.
+    static let chainTimeout: TimeInterval = 60
+    /// Store location and its read/write self-test, counted on its own.
+    static let locationTimeout: TimeInterval = 60
 
     struct Report {
         let passed: Bool
@@ -135,7 +139,7 @@ enum KernelDirectProbe {
         }
 
         let started = Date()
-        let deadline = started.addingTimeInterval(timeout)
+        let chainDeadline = started.addingTimeInterval(chainTimeout)
 
         // Match 3106's iOS 17/18 kernel backend: successful kernel R/W is
         // enough to proceed. sandbox_escape is attempted, but its return
@@ -143,16 +147,16 @@ enum KernelDirectProbe {
         if alreadyEstablished {
             log("[内核探针] 2/5 本进程内核读写已建立，跳过重复 exploit")
         } else {
-            log("[内核探针] 2/5 启动内核链（上限 \(Int(timeout)) 秒）…")
+            log("[内核探针] 2/5 启动内核链（建链段上限 \(Int(chainTimeout)) 秒）…")
             fflush(stdout)
-            let code = runChainWithDeadline(deadline: deadline,
+            let code = runChainWithDeadline(deadline: chainDeadline,
                                             log: { log($0) })
             let elapsed = Date().timeIntervalSince(started)
             if code == codeTimedOut {
                 chainLock.lock(); chainFailedInThisProcess = true; chainLock.unlock()
                 log(String(format: "[内核探针] 2/5 失败：超过 %.0f 秒没有返回，按失败处理", elapsed))
                 return Report(passed: false,
-                              failure: String(format: "内核链超过 %d 秒没有返回，按失败处理。", Int(timeout)))
+                              failure: String(format: "内核链超过 %d 秒没有返回，按失败处理。", Int(chainTimeout)))
             }
             guard code == 0 else {
                 chainLock.lock(); chainFailedInThisProcess = true; chainLock.unlock()
@@ -163,19 +167,26 @@ enum KernelDirectProbe {
             log(String(format: "[内核探针] 2/5 通过：内核读写已建立（耗时 %.1f 秒）", elapsed))
         }
 
+        // The location window starts only after the chain window is done.
+        let locationDeadline = Date().addingTimeInterval(locationTimeout)
+        log("[内核探针] 定位段开始：独立上限 \(Int(locationTimeout)) 秒，不占用建链段")
+
         log("[内核探针] 3/5 内核读写状态确认：sandbox_escape 不作硬门槛")
-        if pastDeadline(deadline) {
-            return timeoutReport(log: log, step: "3/5")
+        if pastDeadline(locationDeadline) {
+            return timeoutReport(log: log, step: "3/5", segment: "定位段",
+                                 seconds: locationTimeout, taintsChain: false)
         }
         log("[内核探针] 3/5 通过：开始检查真实目标容器")
 
         log("[内核探针] 4/5 定位 PosterBoard 容器")
-        if pastDeadline(deadline) {
-            return timeoutReport(log: log, step: "4/5")
+        if pastDeadline(locationDeadline) {
+            return timeoutReport(log: log, step: "4/5", segment: "定位段",
+                                 seconds: locationTimeout, taintsChain: false)
         }
-        let locatedResult = locateStore(deadline: deadline, log: log)
+        let locatedResult = locateStore(deadline: locationDeadline, log: log)
         if locatedResult.timedOut {
-            return timeoutReport(log: log, step: "4/5")
+            return timeoutReport(log: log, step: "4/5", segment: "定位段",
+                                 seconds: locationTimeout, taintsChain: false)
         }
         guard let located = locatedResult.store else {
             log("[内核探针] 4/5 失败：三种找法都没有找到商店")
@@ -185,8 +196,9 @@ enum KernelDirectProbe {
         log("[内核探针] 4/5 通过：容器 \(located.container)，商店 \(located.store)，结构版本 \(versions.isEmpty ? "（无代际目录）" : versions)")
 
         log("[内核探针] 5/5 PosterBoard 容器写-读-删自检")
-        if pastDeadline(deadline) {
-            return timeoutReport(log: log, step: "5/5")
+        if pastDeadline(locationDeadline) {
+            return timeoutReport(log: log, step: "5/5", segment: "定位段",
+                                 seconds: locationTimeout, taintsChain: false)
         }
         let selfTestStarted = Date()
         log("[内核探针] 5/5 自检：开始在真实 Store 创建临时文件")
@@ -199,7 +211,7 @@ enum KernelDirectProbe {
             if proc == 0 {
                 log("[内核探针] 脱沙盒重试跳过：没有可复用的 proc_self 指针")
             } else {
-                while !pastDeadline(deadline) {
+                while !pastDeadline(chainDeadline) {
                     // access-style check only: no files are created or modified here.
                     let reportsWritable = FileManager.default.isWritableFile(atPath: located.store)
                     log("[内核探针] 重试前只读权限检查：Store \(reportsWritable ? "报告可写" : "报告不可写")")
@@ -213,11 +225,12 @@ enum KernelDirectProbe {
                     }
                     log("[内核探针] 脱沙盒重试 \(retryNumber)/3：只重新执行 sandbox_escape，不重打内核链")
                     guard let escapeCode = runEscapeWithDeadline(proc: proc,
-                                                                 deadline: deadline,
+                                                                 deadline: chainDeadline,
                                                                  log: log) else {
                         log("[内核探针] 脱沙盒重试 \(retryNumber)/3 超时；本进程内核链标记为不可再次进入")
                         chainLock.lock(); chainFailedInThisProcess = true; chainLock.unlock()
-                        return timeoutReport(log: log, step: "5/5 脱沙盒重试")
+                        return timeoutReport(log: log, step: "5/5 脱沙盒重试", segment: "建链段",
+                                             seconds: chainTimeout, taintsChain: true)
                     }
                     log("[内核探针] 脱沙盒重试 \(retryNumber)/3 返回 \(escapeCode)；返回值不作硬门槛，立即重新自检")
                     probe = writeReadDelete(in: located.store, log: log)
@@ -230,6 +243,9 @@ enum KernelDirectProbe {
             }
         }
 
+        if probe.failure != nil, pastDeadline(chainDeadline) {
+            log("[内核探针] 5/5 建链段时限已到，不再做脱沙盒重试")
+        }
         if let failure = probe.failure {
             log("[内核探针] 5/5 最终失败：\(failure)；本进程脱沙盒重试计数 \(escapeRetryCountForLog())/3")
             return Report(passed: false,
@@ -244,10 +260,16 @@ enum KernelDirectProbe {
                       structureVersions: located.structureVersions)
     }
 
-    private static func timeoutReport(log: (String) -> Void, step: String) -> Report {
-        chainLock.lock(); chainFailedInThisProcess = true; chainLock.unlock()
-        log("[内核探针] \(step) 失败：超过总时限 \(Int(timeout)) 秒")
-        return Report(passed: false, failure: "超过总时限 \(Int(timeout)) 秒，按失败处理。")
+    private static func timeoutReport(log: (String) -> Void,
+                                      step: String,
+                                      segment: String,
+                                      seconds: TimeInterval,
+                                      taintsChain: Bool) -> Report {
+        if taintsChain {
+            chainLock.lock(); chainFailedInThisProcess = true; chainLock.unlock()
+        }
+        log("[内核探针] \(step) 失败：\(segment)超过 \(Int(seconds)) 秒")
+        return Report(passed: false, failure: "\(segment)超过 \(Int(seconds)) 秒，按失败处理。")
     }
 
     private static func pastDeadline(_ deadline: Date) -> Bool {
@@ -350,7 +372,8 @@ enum KernelDirectProbe {
     // MARK: - Chain output capture
 
     /// Re-run only sandbox_escape on the already-established kernel R/W backend.
-    /// The same 60-second deadline applies; a timed-out worker cannot be killed.
+    /// It uses the chain window's remaining time; a timed-out worker cannot
+    /// be killed.
     private static func runEscapeWithDeadline(proc: UInt64,
                                               deadline: Date,
                                               log: @escaping (String) -> Void) -> Int32? {

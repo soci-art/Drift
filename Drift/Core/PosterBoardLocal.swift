@@ -147,6 +147,94 @@ enum PosterBoardLocal {
         }
     }
 
+    // MARK: - Kernel-line cold-start preheat
+
+    private static let kernelPrewarmLock = NSLock()
+    private static var kernelPrewarmStarted = false
+
+    /// Cold-start preheat for 内核直刷, without touching the kernel chain.
+    ///
+    /// Only sources that need no kernel access are consulted: the tunnel's
+    /// cached container and the container paths recorded in receipt journals.
+    /// The path goes into the same cache the kernel probe reads first, so a
+    /// later locate can hit it before pathleak. Nothing is scanned, the probe's
+    /// order and deadlines are untouched, and no file outside UserDefaults is
+    /// written. When neither source holds a path — a first cold start — the
+    /// negative is logged instead of inventing one.
+    static func startKernelPrewarmIfNeeded() {
+        guard KernelDirectPremise.evaluate(version: WorseQueryEscape.processVersion).ready else {
+            return
+        }
+        guard cachedContainer.isEmpty else { return }
+
+        kernelPrewarmLock.lock()
+        if kernelPrewarmStarted {
+            kernelPrewarmLock.unlock()
+            return
+        }
+        kernelPrewarmStarted = true
+        kernelPrewarmLock.unlock()
+
+        var source = ""
+        var path = ""
+        let tunnel = PosterBoardAirlift.cachedContainer
+        if isApplicationContainerPath(tunnel) {
+            path = normalizedContainerPath(tunnel)
+            source = "隧道缓存"
+        } else {
+            for receipt in PosterBoardLocalReceipts.load() {
+                guard let container = PosterBoardManagement.containerPath(from: receipt.parent),
+                      isApplicationContainerPath(container) else { continue }
+                path = normalizedContainerPath(container)
+                source = "旧回执"
+                break
+            }
+        }
+
+        if !path.isEmpty {
+            cachedContainer = path
+            AppLog.write("冷启动预热：从\(source)写入容器缓存 \(path)（未跑内核链、未扫描）")
+            return
+        }
+
+        // The last source that needs no kernel chain: the tunnel's own
+        // app-container lookup. It needs the pairing record and the external
+        // tunnel. iOS 17.0 refused this query before, which is exactly what
+        // this attempt reports — the result is logged either way.
+        guard FileManager.default.fileExists(atPath: AppPaths.pairingFile.path) else {
+            AppLog.write("冷启动预热：没有不依赖内核链的容器路径来源（隧道缓存为空、无旧回执、无配对文件）；首次定位仍由内核探针完成")
+            return
+        }
+        AppLog.write("冷启动预热：隧道缓存与旧回执都没有路径，改问配对隧道（不跑内核链）")
+        Task.detached(priority: .utility) {
+            let started = DispatchTime.now()
+            do {
+                let container = try await PosterBoardAirlift.resolveContainer(
+                    pairingPath: AppPaths.pairingFile.path)
+                let normalized = normalizedContainerPath(container)
+                guard isApplicationContainerPath(normalized) else {
+                    AppLog.write("冷启动预热：隧道返回的路径不是应用容器，丢弃：\(container)")
+                    return
+                }
+                cachedContainer = normalized
+                AppLog.write(String(format: "冷启动预热：隧道查询命中 %@（耗时 %.0f ms，未跑内核链）",
+                                    normalized, millis(since: started)))
+            } catch {
+                AppLog.write("冷启动预热：隧道查询失败（\(error.localizedDescription)），没有缓存路径；首次定位仍由内核探针完成")
+            }
+        }
+    }
+
+    private static func normalizedContainerPath(_ path: String) -> String {
+        path.hasSuffix("/") ? String(path.dropLast()) : path
+    }
+
+    private static func isApplicationContainerPath(_ path: String) -> Bool {
+        let normalized = normalizedContainerPath(path)
+        guard normalized.hasPrefix(applicationsRoot + "/") else { return false }
+        return UUID(uuidString: (normalized as NSString).lastPathComponent) != nil
+    }
+
     // MARK: - Apply
 
     /// Inject the selected packs, then hand the user the activation step.
