@@ -82,7 +82,7 @@ struct DriftTutorialChannelView: View {
         switch channel {
         case .local:
             return [
-                "证书签名（签名里要带能用的组；免费 ID 签没有能用的组，用不了）",
+                "签名看系统：iOS 26.0–26.6.1 不挑签名、不用组，免费 ID 签也能用；其余系统要证书签名（带能用的组），免费 ID 签用不了",
                 "系统在 iOS 26.0 正式版到 iOS 27.2.1 正式版之间；iOS 27.2 beta 1 / beta 2、iOS 27.3 beta 1 也行",
                 "不用配对、不用隧道，也不用连 Wi-Fi",
             ]

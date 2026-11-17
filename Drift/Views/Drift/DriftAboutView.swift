@@ -61,7 +61,7 @@ struct DriftAboutView: View {
                 tableRow(row)
                 if row.version != Self.tableRows.last?.version { Divider() }
             }
-            Text("✓ = 能用，— = 用不了。本机直刷还要证书签名带能用的组；没有能用的组，本机直刷这一列就全是 —。")
+            Text("✓ = 能用，— = 用不了。本机直刷里 iOS 26.0 – 26.1 不用证书、不用组，免费 ID 签也能用；其余系统要证书签名带能用的组，没有能用的组就用不了。")
                 .font(.caption).foregroundStyle(.secondary)
             Text("iOS 18.7.2 起，内核直刷用不了，只能走两条隧道通道。")
                 .font(.caption).foregroundStyle(.secondary)
@@ -83,6 +83,7 @@ struct DriftAboutView: View {
         let noRespring: Bool
         let respring: Bool
         let local: Bool
+        var localNoCert: Bool = false
         var kernel: Bool = false
     }
 
@@ -106,8 +107,11 @@ struct DriftAboutView: View {
         TableRow(version: "iOS 17.0 – 17.7.x", noRespring: false, respring: false, local: false, kernel: true),
         TableRow(version: "iOS 18.0 – 18.7.1", noRespring: true, respring: true, local: false, kernel: true),
         TableRow(version: "iOS 18.7.2 起", noRespring: true, respring: true, local: false, kernel: false),
-        TableRow(version: "iOS 26.0 – 26.1 正式版", noRespring: false, respring: false, local: true),
-        TableRow(version: "iOS 26.2 – 27.1 正式版", noRespring: true, respring: true, local: true),
+        // 26 splits at 26.6.1 (Grace, 2026-11-17): bad_query below —
+        // the only row with a localNoCert tick — worse_query above.
+        TableRow(version: "iOS 26.0 – 26.1 正式版", noRespring: false, respring: false, local: true, localNoCert: true),
+        TableRow(version: "iOS 26.7 – 26.2 正式版", noRespring: true, respring: true, local: true),
+        TableRow(version: "iOS 27.0 – 27.2 正式版", noRespring: true, respring: true, local: true),
         TableRow(version: "iOS 27.2 beta 1 / beta 2", noRespring: true, respring: true, local: true),
         TableRow(version: "iOS 27.2 beta 3 起", noRespring: false, respring: false, local: true),
         TableRow(version: "iOS 27.2 正式版", noRespring: false, respring: false, local: true),
@@ -119,16 +123,20 @@ struct DriftAboutView: View {
     private var tableHeader: some View {
         HStack(spacing: 4) {
             Text("系统版本").frame(maxWidth: .infinity, alignment: .leading)
-            Text("免注销直刷").frame(width: 56).minimumScaleFactor(0.85).lineLimit(1)
-            Text("注销直刷").frame(width: 56).minimumScaleFactor(0.85).lineLimit(1)
+            Text("免注销直刷").frame(width: 47).minimumScaleFactor(0.85).lineLimit(1)
+            Text("注销直刷").frame(width: 47).minimumScaleFactor(0.85).lineLimit(1)
             // #333 (Grace, 2026-11-14): the local column must say up
             // front that it needs a certificate, not only in the
             // footnote under the table.
             VStack(spacing: 0) {
                 Text("本机直刷").minimumScaleFactor(0.85).lineLimit(1)
                 Text("需证书").font(.caption2.weight(.semibold)).foregroundStyle(.orange)
-            }.frame(width: 56)
-            Text("内核直刷").frame(width: 56).minimumScaleFactor(0.85).lineLimit(1)
+            }.frame(width: 47)
+            VStack(spacing: 0) {
+                Text("本机直刷").minimumScaleFactor(0.85).lineLimit(1)
+                Text("无需证书").font(.caption2.weight(.semibold)).foregroundStyle(.green)
+            }.frame(width: 47)
+            Text("内核直刷").frame(width: 47).minimumScaleFactor(0.85).lineLimit(1)
         }
         .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
     }
@@ -138,10 +146,11 @@ struct DriftAboutView: View {
             Text(row.version).font(.subheadline)
                 .minimumScaleFactor(0.8).lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            mark(row.noRespring).frame(width: 56)
-            mark(row.respring).frame(width: 56)
-            mark(row.local).frame(width: 56)
-            mark(row.kernel).frame(width: 56)
+            mark(row.noRespring).frame(width: 47)
+            mark(row.respring).frame(width: 47)
+            mark(row.local).frame(width: 47)
+            mark(row.localNoCert).frame(width: 47)
+            mark(row.kernel).frame(width: 47)
         }
     }
 

@@ -34,9 +34,10 @@ import WorseQuery
 ///
 /// ## Supported systems
 ///
-/// Upstream states iOS 26.0 – 26.7.2 and 27.x up to 27.2. An unparsable or empty
-/// version is refused rather than guessed at: on an unknown system the extension
-/// must not be attempted.
+/// Upstream states iOS 26.0 – 26.7.2 and 27.x up to 27.3; Drift admits less:
+/// 27.2 stops at 27.2.1 and 27.3 is beta 1 only, by build number. An
+/// unparsable or empty version is refused rather than guessed at: on an
+/// unknown system the extension must not be attempted.
 enum WorseQueryEscape {
     // MARK: - Configuration
 
@@ -80,10 +81,19 @@ enum WorseQueryEscape {
               let major = Int(parts[0]), let minor = Int(parts[1]) else { return .unsupported }
         let patch = parts.count > 2 ? Int(parts[2]) ?? 0 : 0
         // 3106 keeps bad_query as the primitive backend on the builds it was
-        // verified for; 26.7+ and 27.x take worse_query.
+        // verified for; 26.7+ and 27.x take worse_query. Drift's own ceiling
+        // is narrower than upstream's stated range: 27.2 stops at 27.2.1 and
+        // 27.3 is admitted only as beta 1, identified by its build number.
         if major == 26, minor < 6 || (minor == 6 && patch <= 1) { return .badQuery }
         if major == 26, minor == 7, patch <= 2 { return .worseQuery }
-        if major == 27, minor <= 3 { return .worseQuery }
+        if major == 27 {
+            if minor < 2 { return .worseQuery }
+            if minor == 2, patch <= 1 { return .worseQuery }
+            if minor == 3, patch == 0,
+               buildVersion.trimmingCharacters(in: .whitespacesAndNewlines) == "24C5037i" {
+                return .worseQuery
+            }
+        }
         return .unsupported
     }
 
@@ -101,7 +111,7 @@ enum WorseQueryEscape {
         var errorDescription: String? {
             switch self {
             case .unsupportedSystem(let version):
-                return "本机直刷只支持 iOS 26.0–26.7.2、27.0–27.3；"
+                return "本机直刷只支持 iOS 26.0–26.7.2、27.0–27.2.1，以及 iOS 27.3 beta 1（构建 24C5037i）；"
                     + "这台设备报告的是 \(version.isEmpty ? "未知系统" : "iOS \(version)")。"
             case .groupUnavailable:
                 return "当前进程没有可用的 App Group，worse_query 用不了。"
@@ -190,8 +200,9 @@ enum WorseQueryEscape {
 
     /// Whether the running system is in the channel's range.
     ///
-    /// 3106's ranges: bad_query on 26.0–26.6.1, worse_query on 26.7–26.7.2 and
-    /// 27.0–27.3. Everything else fails closed.
+    /// bad_query on 26.0–26.6.1; worse_query on 26.7–26.7.2, 27.0–27.2.1 and
+    /// 27.3 beta 1 (build 24C5037i) — Drift's own ceiling, narrower than
+    /// upstream's stated range. Everything else fails closed.
     static func isSupported(deviceVersion: String, buildVersion: String = "") -> Bool {
         backend(deviceVersion: deviceVersion, buildVersion: buildVersion) != .unsupported
     }
@@ -226,7 +237,7 @@ enum WorseQueryEscape {
     /// menu item's disabled state, so the three cannot drift apart.
     static func unavailableReason(deviceVersion: String, buildVersion: String = "") -> String {
         if !isSupported(deviceVersion: deviceVersion, buildVersion: buildVersion) {
-            return "本机直刷只支持 iOS 26.0–26.7.2、27.0–27.3；"
+            return "本机直刷只支持 iOS 26.0–26.7.2、27.0–27.2.1，以及 iOS 27.3 beta 1（构建 24C5037i）；"
                 + "这台设备报告的是 \(deviceVersion.isEmpty ? "未知系统" : "iOS \(deviceVersion)")"
                 + (buildVersion.isEmpty ? "。" : "（\(buildVersion)）。")
         }
