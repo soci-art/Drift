@@ -29,8 +29,10 @@ import WorseQuery
 /// disk does not list. No group means every worse_query call fails with `-1`
 /// and `isAvailable` says no.
 ///
-/// iOS 26.0–26.6.1 takes the `bad_query` backend instead, which needs no App
-/// Group at all; 26.7+ and 27.x take `worse_query`.
+/// iOS 26.0–26.6.1 is the overlap segment: both backends cover it, so the
+/// signing decides — a process carrying a usable App Group takes
+/// `worse_query`, one without takes `bad_query`, which needs no App Group
+/// at all. 26.7+ and 27.x take `worse_query` only.
 ///
 /// ## Supported systems
 ///
@@ -84,7 +86,14 @@ enum WorseQueryEscape {
         // verified for; 26.7+ and 27.x take worse_query. Drift's own ceiling
         // is narrower than upstream's stated range: 27.2 stops at 27.2.1 and
         // 27.3 is admitted only as beta 1, identified by its build number.
-        if major == 26, minor < 6 || (minor == 6 && patch <= 1) { return .badQuery }
+        // The overlap segment (Grace, 2026-11-18): the version picks the
+        // segment, the group picks the backend inside it — a usable group
+        // (what a certificate signature grants) takes worse_query, no
+        // group takes bad_query. The group is resolved once per process,
+        // so consume / release / describe all derive the same answer.
+        if major == 26, minor < 6 || (minor == 6 && patch <= 1) {
+            return groupContainer != nil ? .worseQuery : .badQuery
+        }
         if major == 26, minor == 7, patch <= 2 { return .worseQuery }
         if major == 27 {
             if minor < 2 { return .worseQuery }

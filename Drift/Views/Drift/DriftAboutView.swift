@@ -61,7 +61,7 @@ struct DriftAboutView: View {
                 tableRow(row)
                 if row.version != Self.tableRows.last?.version { Divider() }
             }
-            Text("✓ = 能用，— = 用不了。本机直刷里 iOS 26.0 – 26.1 不用证书、不用组，免费 ID 签也能用；其余系统要证书签名带能用的组，没有能用的组就用不了。")
+            Text("✓ = 能用，— = 用不了。iOS 26.0 – 26.6.1 有证书、没证书都能用：带着能用的组就走用组的那条路，没有组就走不用组的那条路。其余系统要证书签名带能用的组，没有能用的组就用不了。")
                 .font(.caption).foregroundStyle(.secondary)
             Text("iOS 18.7.2 起，内核直刷用不了，只能走两条隧道通道。")
                 .font(.caption).foregroundStyle(.secondary)
