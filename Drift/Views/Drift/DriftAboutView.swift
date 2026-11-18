@@ -123,20 +123,20 @@ struct DriftAboutView: View {
     private var tableHeader: some View {
         HStack(spacing: 4) {
             Text("系统版本").frame(maxWidth: .infinity, alignment: .leading)
-            Text("免注销直刷").frame(width: 47).minimumScaleFactor(0.85).lineLimit(1)
-            Text("注销直刷").frame(width: 47).minimumScaleFactor(0.85).lineLimit(1)
+            Text("免注销直刷").frame(width: 47).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            Text("注销直刷").frame(width: 47).lineLimit(2).fixedSize(horizontal: false, vertical: true)
             // #333 (Grace, 2026-11-14): the local column must say up
             // front that it needs a certificate, not only in the
             // footnote under the table.
             VStack(spacing: 0) {
-                Text("本机直刷").minimumScaleFactor(0.85).lineLimit(1)
-                Text("需证书").font(.caption2.weight(.semibold)).foregroundStyle(.orange)
+                Text("本机直刷").lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                Text("需证书").font(.caption2.weight(.semibold)).lineLimit(2).fixedSize(horizontal: false, vertical: true).foregroundStyle(.orange)
             }.frame(width: 47)
             VStack(spacing: 0) {
                 Text("本机直刷").minimumScaleFactor(0.85).lineLimit(1)
-                Text("无需证书").font(.caption2.weight(.semibold)).foregroundStyle(.green)
+                Text("无需证书").font(.caption2.weight(.semibold)).lineLimit(2).fixedSize(horizontal: false, vertical: true).foregroundStyle(.green)
             }.frame(width: 47)
-            Text("内核直刷").frame(width: 47).minimumScaleFactor(0.85).lineLimit(1)
+            Text("内核直刷").frame(width: 47).lineLimit(2).fixedSize(horizontal: false, vertical: true)
         }
         .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
     }
@@ -144,7 +144,8 @@ struct DriftAboutView: View {
     private func tableRow(_ row: TableRow) -> some View {
         HStack(spacing: 4) {
             Text(row.version).font(.subheadline)
-                .minimumScaleFactor(0.8).lineLimit(1)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
             mark(row.noRespring).frame(width: 47)
             mark(row.respring).frame(width: 47)
