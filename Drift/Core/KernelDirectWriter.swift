@@ -175,6 +175,13 @@ enum KernelDirectWriter {
 
             for (index, descriptor) in descriptors.enumerated() {
                 guard PosterBoard.managedProviders.contains(descriptor.extensionID) else {
+                    // The container provider gets the same plain wording
+                    // as the session-layer refusal (Grace, 2026-11-18):
+                    // a raw provider id is not user language.
+                    if descriptor.extensionID == PosterBoardPosterType.container.extensionBundleID {
+                        throw DriftError("「\(source.name)」是『容器』类型的包，这类包内核直刷写不了。"
+                            + "请到壁纸包页把它的出现位置改回『自动』，再刷一次。")
+                    }
                     throw DriftError("不支持的 PosterBoard provider：\(descriptor.extensionID)")
                 }
                 let numericID = Int.random(in: PosterBoard.identifierRange)

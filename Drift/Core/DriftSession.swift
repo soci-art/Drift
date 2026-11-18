@@ -598,6 +598,18 @@ final class DriftSession: ObservableObject {
         guard premise.ready else {
             return (false, "内核直刷现在用不了：\(premise.reason)。")
         }
+        // Container-type packs (Grace, 2026-11-18): the kernel writer
+        // only writes the managed providers, and a pack whose 出现位置
+        // is 容器 resolves to a provider outside that set — so every
+        // such round used to run the full probe first and then die in
+        // the writer with the raw provider name as the error. Refuse
+        // here, before the probe, and say what to do instead.
+        let containerPacks = selection.tendies.filter { $0.posterType == .container }
+        guard containerPacks.isEmpty else {
+            let names = containerPacks.map(\.name).joined(separator: "、")
+            return (false, "「\(names)」是『容器』类型的包，这类包内核直刷写不了。"
+                + "请到壁纸包页把它的出现位置改回『自动』，再刷一次。")
+        }
 
         flashCover = true
         flashStage = "正在验证内核与 PosterBoard 容器读写，期间不要切后台或锁屏"
