@@ -18,19 +18,25 @@ One thing only: consuming a sandbox extension for PosterBoard's data container,
 so a wallpaper pack can be written into
 `…/PRBPosterExtensionDataStore/<version>/Extensions/…/descriptors/` from inside
 the app. The alternative route (AirLift) needs a pairing record and a live
-tunnel; this one does not, which is why it also works on iOS 26.0 – 26.1 and on
-27.2 builds where AirLift is blocked.
+tunnel; this one does not. iOS 26.0–26.6.1 takes the `bad_query` backend (no
+App Group needed); 26.7–26.7.2 and 27.0–27.3 take `worse_query`.
 
-## Requirement: an App Group entitlement
+## Requirements, split by system (3106's routing)
 
-`worse_query` is not an entitlement bypass. It stages a symlink inside an App
-Group container the app is entitled to, and asks containermanagerd to resolve
-it — so the app's signing profile must contain
-`com.apple.security.application-groups` with the identifier Drift asks for
-(`group.com.sociart.drift`, see `Drift/Core/WorseQuery.swift`).
+- **iOS 26.0–26.6.1 — `bad_query`.** `bad_query.c` is copied verbatim from
+  QuinnTang74/3106 (`ThreeOneOSSix/exploit/bad_query.c`, GPL-3.0). It anchors
+  the container query at `systemgroup.com.apple.mobilegestaltcache` (class 13)
+  with a relative part domain, so it needs no App Group and no signing
+  entitlement beyond the app itself.
+- **iOS 26.7–26.7.2 and 27.0–27.3 — `worse_query`.** It stages a symlink
+  inside an App Group container the process actually carries, and asks
+  containermanagerd to resolve it.
 
-In practice that means a paid Apple Developer account: free "personal team"
-profiles cannot register App Groups. A sideloaded build survives, because the
-signer applies its own profile's entitlements; when the group is absent the
-mode reports itself unavailable and Drift falls back to AirLift or the
+The group is **not** read from the embedded provisioning profile. `app_group.m`
+(also from 3106) asks SecTask for
+`com.apple.security.application-groups` on the running process, then tries every
+group in that list and keeps the first whose container opens. A re-sign that
+carries real groups therefore works even when the profile on disk is missing or
+lists a different set. When the process carries no openable group the worse
+route reports itself unavailable and Drift falls back to AirLift or the
 protected-backup route instead of failing a run.

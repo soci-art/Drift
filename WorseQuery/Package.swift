@@ -1,7 +1,8 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
-/// worse_query (forcequitOS/worse_query) as a local SwiftPM package.
+/// worse_query (forcequitOS/worse_query) and 3106's bad_query as a local
+/// SwiftPM package.
 ///
 /// Kept in its own package rather than inside `Vendor/` on purpose: `Vendor` is
 /// the vendored golden-nugget stack (Minimuxer, IDevice, AirLift, ZIPFoundation)

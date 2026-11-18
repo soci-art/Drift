@@ -61,7 +61,7 @@ struct DriftAboutView: View {
                 tableRow(row)
                 if row.version != Self.tableRows.last?.version { Divider() }
             }
-            Text("✓ = 能用，— = 用不了。本机直刷还要证书签名带能用的组；没有能用的组，本机直刷这一列就全是 —。")
+            Text("✓ = 能用，— = 用不了。iOS 26.0–26.6.1 使用 bad_query，不要求 App Group；其余本机直刷版本使用 worse_query，需要当前进程带有可打开的 App Group。")
                 .font(.caption).foregroundStyle(.secondary)
             Text("iOS 18.7.2 起，内核直刷用不了，只能走两条隧道通道。")
                 .font(.caption).foregroundStyle(.secondary)
@@ -126,7 +126,7 @@ struct DriftAboutView: View {
             // footnote under the table.
             VStack(spacing: 0) {
                 Text("本机直刷").minimumScaleFactor(0.85).lineLimit(1)
-                Text("需证书").font(.caption2.weight(.semibold)).foregroundStyle(.orange)
+                Text("分系统").font(.caption2.weight(.semibold)).foregroundStyle(.orange)
             }.frame(width: 56)
             Text("内核直刷").frame(width: 56).minimumScaleFactor(0.85).lineLimit(1)
         }

@@ -309,6 +309,14 @@ struct DriftSettingsView: View {
                 Text("刷完上滑关闭 PosterBoard")
                     .foregroundStyle(.secondary)
             }
+            HStack {
+                Label("写入后端", systemImage: "arrow.triangle.branch")
+                Spacer()
+                let backend = WorseQueryEscape.backend(deviceVersion: WorseQueryEscape.processVersion,
+                                                       buildVersion: WorseQueryEscape.processBuildVersion)
+                Text(backend == .badQuery ? "bad_query（无需 App Group）" : (backend == .worseQuery ? "worse_query（需要 App Group）" : "不支持"))
+                    .foregroundStyle(.secondary)
+            }
             HStack(alignment: .top) {
                 Label("App Group", systemImage: "person.2")
                 Spacer()
@@ -326,7 +334,7 @@ struct DriftSettingsView: View {
                     }
                 }
             }
-            Text("组名在运行时从安装包内嵌的签名描述文件读取。能用的组只有证书签名才带，免费 ID 签的用不了本机直刷。")
+            Text("iOS 26.0–26.6.1 使用 bad_query，不需要 App Group；其余支持版本使用 worse_query，需要当前进程实际带有可打开的组。组名通过 SecTask 从当前进程的签名权限中读取。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

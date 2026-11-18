@@ -21,40 +21,44 @@ import WorseQuery
 ///
 /// ## What it is not
 ///
-/// It is not an entitlement bypass. The App Group has to be real and has to be
-/// granted by the signing profile the app was installed with
-/// (`com.apple.security.application-groups` in its embedded
-/// `.mobileprovision`). The bridge discovers which groups that profile grants at
-/// runtime and uses the first whose container opens
-/// (`discoveredGroupIdentifier`); without one every call fails with `-1` and
-/// `isAvailable` says no, so a free "personal team" install simply keeps using
-/// the tunnel routes.
+/// It is not an entitlement bypass. The worse_query route needs an App Group
+/// the process *actually carries*. The bridge asks the system for that list
+/// with SecTask (the same way 3106 does) and uses the first group whose
+/// container opens (`discoveredGroupIdentifier`); the embedded provisioning
+/// profile is not consulted, because a re-sign can carry groups the profile on
+/// disk does not list. No group means every worse_query call fails with `-1`
+/// and `isAvailable` says no.
+///
+/// iOS 26.0–26.6.1 is the overlap segment: both backends cover it, so the
+/// signing decides — a process carrying a usable App Group takes
+/// `worse_query`, one without takes `bad_query`, which needs no App Group
+/// at all. 26.7+ and 27.x take `worse_query` only.
 ///
 /// ## Supported systems
 ///
-/// Upstream states iOS 26.0 – 26.7.2 and 27.x up to 27.2. An unparsable or empty
-/// version is refused rather than guessed at: on an unknown system the extension
-/// must not be attempted.
+/// Upstream states iOS 26.0 – 26.7.2 and 27.x up to 27.3; Drift admits less:
+/// 27.2 stops at 27.2.1 and 27.3 is beta 1 only, by build number. An
+/// unparsable or empty version is refused rather than guessed at: on an
+/// unknown system the extension must not be attempted.
 enum WorseQueryEscape {
     // MARK: - Configuration
 
-    /// The App Group the escape stages its symlink in, discovered at runtime.
+    /// The App Group this process actually carries, discovered at runtime.
     ///
-    /// A group name is not a free choice: it has to be one the *installed*
-    /// signing profile actually grants. The hard-coded name this used to carry
-    /// (`group.com.sociart.drift`) only matches some paid profiles — a p12
-    /// certificate often gets `group.<hash>.1`, and SideStore / AltStore re-sign
-    /// with their own prefix — and a mismatch made
-    /// `containerURL(forSecurityApplicationGroupIdentifier:)` return nil, so the
-    /// whole in-process route reported "no App Group" on a build that had one.
-    ///
-    /// The bridge therefore reads the entitlements of the provisioning profile
-    /// embedded in the installed app (`embedded.mobileprovision`), asks the
-    /// system to open each granted group in order, and keeps the first that
-    /// opens. The container resolution and every `worse_query` call use that
-    /// discovered name. No group, or none that opens, means the route is
-    /// unavailable — there is deliberately no hard-coded fallback.
-    static let discoveredGroupIdentifier: String? = discoverGroupIdentifier()
+    /// 3106 reads the process's own entitlements with SecTask instead of
+    /// trusting the embedded provisioning profile: a p12 / SideStore / AltStore
+    /// re-sign carries whatever groups the signing certificate granted, and the
+    /// profile on disk can be absent or list a different set. Every grant name
+    /// is then tried in the entitlement's own order, and the first one whose
+    /// container opens is used. No group, or none that opens, means the
+    /// worse_query route is unavailable — there is deliberately no hard-coded
+    /// fallback.
+    static let discoveredGroupIdentifier: String? = {
+        guard let raw = drift_app_group() else { return nil }
+        defer { drift_app_group_free(raw) }
+        let group = String(cString: raw)
+        return group.isEmpty ? nil : group
+    }()
 
     /// The App Group's container, or nil when the profile grants none this
     /// process can open. Resolved once per process.
@@ -63,54 +67,43 @@ enum WorseQueryEscape {
             FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0)
         }
 
-    /// The entitlement that carries the granted App Group list.
-    private static let applicationGroupsKey = "com.apple.security.application-groups"
-
-    /// The profile the installed app was signed with, if the bundle has one.
-    ///
-    /// Read from the app bundle rather than from the build's entitlements: the
-    /// profile that matters is the one the installer actually used, which is
-    /// exactly what a reset (SideStore / AltStore / a p12) rewrites.
-    private static func embeddedProvisioningProfile() -> Data? {
-        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision") else {
-            return nil
-        }
-        return try? Data(contentsOf: url)
+    /// The sandbox backend the running system takes, split the way 3106 does.
+    enum Backend: String {
+        case badQuery
+        case worseQuery
+        case unsupported
     }
 
-    /// The first granted group whose container opens, or nil.
-    ///
-    /// Order is the profile's own: the first entry is the one the signing tool
-    /// put there first, and any of them is enough for the escape.
-    static func discoverGroupIdentifier(profileData: Data? = WorseQueryEscape.embeddedProvisioningProfile()) -> String? {
-        guard let profileData else { return nil }
-        for group in applicationGroups(inProvisioningProfile: profileData) {
-            if FileManager.default.containerURL(
-                forSecurityApplicationGroupIdentifier: group) != nil {
-                return group
+    static func backend(deviceVersion: String, buildVersion: String = "") -> Backend {
+        let parts = deviceVersion
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count >= 2,
+              parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) }),
+              let major = Int(parts[0]), let minor = Int(parts[1]) else { return .unsupported }
+        let patch = parts.count > 2 ? Int(parts[2]) ?? 0 : 0
+        // 3106 keeps bad_query as the primitive backend on the builds it was
+        // verified for; 26.7+ and 27.x take worse_query. Drift's own ceiling
+        // is narrower than upstream's stated range: 27.2 stops at 27.2.1 and
+        // 27.3 is admitted only as beta 1, identified by its build number.
+        // The overlap segment (Grace, 2026-11-18): the version picks the
+        // segment, the group picks the backend inside it — a usable group
+        // (what a certificate signature grants) takes worse_query, no
+        // group takes bad_query. The group is resolved once per process,
+        // so consume / release / describe all derive the same answer.
+        if major == 26, minor < 6 || (minor == 6 && patch <= 1) {
+            return groupContainer != nil ? .worseQuery : .badQuery
+        }
+        if major == 26, minor == 7, patch <= 2 { return .worseQuery }
+        if major == 27 {
+            if minor < 2 { return .worseQuery }
+            if minor == 2, patch <= 1 { return .worseQuery }
+            if minor == 3, patch == 0,
+               buildVersion.trimmingCharacters(in: .whitespacesAndNewlines) == "24C5037i" {
+                return .worseQuery
             }
         }
-        return nil
-    }
-
-    /// The `application-groups` list from a provisioning profile.
-    ///
-    /// A `.mobileprovision` is a CMS signature wrapped around the plist; the
-    /// plist is the `<?xml … </plist>` slice inside it, so the bytes are cut at
-    /// those markers and parsed as XML rather than fed to
-    /// `PropertyListSerialization` whole (which only accepts the CMS blob as an
-    /// opaque signature and finds no entitlements in it).
-    static func applicationGroups(inProvisioningProfile data: Data) -> [String] {
-        guard let start = data.range(of: Data("<?xml".utf8)),
-              let end = data.range(of: Data("</plist>".utf8),
-                                   options: [],
-                                   in: start.lowerBound..<data.endIndex) else { return [] }
-        let plistData = data.subdata(in: start.lowerBound..<end.upperBound)
-        guard let plist = try? PropertyListSerialization.propertyList(
-                from: plistData, options: [], format: nil) as? [String: Any],
-              let entitlements = plist["Entitlements"] as? [String: Any],
-              let groups = entitlements[applicationGroupsKey] as? [String] else { return [] }
-        return groups
+        return .unsupported
     }
 
     // MARK: - Failures
@@ -118,9 +111,10 @@ enum WorseQueryEscape {
     enum Failure: LocalizedError {
         /// The system is outside the range upstream supports.
         case unsupportedSystem(String)
-        /// No App Group container — wrong profile, or no entitlement at all.
+        /// No App Group container the process can open (worse_query only).
         case groupUnavailable
-        /// `worse_query` itself: target missing, symbols missing, query refused…
+        /// The selected backend itself: target missing, symbols missing,
+        /// query refused…
         case refused(code: Int64)
 
         var errorDescription: String? {
@@ -129,38 +123,60 @@ enum WorseQueryEscape {
                 return "本机直刷只支持 iOS 26.0–26.7.2、27.0–27.2.1，以及 iOS 27.3 beta 1（构建 24C5037i）；"
                     + "这台设备报告的是 \(version.isEmpty ? "未知系统" : "iOS \(version)")。"
             case .groupUnavailable:
-                return "当前签名没有授予可用的 App Group，本机直刷用不了。"
-                    + "App 会读取安装包签名里实际授予的组；组名单为空或一个都打不开时才会报这一条。"
+                return "当前进程没有可用的 App Group，worse_query 用不了。"
+                    + "App 会向系统查询本进程实际带着的组并逐个试开；列表为空或一个都打不开时才会报这一条。"
             case .refused(let code):
                 return WorseQueryEscape.describe(code: code)
             }
         }
     }
 
-    /// The error code `worse_query` returned, in the words the user needs.
-    ///
-    /// The numbers are the reference implementation's contract
-    /// (`worse_query.m`), not a Drift invention; `-255` is its "target does not
-    /// exist", which for this app means the cached PosterBoard container is
-    /// stale.
+    /// The error code the selected backend returned, in the words the user
+    /// needs. The two backends share the negative-number style but not the
+    /// meanings, so the mapping is per backend.
     private static func describe(code: Int64) -> String {
-        switch code {
-        case -1:
-            return "拿不到 App Group 容器：当前签名没有授予可用的 App Group。"
-        case -2:
-            return "这台系统上找不到本机直刷需要的私有接口（系统可能已不在支持范围内）。"
-        case -3:
-            return "containermanagerd 查询创建失败。"
-        case -4:
-            return "无法在 App Group 里创建临时符号链接。"
-        case -5:
-            return "containermanagerd 拒绝了查询（目标路径不存在或不可查询）。"
-        case -6:
-            return "内核拒绝签发沙盒扩展（返回码 -6）。"
-        case -255:
-            return "目标路径不存在。"
-        default:
-            return "本机直刷写入失败（代码 \(code)）。"
+        switch backend(deviceVersion: processVersion,
+                       buildVersion: processBuildVersion) {
+        case .badQuery:
+            switch code {
+            case -1:
+                return "这台系统上找不到 bad_query 需要的私有接口（系统可能已不在支持范围内）。"
+            case -2:
+                return "containermanagerd 查询创建失败。"
+            case -3:
+                return "containermanagerd 拒绝了查询（目标路径不存在或不可查询）。"
+            case -4:
+                return "沙盒扩展签发结果里没有 token。"
+            case -5:
+                return "构造查询的相对路径失败。"
+            case -254:
+                return "目标路径不存在（授权前的只读检查失败）。"
+            case -255:
+                return "目标路径不存在。"
+            default:
+                return "本机直刷写入失败（bad_query 代码 \(code)）。"
+            }
+        case .worseQuery, .unsupported:
+            switch code {
+            case -1:
+                return "拿不到 App Group 容器：当前进程没有授予可用的 App Group。"
+            case -2:
+                return "这台系统上找不到本机直刷需要的私有接口（系统可能已不在支持范围内）。"
+            case -3:
+                return "containermanagerd 查询创建失败。"
+            case -4:
+                return "无法在 App Group 里创建临时符号链接。"
+            case -5:
+                return "containermanagerd 拒绝了查询（目标路径不存在或不可查询）。"
+            case -6:
+                return "内核拒绝签发沙盒扩展（返回码 -6）。"
+            case -254:
+                return "目标路径不存在（授权前的只读检查失败）。"
+            case -255:
+                return "目标路径不存在。"
+            default:
+                return "本机直刷写入失败（worse_query 代码 \(code)）。"
+            }
         }
     }
 
@@ -193,33 +209,11 @@ enum WorseQueryEscape {
 
     /// Whether the running system is in the channel's range.
     ///
-    /// Accepts 26.0 through 26.7.2, 27.0 through 27.2.1, and 27.3 beta 1
-    /// (`24C5037i`, marked experimental in the UI). The 27.2.1 and 27.3 beta 1
-    /// extensions were decided on 2026-11-11; the 27.3 one rests on Erosion's
-    /// public claim and has not been verified on a device here, so it is not
-    /// treated as a stable range. Everything else fails closed.
+    /// bad_query on 26.0–26.6.1; worse_query on 26.7–26.7.2, 27.0–27.2.1 and
+    /// 27.3 beta 1 (build 24C5037i) — Drift's own ceiling, narrower than
+    /// upstream's stated range. Everything else fails closed.
     static func isSupported(deviceVersion: String, buildVersion: String = "") -> Bool {
-        let parts = deviceVersion
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .split(separator: ".", omittingEmptySubsequences: false)
-        guard parts.count >= 2,
-              parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) }),
-              let major = Int(parts[0]), let minor = Int(parts[1]) else { return false }
-        let patch = parts.count > 2 ? Int(parts[2]) ?? 0 : 0
-        switch major {
-        case 26:
-            return minor < 7 || (minor == 7 && patch <= 2)
-        case 27:
-            if minor < 2 { return true }
-            if minor == 2 { return patch <= 1 }
-            if minor == 3 {
-                return patch == 0 && buildVersion
-                    .trimmingCharacters(in: .whitespacesAndNewlines) == "24C5037i"
-            }
-            return false
-        default:
-            return false
-        }
+        backend(deviceVersion: deviceVersion, buildVersion: buildVersion) != .unsupported
     }
 
     /// The App Group's container, or nil when the profile does not grant it.
@@ -235,8 +229,15 @@ enum WorseQueryEscape {
     /// Both halves matter and both are cheap: the version bound, and the
     /// entitlement the escape cannot work without.
     static func isAvailable(deviceVersion: String, buildVersion: String = "") -> Bool {
-        isSupported(deviceVersion: deviceVersion, buildVersion: buildVersion)
-            && groupContainer != nil
+        switch backend(deviceVersion: deviceVersion, buildVersion: buildVersion) {
+        case .badQuery:
+            // The bad_query route needs no App Group at all.
+            return true
+        case .worseQuery:
+            return groupContainer != nil
+        case .unsupported:
+            return false
+        }
     }
 
     /// Why the route is unavailable, or `""` when it is available.
@@ -249,9 +250,10 @@ enum WorseQueryEscape {
                 + "这台设备报告的是 \(deviceVersion.isEmpty ? "未知系统" : "iOS \(deviceVersion)")"
                 + (buildVersion.isEmpty ? "。" : "（\(buildVersion)）。")
         }
-        if groupContainer == nil {
-            return "本机直刷需要签名授予可用的 App Group，但这份签名没有可用的组。"
-                + "App 会读取安装包里签名授予的组名单并逐个试开；只有证书签名能用，免费 ID 签不行。"
+        if backend(deviceVersion: deviceVersion, buildVersion: buildVersion) == .worseQuery,
+           groupContainer == nil {
+            return "worse_query 需要进程实际带着可用的 App Group，但这个进程没有可打开的组。"
+                + "App 会向系统查询进程自己带着的组（SecTask），逐个试开，第一个能打开的才用。"
         }
         return ""
     }
@@ -268,30 +270,47 @@ enum WorseQueryEscape {
     /// - Returns: a positive handle. Every successful call must be paired with
     ///   `release(_:)`.
     static func consume(path: String, createDirectory: Bool = false) throws -> Int64 {
-        if !isSupported(deviceVersion: processVersion, buildVersion: processBuildVersion) {
+        let route = backend(deviceVersion: processVersion, buildVersion: processBuildVersion)
+        guard route != .unsupported else { throw Failure.unsupportedSystem(processVersion) }
+
+        var cPath = Array(path.utf8CString)
+        let handle: Int64
+        switch route {
+        case .badQuery:
+            handle = bad_query(&cPath, true, nil, false)
+            AppLog.write("bad_query: consume path=\(path) → "
+                + (handle > 0 ? "handle \(handle)" : "error \(handle)"))
+        case .worseQuery:
+            guard groupContainer != nil else { throw Failure.groupUnavailable }
+            // The reference's own rule: iOS 26.x needs the alternate flag set
+            // when the target is itself an App Group path. PosterBoard's
+            // container is an app container, so this is false for the calls
+            // this app makes today — kept so a future target is handled the
+            // way upstream handles it.
+            let alternate = path.contains("/var/mobile/Containers/Shared/AppGroup")
+                && ProcessInfo.processInfo.operatingSystemVersion.majorVersion == 26
+            guard let group = discoveredGroupIdentifier else { throw Failure.groupUnavailable }
+            handle = worse_query(path, group, alternate, createDirectory)
+            AppLog.write("worse_query: consume path=\(path) group=\(group) "
+                + "createDirectory=\(createDirectory) → "
+                + (handle > 0 ? "handle \(handle)" : "error \(handle)"))
+        case .unsupported:
             throw Failure.unsupportedSystem(processVersion)
         }
-        guard groupContainer != nil else { throw Failure.groupUnavailable }
-
-        // The reference's own rule: iOS 26.x needs the alternate flag set when
-        // the target is itself an App Group path. PosterBoard's container is an
-        // app container, so this is false for the calls this app makes today —
-        // kept so a future target is handled the way upstream handles it.
-        let alternate = path.contains("/var/mobile/Containers/Shared/AppGroup")
-            && ProcessInfo.processInfo.operatingSystemVersion.majorVersion == 26
-
-        guard let group = discoveredGroupIdentifier else { throw Failure.groupUnavailable }
-        let handle = worse_query(path, group, alternate, createDirectory)
-        AppLog.write("worse_query: consume path=\(path) group=\(group) "
-            + "createDirectory=\(createDirectory) → "
-            + (handle > 0 ? "handle \(handle)" : "error \(handle)"))
         guard handle > 0 else { throw Failure.refused(code: handle) }
         return handle
     }
 
     /// Release a handle returned by `consume(path:)`.
     static func release(_ handle: Int64) {
-        worse_query_release(handle)
+        switch backend(deviceVersion: processVersion, buildVersion: processBuildVersion) {
+        case .badQuery:
+            bad_query_release(handle)
+        case .worseQuery:
+            worse_query_release(handle)
+        case .unsupported:
+            break
+        }
     }
 
     /// Run `body` with a consumed extension for `path`, releasing it afterwards

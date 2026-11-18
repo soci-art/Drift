@@ -85,3 +85,23 @@ FilzaSlop (0xjohnnydev / CrazyMind90). 3106's longjmp failure path is
 kept: a failed chain returns to the caller instead of ending the
 process; Drift does not use 3105's or the unpatched FilzaSlop version.
 Drift is AGPL-3.0, which is compatible with the GPL-3.0 sources here.
+
+Sandbox grant backends — vendored from 3106
+---------------------------------------------
+The iOS 26/27 in-process sandbox grant uses two backends from the 3106
+project, and the App Group it reports comes from the same source:
+
+  Project:  3106
+  Author:   QuinnTang74
+  Source:   https://github.com/QuinnTang74/3106
+  Path:     ThreeOneOSSix/exploit/bad_query.c (bad_query, iOS 26.0–26.6.1)
+            ThreeOneOSSix/exploit/worse_query.m
+              (worse_query_app_group, SecTask App Group discovery)
+  License:  GNU General Public License v3.0
+
+`WorseQuery/Sources/WorseQuery/bad_query.c` is the upstream file verbatim apart
+from a Drift header comment. `app_group.m` is 3106's `worse_query_app_group`
+logic returning the chosen identifier instead of only checking it. The
+`worse_query.m` core itself remains the forcequitOS/worse_query upstream copy
+described in `WorseQuery/README.md`. Drift is AGPL-3.0, compatible with these
+GPL-3.0 sources.

@@ -82,7 +82,7 @@ struct DriftTutorialChannelView: View {
         switch channel {
         case .local:
             return [
-                "证书签名（签名里要带能用的组；免费 ID 签没有能用的组，用不了）",
+                "签名看系统：iOS 26.0–26.6.1 不挑签名、不用组，免费 ID 签也能用；其余系统要证书签名（带能用的组），免费 ID 签用不了",
                 "系统在 iOS 26.0 正式版到 iOS 27.2.1 正式版之间；iOS 27.2 beta 1 / beta 2、iOS 27.3 beta 1 也行",
                 "不用配对、不用隧道，也不用连 Wi-Fi",
             ]
@@ -124,7 +124,7 @@ struct DriftTutorialChannelView: View {
         case .local:
             return [
                 ("提示「没有能用的组」？",
-                 "是签名不对。换成证书签名重新装一次 Drift 就行。"),
+                 "这只影响 iOS 26.7–26.7.2 和 iOS 27.x：这些版本用 worse_query，需要当前进程带有可打开的 App Group。iOS 26.0–26.6.1 用 bad_query，不需要组。"),
                 ("刷完了，壁纸没变？",
                  "多半是只回了桌面、没划掉壁纸界面。按上面那一步，在后台里把它甩掉再看。"),
                 pickWallpaper,

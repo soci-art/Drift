@@ -38,7 +38,7 @@ enum Diagnostics {
         lines.append(identity.version.isEmpty
             ? "  隧道读到的设备: 未读到"
             : "  隧道读到的设备: iOS \(identity.version) (\(identity.buildVersion))")
-        lines.append("  本机直刷发现的组: \(WorseQueryEscape.discoveredGroupIdentifier ?? "未发现可用组")")
+        let localBackend = WorseQueryEscape.backend(\n            deviceVersion: WorseQueryEscape.processVersion,\n            buildVersion: WorseQueryEscape.processBuildVersion).rawValue\n        lines.append("  本机直刷后端: \(localBackend)；发现的组: \(WorseQueryEscape.discoveredGroupIdentifier ?? "未发现可用组")")
         let tunnelReady = await TunnelMonitor.shared.status == .ready
         let judged = DriftJudge.judge(identity: identity,
                                       selection: PosterBoardSelection(),
