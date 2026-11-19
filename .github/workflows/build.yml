@@ -298,6 +298,8 @@ jobs:
             exit 1
           fi
 
+          TARGET_COMMIT="$(git rev-parse HEAD)"
+          export TARGET_COMMIT
           BODY="$(python3 - <<'PY'
           import json, os
           version = os.environ["VERSION"]
@@ -306,7 +308,7 @@ jobs:
           notes += f"\n\n<!-- drift-nightly: {version} {build} -->"
           print(json.dumps({
               "tag_name": version,
-              "target_commitish": os.environ["GITHUB_SHA"],
+              "target_commitish": os.environ["TARGET_COMMIT"],
               "name": f"Nightly {version}",
               "body": notes,
               "prerelease": True
