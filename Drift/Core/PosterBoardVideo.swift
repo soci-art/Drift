@@ -102,11 +102,11 @@ enum PosterBoardVideo {
         // The reference's path is fixed: the descriptor skeleton's own wallpaper
         // directory, whose `.ca` is what gets replaced.
         let wallpaper = root.appendingPathComponent(
-            "versions/1/contents/9183.Custom-810w-1080h@2x~ipad.wallpaper", conformingTo: .data)
+            "versions/1/contents/9183.Custom-390w-844h@3x~iphone.wallpaper", conformingTo: .data)
         let floating = wallpaper.appendingPathComponent(
-            "9183.Custom_Floating-810w-1080h@2x~ipad.ca", conformingTo: .data)
+            "9183.Custom_Floating-390w-844h@3x~iphone.ca", conformingTo: .data)
         let background = wallpaper.appendingPathComponent(
-            "9183.Custom_Background-810w-1080h@2x~ipad.ca", conformingTo: .data)
+            "9183.Custom_Background-390w-844h@3x~iphone.ca", conformingTo: .data)
 
         let ca: URL
         if plan.foreground {
