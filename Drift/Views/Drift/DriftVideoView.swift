@@ -142,7 +142,7 @@ struct DriftVideoView: View {
     private var applyCard: some View {
         VStack(spacing: 10) {
             NativePrimaryButton(title: session.running ? "刷入中…" : "本机直刷视频壁纸",
-                                systemImage: "restart",
+                                systemImage: "film",
                                 running: session.running,
                                 disabled: !canApply) {
                 runVideo()
