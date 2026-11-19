@@ -116,17 +116,25 @@ enum AppAnnouncement {
         // Each line reads its own line's notes (Grace, 2026-11-16):
         // a nightly build's release is the nightly pre-release, not
         // the formal tag that happens to carry the same number.
-        let api = AppVersion.channel == .nightly
-            ? "https://api.github.com/repos/soci-art/Drift/releases/tags/nightly"
-            : "https://api.github.com/repos/soci-art/Drift/releases/tags/v\(version)"
-        for base in [AppUpdateChecker.mirrorPrefix, AppUpdateChecker.secondMirrorPrefix, ""] {
-            if let notes = try? await fetchNotes(base: base, api: api) {
-                UserDefaults.standard.set(notes.body, forKey: cacheBodyKey)
-                if let date = notes.dateLine {
-                    UserDefaults.standard.set(date, forKey: cacheDateKey)
+        // Since the manual workflow (Grace, 2026-11-19) a nightly
+        // release's tag is the bare version; the legacy rolling
+        // release used the fixed "nightly" tag, so a nightly build
+        // tries its version tag first and the legacy tag second.
+        // A formal build keeps its single v-prefixed tag.
+        let apis = AppVersion.channel == .nightly
+            ? ["https://api.github.com/repos/soci-art/Drift/releases/tags/\(version)",
+               "https://api.github.com/repos/soci-art/Drift/releases/tags/nightly"]
+            : ["https://api.github.com/repos/soci-art/Drift/releases/tags/v\(version)"]
+        for api in apis {
+            for base in [AppUpdateChecker.mirrorPrefix, AppUpdateChecker.secondMirrorPrefix, ""] {
+                if let notes = try? await fetchNotes(base: base, api: api) {
+                    UserDefaults.standard.set(notes.body, forKey: cacheBodyKey)
+                    if let date = notes.dateLine {
+                        UserDefaults.standard.set(date, forKey: cacheDateKey)
+                    }
+                    AppLog.info("公告：取到 \(version) 的发行说明，内容标识 \(contentKey(for: notes.body))")
+                    return notes
                 }
-                AppLog.info("公告：取到 \(version) 的发行说明，内容标识 \(contentKey(for: notes.body))")
-                return notes
             }
         }
         AppLog.warn("公告：\(version) 的发行说明没取到（三条线都不通）")
@@ -153,8 +161,8 @@ enum AppAnnouncement {
                ($0["name"] as? String)?.hasSuffix(".ipa") == true
            })?["updated_at"] as? String,
            let assetDate = Self.dateLine(fromISO: updated) {
-            // The nightly release's published_at is its one-time
-            // creation date; the asset's updated_at is this build's.
+            // The asset's updated_at is when this build landed,
+            // which is the date the announcement header should show.
             date = assetDate
         }
         return Notes(body: AppUpdateChecker.strippingNightlyStamp(body), dateLine: date)
