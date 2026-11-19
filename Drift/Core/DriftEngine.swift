@@ -375,11 +375,6 @@ final class DriftEngine {
                 + "要重置，请把刷入方式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
-        if selection.video != nil {
-            throw DriftError("免注销直刷无法应用 PosterBoard 视频：它的帧是为恢复准备的。"
-                + "请把刷入方式切换到「恢复刷」。"
-                + DriftRestoreGate.unavailableSuffix)
-        }
         if selection.tendies.contains(where: \.isUnsafeContainer) {
             throw DriftError("包含商店数据库的壁纸包只能用恢复刷；恢复刷已封存，暂时刷不了。")
         }
@@ -428,11 +423,6 @@ final class DriftEngine {
         if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
             throw DriftError("注销直刷无法重置 PosterBoard 库——它只会添加"
                 + "壁纸。要重置，请把刷入方式切换到「恢复刷」。"
-                + DriftRestoreGate.unavailableSuffix)
-        }
-        if posterBoard.video != nil {
-            throw DriftError("注销直刷无法应用 PosterBoard 视频：它的帧是"
-                + "为恢复准备的。请把刷入方式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         let reason = Airlift.unsupportedReason(deviceVersion: deviceVersion, buildVersion: buildVersion)
