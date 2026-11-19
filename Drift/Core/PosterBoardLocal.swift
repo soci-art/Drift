@@ -249,21 +249,19 @@ enum PosterBoardLocal {
         let reported: (Double) -> Void = { value in
             DispatchQueue.main.async { progress(value) }
         }
-        let generatedVideoDirectory: URL?
-        if let plan = selection.plan {
-            let directory = PosterBoard.workDirectory
-                .appendingPathComponent("local-video-\(UUID().uuidString)", isDirectory: true)
-            try? FileManager.default.removeItem(at: directory)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try await PosterBoardVideo.generate(plan: plan, outputDirectory: directory, log: log)
-            generatedVideoDirectory = directory
-        } else {
-            generatedVideoDirectory = nil
-        }
+        var generatedVideoDirectory: URL?
         defer {
             if let generatedVideoDirectory {
                 try? FileManager.default.removeItem(at: generatedVideoDirectory)
             }
+        }
+        if let plan = selection.plan {
+            let directory = PosterBoard.workDirectory
+                .appendingPathComponent("local-video-\(UUID().uuidString)", isDirectory: true)
+            generatedVideoDirectory = directory
+            try? FileManager.default.removeItem(at: directory)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await PosterBoardVideo.generate(plan: plan, outputDirectory: directory, log: log)
         }
         let write = try await offMainActor {
             try inject(selection: selection, templates: templates,
