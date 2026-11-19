@@ -341,10 +341,9 @@ struct DriftHomeView: View {
             VStack(spacing: 0) {
                 ForEach(visiblePicks) { pick in
                     methodRow(pick, judged)
-                    if pick != visiblePicks.last {
-                        Divider().padding(.leading, 34)
-                    }
+                    Divider().padding(.leading, 34)
                 }
+                restoreMethodRow
             }
             Text(judged.reason)
                 .font(.subheadline).foregroundStyle(.secondary)
@@ -354,13 +353,45 @@ struct DriftHomeView: View {
             } else if judged.isBlocked, let blocked = judged.blockedReason {
                 Text(blocked).font(.caption).foregroundStyle(.orange)
             }
-            // Collection #329 (Grace, 2026-11-14): the sealed restore
-            // row that used to sit here is gone from Home entirely —
-            // 恢复刷 now lives only on the 实验性功能 page. The seal
-            // itself is unchanged.
+            // Grace (2026-11-19): the restore row is back on Home
+            // (it lived only on the 实验性功能 page since #329), still
+            // shown unavailable. The seal itself is unchanged.
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
+    }
+
+    /// The restore method's home row (Grace, 2026-11-19): listed with
+    /// the other methods again, but unavailable — it is not a pick, the
+    /// stored method never changes when it is tapped; the tap only
+    /// answers 「暂不可用」.
+    private var restoreMethodRow: some View {
+        Button {
+            session.noticeTitle = "恢复刷"
+            session.noticeText = "暂不可用"
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "lock.fill")
+                    .font(.title3)
+                    .foregroundStyle(Color.secondary)
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("恢复刷").font(.subheadline.weight(.medium))
+                    Text("通过恢复方式刷入壁纸")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 6)
+                Text("不可用")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(Color.secondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.trailing)
+            }
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     /// One of the four method rows: a radio, the fixed name and its one-line

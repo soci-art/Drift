@@ -265,7 +265,7 @@ struct PackListView: View {
                 .disabled(selectedPacks.isEmpty)
             }
             if selectedPacks.contains(where: \.isUnsafeContainer) {
-                Text("选中的包里有容器包：只能走恢复刷，恢复刷已封存，目前刷不了。")
+                Text("暂不可用")
                     .font(.caption).foregroundStyle(.red)
             }
             ViewThatFits(in: .horizontal) {

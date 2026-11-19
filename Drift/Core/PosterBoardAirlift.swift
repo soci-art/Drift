@@ -190,9 +190,7 @@ enum PosterBoardAirlift {
                                                 defaultExtension: source.defaultExtension,
                                                 log: log)
                 guard !descriptors.isEmpty else {
-                    throw DriftError("在 \(source.name) 中没有找到壁纸描述文件。"
-                        + "对于交付容器文件的模板，需要走「恢复刷」。"
-                        + DriftRestoreGate.unavailableSuffix)
+                    throw DriftError("在 \(source.name) 中没有找到壁纸描述文件。")
                 }
                 log("  \(descriptors.count) descriptor(s)")
 

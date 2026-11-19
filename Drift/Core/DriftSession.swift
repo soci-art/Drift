@@ -453,10 +453,10 @@ final class DriftSession: ObservableObject {
         // restore run cannot slip past.
         if mode == .backup && !DriftRestoreGate.isEnabled {
             DriftEngine.shared.log("run refused: restore route is suspended (feedback #30)")
-            return (false, DriftRestoreGate.notice, nil)
+            return (false, "暂不可用", nil)
         }
         let isResetSelection = selection.fullReset || !selection.resetModes.isEmpty
-        let selectedLabel = isResetSelection ? "恢复刷 · 重置" : pick.label
+        let selectedLabel = isResetSelection ? "重置" : pick.label
         // Collection #143: flashing the same pack twice stacked copies in
         // the store that nobody could tell apart. If a receipt for one of
         // the selected packs still verifies as in-store, refuse and say
@@ -1134,7 +1134,7 @@ enum DriftJudge {
             respringReady: respringReady,
             respringWhy: respringWhy,
             restoreReady: DriftRestoreGate.isEnabled,
-            restoreWhy: DriftRestoreGate.isEnabled ? "可用：刷完重启" : "已封存：暂时不可用")
+            restoreWhy: DriftRestoreGate.isEnabled ? "可用：刷完重启" : "暂不可用")
     }
 
     /// How a channel makes the wallpaper visible, in the user's terms.
@@ -1202,7 +1202,7 @@ enum DriftJudge {
         case .airlift:
             return "自动选择：走注销直刷——隧道写入后注销生效"
         case .backup:
-            return "恢复刷，刷完会重启"
+            return "暂不可用"
         }
     }
 
@@ -1215,14 +1215,14 @@ enum DriftJudge {
         case .airlift:
             return "已手动选择注销直刷：隧道写入后注销生效"
         case .backup:
-            return "恢复刷，刷完会重启"
+            return "暂不可用"
         }
     }
 
     /// Decide the channel for a selection.
     ///
     /// Hard limits first (store reset and store-database packs remain
-    /// restore-only, hence blocked while 恢复刷 is sealed). Video is accepted
+    /// restore-only, hence blocked while the restore route is sealed). Video is accepted
     /// by every non-restore writer. Then: a manual pick
     /// is used as-is and is *unavailable* — never substituted — when its own
     /// premise fails; `.auto` takes the first ready channel in order.
@@ -1251,7 +1251,7 @@ enum DriftJudge {
         }
         /// Blocked because the selection can only travel the sealed method.
         func sealedBlocked(_ reason: String) -> DriftModeJudgement {
-            blocked(reason, notice: DriftRestoreGate.notice)
+            blocked(reason, notice: "暂不可用")
         }
         /// Blocked only because the kernel switch is off: flagged so
         /// the flash tap can answer with a reminder instead of an
@@ -1266,13 +1266,13 @@ enum DriftJudge {
         // sealed the answer is "cannot flash now".
         if selection.fullReset || !selection.resetModes.isEmpty {
             return p.restoreReady
-                ? judged(.backup, "重置壁纸商店只能用恢复刷，刷完会重启")
-                : sealedBlocked("重置壁纸商店只能用恢复刷，但恢复刷已封存，现在做不了")
+                ? judged(.backup, "暂不可用")
+                : sealedBlocked("暂不可用")
         }
         if selection.tendies.contains(where: \.isUnsafeContainer) {
             return p.restoreReady
-                ? judged(.backup, "包含商店数据库的壁纸包只能用恢复刷，刷完会重启")
-                : sealedBlocked("包含商店数据库的壁纸包只能用恢复刷，但恢复刷已封存，现在刷不了")
+                ? judged(.backup, "暂不可用")
+                : sealedBlocked("暂不可用")
         }
 
         if pick == .kernel {

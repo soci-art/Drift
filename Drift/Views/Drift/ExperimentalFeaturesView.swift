@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The experimental features page (collection #329, Grace 2026-11-14):
-/// reached from Settings, next to 关于此 App. Two switches live here
+/// reached from Settings, next to 关于此 App. One switch lives here
 /// and nowhere else:
 ///
 /// * 内核直刷 — off by default. Turning it on asks first (the sheet's
@@ -11,15 +11,9 @@ import SwiftUI
 ///   status card only once it is ready, and the judge blocks a
 ///   kernel pick with the turn-it-on reminder. Turning it off is
 ///   silent.
-/// * 恢复刷 — the switch is a surface only: any tap answers
-///   「恢复刷暂不可用」 and the switch stays off. The restore seal
-///   itself is untouched (`DriftRestoreGate` still decides), this
-///   page only gives the feature a home now that its Home row is
-///   gone (#329).
 struct ExperimentalFeaturesView: View {
     @AppStorage(KernelDirectPremise.enabledKey) private var kernelEnabled = false
     @State private var confirmKernelOn = false
-    @State private var restoreNotice = false
 
     /// Turning the kernel switch on goes through the confirmation
     /// sheet; the stored value only changes when the user confirms.
@@ -33,14 +27,6 @@ struct ExperimentalFeaturesView: View {
                     kernelEnabled = false
                 }
             })
-    }
-
-    /// The restore switch never turns on: every tap is answered
-    /// with the unavailable notice and it springs back off.
-    private var restoreBinding: Binding<Bool> {
-        Binding(
-            get: { false },
-            set: { _ in restoreNotice = true })
     }
 
     var body: some View {
@@ -63,15 +49,6 @@ struct ExperimentalFeaturesView: View {
                     Spacer()
                     Toggle("", isOn: kernelBinding).labelsHidden()
                 }
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("恢复刷")
-                        Text("通过恢复方式刷入壁纸。")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Toggle("", isOn: restoreBinding).labelsHidden()
-                }
             } footer: {
                 Text("实验性功能还在试验阶段，可能不稳定。")
             }
@@ -87,13 +64,6 @@ struct ExperimentalFeaturesView: View {
             // 取消 would show twice (Grace's catch, 2026-11-14).
             actions: [
                 DriftSheetAction("确定") { kernelEnabled = true },
-            ])
-        .driftActionSheet(
-            isPresented: $restoreNotice,
-            title: "提示",
-            message: "恢复刷暂不可用。",
-            actions: [
-                DriftSheetAction("知道了") {},
             ])
     }
 }

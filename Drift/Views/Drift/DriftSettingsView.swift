@@ -22,7 +22,6 @@ struct DriftSettingsView: View {
     @State private var packaging = false
     @State private var sharePackage: SharePackageItem?
     @State private var recordsNote: String?
-    @State private var showSealedNotice = false
     @State private var receipts: [PosterBoardLocalReceipt] = PosterBoardLocalReceipts.load()
     @State private var confirmClearHistory = false
     @State private var exportTarget: ApplyHistory.Record?
@@ -54,7 +53,6 @@ struct DriftSettingsView: View {
                 announcementSection
                 connectionSection
                 localRouteSection
-                restoreSealedSection
                 historySection
                 recordsSection
                 appSection
@@ -139,11 +137,6 @@ struct DriftSettingsView: View {
                                     recordsNote = "刷入记录已清空；回执没有动，管理页仍能认出已刷的壁纸。"
                                 },
                               ])
-            .alert("恢复刷已封存", isPresented: $showSealedNotice) {
-                Button("知道了", role: .cancel) {}
-            } message: {
-                Text(DriftRestoreGate.notice)
-            }
             .sheet(item: $sharePackage) { item in
                 FileShareSheet(url: item.url)
             }
@@ -196,8 +189,8 @@ struct DriftSettingsView: View {
                 Label("关于此 App", systemImage: "info.circle")
             }
             // Collection #329 (Grace, 2026-11-14): the experimental
-            // features page sits with About — 内核直刷 and 恢复刷
-            // live there behind their switches, nowhere else.
+            // features page sits with About — 内核直刷 lives there
+            // behind its switch, nowhere else.
             NavigationLink {
                 ExperimentalFeaturesView()
             } label: {
@@ -372,32 +365,6 @@ struct DriftSettingsView: View {
             DriftEngine.shared.log("settings: wireless pairing record adopted (\(PairingRecord.sourceLabel(record)))")
         } catch {
             session.errorText = error.localizedDescription
-        }
-    }
-
-    // MARK: - Restore method (sealed)
-
-    /// The sealed restore entry (2.0.0): visible and greyed, never
-    /// selectable. There is no restore code behind it — safety by
-    /// non-existence. Tapping the row shows the sealing notice; the
-    /// pre-2.0.0 local-backup write-back/delete actions went away with
-    /// the backup machinery they belonged to.
-    private var restoreSealedSection: some View {
-        Section("恢复刷") {
-            Button {
-                showSealedNotice = true
-            } label: {
-                HStack {
-                    Label("恢复刷", systemImage: "lock.fill")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("已封存")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .buttonStyle(.plain)
-            Text("2026-11-10 一次恢复刷入在重启后把设备恢复了出厂设置。查清原因并在备用机上验证之前不开放；点上面这一行看完整说明。")
-                .font(.caption).foregroundStyle(.secondary)
         }
     }
 

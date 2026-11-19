@@ -11,8 +11,7 @@ import Minimuxer
 ///   it (the mechanism behind feedback #42's phantom tweak payloads and
 ///   the MBErrorDomain 211 that failed otherwise-clean wallpaper runs).
 ///   There is no backup/restore code behind this facade at all; the
-///   restore mode is refused with the suspension notice, and
-///   `DriftRestoreGate` stays as the standing notice source.
+///   restore mode is refused as unavailable (`DriftRestoreGate`).
 /// * **Kept, behaviour-identical**: the three wallpaper transports and
 ///   their pre-flight checks, moved here from the old engine — the
 ///   in-process route (a thin call into the frozen `PosterBoardLocal`),
@@ -335,7 +334,7 @@ final class DriftEngine {
             // backup or restore code behind this facade to fall back to.
             // The session funnel refuses this mode first; this is the
             // second, engine-side refusal with the same notice.
-            throw DriftError(DriftRestoreGate.notice)
+            throw DriftError("暂不可用")
         }
     }
 
@@ -366,17 +365,14 @@ final class DriftEngine {
                                      deviceVersion: String,
                                      buildVersion: String) throws {
         if templates.contains(where: \.isContainer) {
-            throw DriftError("免注销直刷只安装模板描述文件。所选模板还带有容器文件；"
-                + "请切换到「恢复刷」来应用全部内容。"
-                + DriftRestoreGate.unavailableSuffix)
+            throw DriftError("免注销直刷只安装模板描述文件。所选模板还带有容器文件，"
+                + "这部分暂不可用。")
         }
         if selection.fullReset || !selection.resetModes.isEmpty {
-            throw DriftError("免注销直刷无法重置 PosterBoard 库——它只会添加壁纸。"
-                + "要重置，请把刷入方式切换到「恢复刷」。"
-                + DriftRestoreGate.unavailableSuffix)
+            throw DriftError("免注销直刷无法重置 PosterBoard 库——它只会添加壁纸。")
         }
         if selection.tendies.contains(where: \.isUnsafeContainer) {
-            throw DriftError("包含商店数据库的壁纸包只能用恢复刷；恢复刷已封存，暂时刷不了。")
+            throw DriftError("暂不可用")
         }
         let reason = PosterBoardDirect.unavailableReason(deviceVersion: deviceVersion,
                                                          buildVersion: buildVersion)
@@ -417,13 +413,11 @@ final class DriftEngine {
                                      templates: [TemplateFile] = [], deviceVersion: String, buildVersion: String = "") throws {
         if templates.contains(where: \.isContainer) {
             throw DriftError("注销直刷只安装模板描述文件。所选模板"
-                + "还带有容器文件；请切换到「恢复刷」来应用全部内容。"
-                + DriftRestoreGate.unavailableSuffix)
+                + "还带有容器文件，这部分暂不可用。")
         }
         if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
             throw DriftError("注销直刷无法重置 PosterBoard 库——它只会添加"
-                + "壁纸。要重置，请把刷入方式切换到「恢复刷」。"
-                + DriftRestoreGate.unavailableSuffix)
+                + "壁纸。")
         }
         let reason = Airlift.unsupportedReason(deviceVersion: deviceVersion, buildVersion: buildVersion)
         guard reason.isEmpty else { throw DriftError(reason) }
@@ -451,17 +445,14 @@ final class DriftEngine {
                 + "或改用其他刷入方式。")
         }
         if templates.contains(where: \.isContainer) {
-            throw DriftError("本机直刷只安装模板描述文件。所选模板还带有容器文件；"
-                + "请改用「恢复刷」来应用全部内容。"
-                + DriftRestoreGate.unavailableSuffix)
+            throw DriftError("本机直刷只安装模板描述文件。所选模板还带有容器文件，"
+                + "这部分暂不可用。")
         }
         if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
-            throw DriftError("本机直刷无法重置 PosterBoard 库——它只会添加壁纸。"
-                + "要重置，请把刷入方式切换到「恢复刷」。"
-                + DriftRestoreGate.unavailableSuffix)
+            throw DriftError("本机直刷无法重置 PosterBoard 库——它只会添加壁纸。")
         }
         if posterBoard.tendies.contains(where: \.isUnsafeContainer) {
-            throw DriftError("包含商店数据库的壁纸包只能用恢复刷；恢复刷已封存，暂时刷不了。")
+            throw DriftError("暂不可用")
         }
         let reason = InstallEnvironment.localReason(version: deviceVersion,
                                                     build: buildVersion)
