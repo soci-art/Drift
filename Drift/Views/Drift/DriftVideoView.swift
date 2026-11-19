@@ -176,9 +176,15 @@ struct DriftVideoView: View {
         videoSelection.foreground = selection.foreground
         videoSelection.calculationMode = selection.calculationMode
         Task {
-            let checked = DriftJudge.judge(
+            var checked = DriftJudge.judge(
                 identity: identity, selection: videoSelection, pick: manualPick,
                 tunnelReady: tunnelMonitor.status == .ready)
+            if checked.isBlocked || checked.mode != .worseQuery {
+                if session.paired { await session.refreshIdentity() }
+                checked = DriftJudge.judge(
+                    identity: identity, selection: videoSelection, pick: manualPick,
+                    tunnelReady: tunnelMonitor.status == .ready)
+            }
             guard !checked.isBlocked else {
                 session.errorText = checked.blockedReason
                 return
