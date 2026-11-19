@@ -255,6 +255,11 @@ jobs:
               echo "::error::Release $TAG already exists; enable automatic deletion or choose another version."
               exit 1
             fi
+            IS_PRERELEASE="$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1])).get("prerelease", False)).lower())' "$RELEASE_JSON")"
+            if [ "$IS_PRERELEASE" != "true" ]; then
+              echo "::error::Release $TAG is a formal release, not a pre-release; refusing to delete it."
+              exit 1
+            fi
             RELEASE_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$RELEASE_JSON")"
             DELETE_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
               -H "Authorization: Bearer $GH_TOKEN" \
