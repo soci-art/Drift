@@ -314,7 +314,7 @@ jobs:
           print(json.dumps({
               "tag_name": version,
               "target_commitish": os.environ["TARGET_COMMIT"],
-              "name": f"Nightly {version}",
+              "name": "Nightly",
               "body": notes,
               "prerelease": True
           }, ensure_ascii=False))
