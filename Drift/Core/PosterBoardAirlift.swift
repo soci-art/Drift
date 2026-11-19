@@ -52,10 +52,8 @@ enum PosterBoardAirlift {
     /// Inject the selected packs, and respring so they show up.
     ///
     /// - Parameters:
-    ///   - selection: the same selection the backup mode takes. Packs are
-    ///     honoured here; the video stage is a backup-mode concern and is rejected
-    ///     by the caller, because its frames are computed and staged locally and
-    ///     this path does not carry them.
+    ///   - selection: packs and locally generated video descriptors are both
+    ///     staged and injected here; reset operations remain unsupported.
     ///   - templates: configured before descriptor discovery, alongside the packs.
     ///   - structureVersion: the store directory version, from
     ///     `PosterBoard.verifiedTunnelStructureVersion` (61 on every system this
