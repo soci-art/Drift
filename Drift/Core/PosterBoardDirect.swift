@@ -19,11 +19,11 @@ import ZIPFoundation
 ///
 /// ## What it does not do
 ///
-/// It adds descriptors; it cannot remove them, so a store reset still belongs
-/// to the backup route. The video stage is computed for the backup route and
-/// is refused by the engine before this runs. Only one descriptor is installed
-/// per transaction (the primary provider spot); the mirror spot is deferred,
-/// matching the transaction shape this is ported from.
+/// It adds descriptors; it cannot remove them, so a store reset remains
+/// unsupported here. Video descriptors are generated locally and travel as
+/// a Photos provider source through the same transaction. Only one descriptor
+/// is installed per transaction (the primary provider spot); the mirror spot
+/// is deferred, matching the transaction shape this is ported from.
 ///
 /// ## Refresh
 ///
