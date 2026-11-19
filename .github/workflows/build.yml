@@ -35,6 +35,8 @@ jobs:
       - name: Resolve version and build from the tag or project.yml
         id: version
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           PROJECT_VERSION="$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*//p' project.yml | tr -d '"' | head -1)"
@@ -55,6 +57,32 @@ jobs:
           if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
             echo "::error::Invalid version format: $VERSION (expected x.y.z)"
             exit 1
+          fi
+          # Build number rule (Grace, 2026-11-19): a brand-new version
+          # starts at build 1; only re-publishing the SAME version
+          # increments the build. The current Nightly's stamp records
+          # which version and build it holds.
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            PREV_BUILD=0
+            NIGHTLY_JSON="$(mktemp)"
+            NIGHTLY_STATUS="$(curl -sS -o "$NIGHTLY_JSON" -w '%{http_code}' \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/nightly" || true)"
+            if [ "$NIGHTLY_STATUS" = "200" ]; then
+              PREV_BUILD="$(python3 - "$NIGHTLY_JSON" "$VERSION" <<'PYEOF'
+          import json, re, sys
+          body = json.load(open(sys.argv[1])).get("body") or ""
+          m = re.search(r"drift-nightly:\s*([0-9]+\.[0-9]+\.[0-9]+)\s+([0-9]+)", body)
+          print(m.group(2) if m and m.group(1) == sys.argv[2] else "0")
+          PYEOF
+          )"
+            fi
+            rm -f "$NIGHTLY_JSON"
+            case "$PREV_BUILD" in ''|*[!0-9]*) PREV_BUILD=0 ;; esac
+            BUILD=$((PREV_BUILD + 1))
+            sed -i '' "s/^\([[:space:]]*CURRENT_PROJECT_VERSION:[[:space:]]*\).*/\1\"$BUILD\"/" project.yml
+            echo "Build rule: previous same-version build $PREV_BUILD -> this build $BUILD"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "build=$BUILD" >> "$GITHUB_OUTPUT"
@@ -288,3 +316,19 @@ jobs:
             -H 'X-GitHub-Api-Version: 2022-11-28' \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" || true
           echo "Trigger tag $TAG removed; the Nightly lives under the fixed nightly tag."
+
+      # Keep project.yml in step with the shipped build number.
+      - name: Write the shipped build number back to project.yml
+        if: success() && github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- project.yml; then
+            echo "project.yml already matches the shipped build."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add project.yml
+          git commit -m "版本号回写 ${{ steps.version.outputs.version }} 构建 ${{ steps.version.outputs.build }}"
+          git push origin HEAD:refs/heads/main || echo "::warning::project.yml write-back push failed; the release itself is already published."
