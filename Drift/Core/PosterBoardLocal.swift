@@ -252,7 +252,7 @@ enum PosterBoardLocal {
         let generatedVideoDirectory: URL?
         if let plan = selection.plan {
             let directory = PosterBoard.workDirectory
-                .appendingPathComponent("local-video-\\(UUID().uuidString)", isDirectory: true)
+                .appendingPathComponent("local-video-\(UUID().uuidString)", isDirectory: true)
             try? FileManager.default.removeItem(at: directory)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try await PosterBoardVideo.generate(plan: plan, outputDirectory: directory, log: log)
@@ -455,7 +455,7 @@ enum PosterBoardLocal {
         }
         if let generatedVideoDirectory {
             sources.append(Source(
-                name: "视频：\\(selection.video?.lastPathComponent ?? "Video")",
+                name: "视频：\(selection.video?.lastPathComponent ?? "Video")",
                 url: generatedVideoDirectory,
                 defaultExtension: PosterBoardPosterType.collections.extensionBundleID,
                 plannedDescriptors: 1
