@@ -154,9 +154,9 @@ struct DriftVideoView: View {
                 Spacer()
             }
             HStack(spacing: 10) {
-                Button { importingVideo = true } label: { Label("选视频", systemImage: "film") }
+                Button { importingVideo = true } label: { Label("从文件选取", systemImage: "folder") }
                     .driftGlassButton()
-                Button { importingPhotos = true } label: { Label("从照片选", systemImage: "photo.on.rectangle") }
+                Button { importingPhotos = true } label: { Label("从照片选取", systemImage: "photo.on.rectangle") }
                     .driftGlassButton()
                 if selection.video != nil {
                     Button(role: .destructive) {
@@ -435,6 +435,13 @@ private struct VideoFramePickerView: View {
     @State private var time: Double = 0
     @State private var preview: UIImage?
     @State private var confirming = false
+    /// The in-flight scrub preview (Grace, 2026-11-19): a drag used to
+    /// spawn one full decode per slider tick and queue them all, so
+    /// the picture trailed far behind the finger. Now a new position
+    /// cancels the previous decode and only the latest position is
+    /// ever rendered — small, with a loose time tolerance. The full-
+    /// resolution, exact frame is rendered only on confirm.
+    @State private var previewTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -467,7 +474,7 @@ private struct VideoFramePickerView: View {
                 }
             }
             .task { await load() }
-            .onChange(of: time) { _, _ in Task { await refreshPreview() } }
+            .onChange(of: time) { _, _ in schedulePreview() }
         }
     }
 
@@ -476,20 +483,28 @@ private struct VideoFramePickerView: View {
         let loaded = (try? await asset.load(.duration).seconds) ?? 0
         duration = loaded > 0 ? loaded : 0
         time = min(0.1, duration)
-        await refreshPreview()
+        schedulePreview()
     }
 
-    private func refreshPreview() async {
+    /// Render the scrub preview for the current slider position,
+    /// cancelling whatever decode the previous position started. A
+    /// result that arrives after the slider has moved on (or after
+    /// its task was cancelled) is dropped, never shown.
+    private func schedulePreview() {
+        previewTask?.cancel()
         let requested = time
-        let asset = AVURLAsset(url: videoURL)
-        let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 540, height: 960)
-        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.05, preferredTimescale: 600)
-        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.05, preferredTimescale: 600)
-        if let cg = try? await generator.image(at: CMTime(seconds: requested, preferredTimescale: 600)).image,
-           abs(time - requested) < 0.01 {
-            preview = UIImage(cgImage: cg)
+        let url = videoURL
+        previewTask = Task {
+            let asset = AVURLAsset(url: url)
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 480, height: 854)
+            generator.requestedTimeToleranceBefore = CMTime(seconds: 0.15, preferredTimescale: 600)
+            generator.requestedTimeToleranceAfter = CMTime(seconds: 0.15, preferredTimescale: 600)
+            if let cg = try? await generator.image(at: CMTime(seconds: requested, preferredTimescale: 600)).image,
+               !Task.isCancelled, abs(time - requested) < 0.01 {
+                preview = UIImage(cgImage: cg)
+            }
         }
     }
 

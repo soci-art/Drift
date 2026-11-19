@@ -79,6 +79,11 @@ struct DriftHomeView: View {
         if judgement.kernelNeedsSwitch {
             return !selection.tendies.isEmpty && !overLimit && !session.running
         }
+        // A restore pick blocked only by its switch: same deal
+        // (Grace, 2026-11-19).
+        if judgement.restoreNeedsSwitch {
+            return !selection.tendies.isEmpty && !overLimit && !session.running
+        }
         // The in-process route is the one path that does not need a pairing
         // record; every other mode still does.
         return (session.paired || judgement.mode == .worseQuery)
@@ -341,9 +346,10 @@ struct DriftHomeView: View {
             VStack(spacing: 0) {
                 ForEach(visiblePicks) { pick in
                     methodRow(pick, judged)
-                    Divider().padding(.leading, 34)
+                    if pick.id != visiblePicks.last?.id {
+                        Divider().padding(.leading, 34)
+                    }
                 }
-                restoreMethodRow
             }
             Text(judged.reason)
                 .font(.subheadline).foregroundStyle(.secondary)
@@ -353,48 +359,18 @@ struct DriftHomeView: View {
             } else if judged.isBlocked, let blocked = judged.blockedReason {
                 Text(blocked).font(.caption).foregroundStyle(.orange)
             }
-            // Grace (2026-11-19): the restore row is back on Home
-            // (it lived only on the 实验性功能 page since #329), still
-            // shown unavailable. The seal itself is unchanged.
+            // Grace (2026-11-19, later the same day): the restore row
+            // is a real pick now — selectable, badged 实验， judged
+            // like the kernel pick with a go-turn-it-on reminder. It
+            // renders through `methodRow` with the other picks; the
+            // sealed-route row it replaces is gone. The seal itself
+            // is unchanged.
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
     }
 
-    /// The restore method's home row (Grace, 2026-11-19): listed with
-    /// the other methods again, but unavailable — it is not a pick, the
-    /// stored method never changes when it is tapped; the tap only
-    /// answers 「暂不可用」.
-    private var restoreMethodRow: some View {
-        Button {
-            session.noticeTitle = "恢复刷"
-            session.noticeText = "暂不可用"
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "lock.fill")
-                    .font(.title3)
-                    .foregroundStyle(Color.secondary)
-                    .padding(.top, 1)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("恢复刷").font(.subheadline.weight(.medium))
-                    Text("通过恢复方式刷入壁纸")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 6)
-                Text("不可用")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(Color.secondary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.trailing)
-            }
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    /// One of the four method rows: a radio, the fixed name and its one-line
+    /// One of the method rows: a radio, the fixed name and its one-line
     /// description, and the channel's live status on the right.
     private func methodRow(_ pick: DriftMethodPick, _ judged: DriftModeJudgement) -> some View {
         let selected = manualPick == pick
@@ -425,6 +401,12 @@ struct DriftHomeView: View {
             status = "不可选"
         } else if pick == .kernel {
             status = available ? "可用" : "不支持"
+        } else if pick == .restore {
+            // The restore pick is selectable like the kernel pick,
+            // but there is no device premise to judge — while the
+            // route is sealed its honest state is 不可用； the switch
+            // reminder bites at the flash tap (Grace, 2026-11-19).
+            status = "不可用"
         } else {
             status = available ? "可用" : "不可用"
         }
@@ -730,6 +712,11 @@ struct DriftHomeView: View {
             if judgement.kernelNeedsSwitch {
                 session.noticeTitle = "内核直刷还没有打开"
                 session.noticeText = "请先到「设置 → 实验性功能」里打开内核直刷，再回来刷入。"
+            } else if judgement.restoreNeedsSwitch {
+                // The restore pick's reminder moment, same shape
+                // (Grace, 2026-11-19).
+                session.noticeTitle = "恢复刷还没有打开"
+                session.noticeText = "请先到「设置 → 实验性功能」里打开恢复刷，再回来刷入。"
             } else {
                 session.errorText = judgement.blockedReason
             }
