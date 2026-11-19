@@ -7,10 +7,10 @@ on:
         description: "版本操作：升版本时必须高于当前版本；替换版本允许使用相同版本号"
         type: choice
         options:
-          - increase
-          - replace
+          - 升版本
+          - 替换版本
         required: true
-        default: replace
+        default: 替换版本
       version:
         description: "目标版本号，例如 1.0.0（Tag 也使用这个名称，不加 v）"
         type: string
@@ -81,9 +81,9 @@ jobs:
               raise SystemExit("版本号格式错误，请填写 x.y.z，例如 1.0.0")
           if not build.isdigit() or int(build) < 1:
               raise SystemExit("构建号必须是大于 0 的整数")
-          if mode == "increase" and tuple(map(int, version.split("."))) <= tuple(map(int, current.split("."))):
-              raise SystemExit(f"升版本模式要求目标版本高于当前版本 {current}；如需同版本替换，请选择 replace")
-          if mode not in ("increase", "replace"):
+          if mode == "升版本" and tuple(map(int, version.split("."))) <= tuple(map(int, current.split("."))):
+              raise SystemExit(f"升版本模式要求目标版本高于当前版本 {current}；如需同版本替换，请选择「替换版本」")
+          if mode not in ("升版本", "替换版本"):
               raise SystemExit("未知的版本操作方式")
           text, count = re.subn(r'(?m)^(\s*MARKETING_VERSION:\s*).+$',
                                 lambda m: m.group(1) + '"' + version + '"', text, count=1)
