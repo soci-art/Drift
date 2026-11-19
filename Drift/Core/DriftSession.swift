@@ -579,13 +579,11 @@ final class DriftSession: ObservableObject {
         guard !InFlightCall.shared.hasLiveRun else {
             return (false, "已有一轮刷入正在进行")
         }
-        guard !selection.tendies.isEmpty else {
-            return (false, "先在「壁纸包」里选择要写入的 .tendies 包。")
+        guard !selection.tendies.isEmpty || selection.video != nil else {
+            return (false, "先选择要写入的壁纸包或视频。")
         }
-        guard selection.video == nil,
-              !selection.fullReset,
-              selection.resetModes.isEmpty else {
-            return (false, "内核直刷当前只支持已选的 .tendies 描述文件，不处理视频或重置任务。")
+        guard !selection.fullReset, selection.resetModes.isEmpty else {
+            return (false, "内核直刷不处理壁纸商店重置任务。")
         }
         // The channel's own gates, checked here as well as in the
         // judge (Grace, 2026-11-15: 判定层面要做好): no caller may
@@ -625,7 +623,7 @@ final class DriftSession: ObservableObject {
 
         DriftEngine.shared.log("内核直刷：开始（本机 \(KernelDirectPremise.modelIdentifier)，"
             + "iOS \(WorseQueryEscape.processVersion)，构建 \(WorseQueryEscape.processBuildVersion)，"
-            + "设备读数 \(identity.describe)，包数 \(selection.tendies.count)）")
+            + "设备读数 \(identity.describe)，包数 \(selection.tendies.count)，视频：\(selection.video?.lastPathComponent ?? "无")）")
 
         // Segment timing for the speed work (Grace, 2026-11-16):
         // the probe segment and the round total land in the log as
@@ -695,7 +693,7 @@ final class DriftSession: ObservableObject {
         if !skippedPacks.isEmpty {
             DriftEngine.shared.log("[内核直刷] 防重复刷：\(skippedPacks.joined(separator: "、")) 已在商店里，本轮跳过")
         }
-        if writeSelection.tendies.isEmpty {
+        if writeSelection.tendies.isEmpty && writeSelection.video == nil {
             ApplyHistory.record(
                 mode: "内核直刷",
                 success: true,
@@ -717,6 +715,21 @@ final class DriftSession: ObservableObject {
         DriftEngine.shared.log("[内核直刷] 探针通过，进入正式写入阶段")
         let writerStarted = Date()
         do {
+            var generatedVideoDirectory: URL?
+            defer {
+                if let generatedVideoDirectory {
+                    try? FileManager.default.removeItem(at: generatedVideoDirectory)
+                }
+            }
+            if let plan = writeSelection.plan {
+                let directory = PosterBoard.workDirectory.appendingPathComponent(
+                    "kernel-video-\(UUID().uuidString)", isDirectory: true)
+                generatedVideoDirectory = directory
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try await PosterBoardVideo.generate(plan: plan, outputDirectory: directory) {
+                    DriftEngine.shared.log($0)
+                }
+            }
             let outcome: KernelDirectWriter.Outcome = try await withCheckedThrowingContinuation {
                 continuation in
                 DispatchQueue.global(qos: .userInitiated).async {
@@ -728,6 +741,7 @@ final class DriftSession: ObservableObject {
                             storePath: storePath,
                             structureVersions: report.structureVersions,
                             deviceVersion: WorseQueryEscape.processVersion,
+                            generatedVideoDirectory: generatedVideoDirectory,
                             log: { DriftEngine.shared.log($0) },
                             progress: { value in
                                 DriftEngine.shared.log(String(format: "[内核写入] 进度 %.0f%%", value))
@@ -1248,11 +1262,6 @@ enum DriftJudge {
 
         // Hard limits: these leave only the restore method, and while it is
         // sealed the answer is "cannot flash now".
-        if selection.video != nil {
-            return p.restoreReady
-                ? judged(.backup, "视频壁纸只能用恢复刷，刷完会重启")
-                : sealedBlocked("视频壁纸只能用恢复刷，但恢复刷已封存，现在刷不了")
-        }
         if selection.fullReset || !selection.resetModes.isEmpty {
             return p.restoreReady
                 ? judged(.backup, "重置壁纸商店只能用恢复刷，刷完会重启")
