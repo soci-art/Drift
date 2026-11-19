@@ -139,7 +139,7 @@ enum KernelDirectWriter {
             sources.append(Source(
                 name: "视频：\(selection.video?.lastPathComponent ?? "Video")",
                 url: generatedVideoDirectory,
-                defaultExtension: PosterBoard.photosExtension,
+                defaultExtension: PosterBoardPosterType.collections.extensionBundleID,
                 plannedDescriptors: 1
             ) { stage in
                 for child in try FileManager.default.contentsOfDirectory(
