@@ -60,6 +60,10 @@ jobs:
           BUILD_NUMBER: ${{ inputs.build_number }}
         run: |
           set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Nightly release workflow must be run from the main branch."
+            exit 1
+          fi
           python3 - <<'PY'
           import os, re
           from pathlib import Path
@@ -199,6 +203,22 @@ jobs:
       # kept upstream views. The check (which also fails on keys orphaned by
       # the removed feature pages) belongs to the upstream project.
 
+      - name: Persist the selected app version and build number
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add project.yml
+          if git diff --cached --quiet; then
+            echo "project.yml already has the selected version and build number."
+          else
+            git commit -m "chore: set Nightly version $VERSION [manual-version]"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7.0.1
         with:
@@ -218,6 +238,8 @@ jobs:
           DELETE_EXISTING: ${{ inputs.delete_existing }}
         run: |
           set -euo pipefail
+          VERSION="$(printf '%s' "$VERSION" | xargs)"
+          BUILD_NUMBER="$(printf '%s' "$BUILD_NUMBER" | xargs)"
           TAG="$VERSION"
           ASSET="build/Drift-unsigned.ipa"
           cp build/Drift.ipa "$ASSET"
