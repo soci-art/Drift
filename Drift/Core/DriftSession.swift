@@ -730,6 +730,7 @@ final class DriftSession: ObservableObject {
                     DriftEngine.shared.log($0)
                 }
             }
+            let videoDirectoryForWrite = generatedVideoDirectory
             let outcome: KernelDirectWriter.Outcome = try await withCheckedThrowingContinuation {
                 continuation in
                 DispatchQueue.global(qos: .userInitiated).async {
@@ -741,7 +742,7 @@ final class DriftSession: ObservableObject {
                             storePath: storePath,
                             structureVersions: report.structureVersions,
                             deviceVersion: WorseQueryEscape.processVersion,
-                            generatedVideoDirectory: generatedVideoDirectory,
+                            generatedVideoDirectory: videoDirectoryForWrite,
                             log: { DriftEngine.shared.log($0) },
                             progress: { value in
                                 DriftEngine.shared.log(String(format: "[内核写入] 进度 %.0f%%", value))
