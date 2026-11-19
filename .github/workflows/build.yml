@@ -30,6 +30,8 @@ jobs:
       - name: Resolve version and build from project.yml
         id: version
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           VERSION="$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*//p' project.yml | tr -d '"' | head -1)"
@@ -41,6 +43,30 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
             echo "::error::Tag $GITHUB_REF_NAME does not match project.yml version $VERSION (expected v$VERSION)."
             exit 1
+          fi
+          # Build number rule (Grace, 2026-11-19): a brand-new version
+          # starts at build 1; only re-publishing the SAME version (its
+          # formal release already exists) increments the build, read
+          # from the IPA the existing release currently ships.
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            PREV_BUILD=0
+            if gh release view "v$VERSION" >/dev/null 2>&1; then
+              PREV_DIR="$(mktemp -d)"
+              if gh release download "v$VERSION" --pattern "Drift-$VERSION-unsigned.ipa" --dir "$PREV_DIR" 2>/dev/null; then
+                PREV_BUILD="$(python3 - "$PREV_DIR/Drift-$VERSION-unsigned.ipa" <<'PYEOF'
+          import plistlib, sys, zipfile
+          z = zipfile.ZipFile(sys.argv[1])
+          name = [n for n in z.namelist() if n.endswith(".app/Info.plist")][0]
+          print(plistlib.loads(z.read(name)).get("CFBundleVersion", "0"))
+          PYEOF
+          )"
+              fi
+              rm -rf "$PREV_DIR"
+            fi
+            case "$PREV_BUILD" in ''|*[!0-9]*) PREV_BUILD=0 ;; esac
+            BUILD=$((PREV_BUILD + 1))
+            sed -i '' "s/^\([[:space:]]*CURRENT_PROJECT_VERSION:[[:space:]]*\).*/\1\"$BUILD\"/" project.yml
+            echo "Build rule: previous same-version build $PREV_BUILD -> this build $BUILD"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "build=$BUILD" >> "$GITHUB_OUTPUT"
@@ -201,3 +227,19 @@ jobs:
               --notes "$NOTES" \
               --latest
           fi
+
+      # Keep project.yml in step with the shipped build number.
+      - name: Write the shipped build number back to project.yml
+        if: success() && github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- project.yml; then
+            echo "project.yml already matches the shipped build."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add project.yml
+          git commit -m "版本号回写 ${{ steps.version.outputs.version }} 构建 ${{ steps.version.outputs.build }}"
+          git push origin HEAD:refs/heads/formal || echo "::warning::project.yml write-back push failed; the release itself is already published."
