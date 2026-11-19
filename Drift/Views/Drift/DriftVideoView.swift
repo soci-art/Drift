@@ -3,8 +3,8 @@ import UniformTypeIdentifiers
 import AVFoundation
 
 /// The video-wallpaper page: one video (+ its freeze frame), the playback
-/// options, and its own apply. Video is delivered by the local PosterBoard
-/// container route; it does not invoke the sealed restore route.
+/// options, and its own apply. The selected method from the home page decides
+/// which non-restore writer receives the generated video descriptors.
 struct DriftVideoView: View {
     @EnvironmentObject private var session: DriftSession
     @EnvironmentObject private var identityMonitor: DeviceIdentityMonitor
