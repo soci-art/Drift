@@ -1221,8 +1221,9 @@ enum DriftJudge {
 
     /// Decide the channel for a selection.
     ///
-    /// Hard limits first (video, store reset, store-database packs — all
-    /// restore-only, hence blocked while 恢复刷 is sealed). Then: a manual pick
+    /// Hard limits first (store reset and store-database packs remain
+    /// restore-only, hence blocked while 恢复刷 is sealed). Video is accepted
+    /// by every non-restore writer. Then: a manual pick
     /// is used as-is and is *unavailable* — never substituted — when its own
     /// premise fails; `.auto` takes the first ready channel in order.
     ///
