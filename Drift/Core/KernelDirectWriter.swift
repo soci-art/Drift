@@ -24,6 +24,7 @@ enum KernelDirectWriter {
         let name: String
         let url: URL
         let defaultExtension: String
+        let plannedDescriptors: Int
         let extract: (URL) throws -> Void
     }
 
@@ -67,16 +68,15 @@ enum KernelDirectWriter {
         storePath: String,
         structureVersions: [Int],
         deviceVersion: String,
+        generatedVideoDirectory: URL? = nil,
         log: @escaping @Sendable (String) -> Void,
         progress: @escaping (Double) -> Void
     ) throws -> Outcome {
-        guard !selection.tendies.isEmpty else {
-            throw DriftError("内核直刷需要先选择至少一个 .tendies 壁纸包。")
+        guard !selection.tendies.isEmpty || generatedVideoDirectory != nil else {
+            throw DriftError("内核直刷需要先选择壁纸包或视频。")
         }
-        guard selection.video == nil,
-              !selection.fullReset,
-              selection.resetModes.isEmpty else {
-            throw DriftError("内核直刷当前只处理已选的 .tendies 描述文件，不处理视频或重置任务。")
+        guard !selection.fullReset, selection.resetModes.isEmpty else {
+            throw DriftError("内核直刷不处理壁纸商店重置任务。")
         }
         guard selection.tendies.allSatisfy({ !$0.isContainer && !$0.isUnsafeContainer }) else {
             throw DriftError("内核直刷当前只写入描述文件，不接受包含整个商店容器或数据库的包。")
@@ -122,9 +122,10 @@ enum KernelDirectWriter {
             )
         }
 
-        let sources = selection.tendies.map { pack in
+        var sources = selection.tendies.map { pack in
             Source(name: pack.name, url: pack.url,
-                   defaultExtension: pack.posterType.extensionBundleID) { stage in
+                   defaultExtension: pack.posterType.extensionBundleID,
+                   plannedDescriptors: PosterBoardAirlift.countDescriptors(inArchiveAt: pack.url)) { stage in
                 try pack.extract(to: stage)
                 if PosterBoard.shouldConvertLegacy(pack: pack,
                                                     deviceVersion: deviceVersion,
@@ -132,6 +133,22 @@ enum KernelDirectWriter {
                     PosterBoard.convertLegacyPack(pack.name, at: stage, log: log)
                 }
             }
+        }
+
+        if let generatedVideoDirectory {
+            sources.append(Source(
+                name: "视频：\(selection.video?.lastPathComponent ?? "Video")",
+                url: generatedVideoDirectory,
+                defaultExtension: PosterBoard.photosExtension,
+                plannedDescriptors: 1
+            ) { stage in
+                for child in try FileManager.default.contentsOfDirectory(
+                    at: generatedVideoDirectory, includingPropertiesForKeys: nil) {
+                    try FileManager.default.copyItem(
+                        at: child,
+                        to: stage.appendingPathComponent(child.lastPathComponent, isDirectory: true))
+                }
+            })
         }
 
         let manager = FileManager.default
@@ -142,9 +159,7 @@ enum KernelDirectWriter {
 
         // Unpack first, then select a generation from the providers actually
         // declared by the descriptor trees, not from the pack's default type.
-        let planned = max(1, sources.reduce(0) {
-            $0 + PosterBoardAirlift.countDescriptors(inArchiveAt: $1.url)
-        })
+        let planned = max(1, sources.reduce(0) { $0 + $1.plannedDescriptors })
         log("[内核写入] 计划统计：\(sources.count) 个包，预计 \(planned) 个描述符")
         var prepared: [PreparedDescriptor] = []
 
