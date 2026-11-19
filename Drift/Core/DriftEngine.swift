@@ -470,11 +470,6 @@ final class DriftEngine {
                 + "要重置，请把刷入方式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
-        if posterBoard.video != nil {
-            throw DriftError("本机直刷无法应用 PosterBoard 视频：它的帧是为恢复准备的。"
-                + "请把刷入方式切换到「恢复刷」。"
-                + DriftRestoreGate.unavailableSuffix)
-        }
         if posterBoard.tendies.contains(where: \.isUnsafeContainer) {
             throw DriftError("包含商店数据库的壁纸包只能用恢复刷；恢复刷已封存，暂时刷不了。")
         }
