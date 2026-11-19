@@ -121,10 +121,19 @@ enum AppAnnouncement {
         // release used the fixed "nightly" tag, so a nightly build
         // tries its version tag first and the legacy tag second.
         // A formal build keeps its single v-prefixed tag.
-        let apis = AppVersion.channel == .nightly
-            ? ["https://api.github.com/repos/soci-art/Drift/releases/tags/\(version)",
-               "https://api.github.com/repos/soci-art/Drift/releases/tags/nightly"]
-            : ["https://api.github.com/repos/soci-art/Drift/releases/tags/v\(version)"]
+        let apis: [String]
+        switch AppVersion.channel {
+        case .nightly:
+            apis = ["https://api.github.com/repos/soci-art/Drift/releases/tags/\(version)",
+                    "https://api.github.com/repos/soci-art/Drift/releases/tags/nightly"]
+        case .alpha:
+            // The Alpha line's announcements live on its own fixed
+            // tag — never the formal v-tag, whose notes are written
+            // for shipped users.
+            apis = ["https://api.github.com/repos/soci-art/Drift/releases/tags/alpha"]
+        case .release:
+            apis = ["https://api.github.com/repos/soci-art/Drift/releases/tags/v\(version)"]
+        }
         for api in apis {
             for base in [AppUpdateChecker.mirrorPrefix, AppUpdateChecker.secondMirrorPrefix, ""] {
                 if let notes = try? await fetchNotes(base: base, api: api) {
@@ -155,7 +164,7 @@ enum AppAnnouncement {
               !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { throw URLError(.cannotParseResponse) }
         var date = (object?["published_at"] as? String).flatMap(Self.dateLine(fromISO:))
-        if AppVersion.channel == .nightly,
+        if AppVersion.channel != .release,
            let assets = object?["assets"] as? [[String: Any]],
            let updated = assets.first(where: {
                ($0["name"] as? String)?.hasSuffix(".ipa") == true
@@ -165,7 +174,8 @@ enum AppAnnouncement {
             // which is the date the announcement header should show.
             date = assetDate
         }
-        return Notes(body: AppUpdateChecker.strippingNightlyStamp(body), dateLine: date)
+        return Notes(body: AppUpdateChecker.strippingAlphaStamp(
+                        AppUpdateChecker.strippingNightlyStamp(body)), dateLine: date)
     }
 
     /// Shared with the update checker, which parses the same

@@ -31,15 +31,24 @@ enum AppVersion {
     /// Which release line this build belongs to (Grace, 2026-11-16:
     /// the two lines check for updates separately, each on its own
     /// line). Stamped at build time — the workflow sets DRIFT_CHANNEL
-    /// from the commit markers and project.yml defaults it to the
-    /// release line — and read back from the bundle's DriftChannel
-    /// key. Anything that is not exactly "nightly" is the release
-    /// line, so unstamped and older builds keep the historical
-    /// behaviour of watching the formal releases only.
-    enum Channel { case release, nightly }
+    /// and project.yml defaults it to the release line — and read back
+    /// from the bundle's DriftChannel key. Anything that is not
+    /// exactly "nightly" or "alpha" is the release line, so unstamped
+    /// and older builds keep the historical behaviour of watching the
+    /// formal releases only.
+    ///
+    /// The alpha line (Grace, 2026-11-19) is the restore-flash
+    /// research line: its own branch, its own workflow, its own
+    /// prerelease. The release and nightly workflows never stamp it,
+    /// which is what keeps the restore gate sealed on those lines by
+    /// construction (see DriftRestoreGate).
+    enum Channel { case release, nightly, alpha }
 
     static var channel: Channel {
-        (Bundle.main.object(forInfoDictionaryKey: "DriftChannel") as? String) == "nightly"
-            ? .nightly : .release
+        switch Bundle.main.object(forInfoDictionaryKey: "DriftChannel") as? String {
+        case "nightly": return .nightly
+        case "alpha": return .alpha
+        default: return .release
+        }
     }
 }

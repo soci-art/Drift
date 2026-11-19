@@ -175,6 +175,13 @@ final class DriftEngine {
     /// the verification confirms every descriptor is in store.
     private(set) var lastVerification: PosterStoreVerification?
 
+    /// The dry-run report of the latest restore run (Alpha line), read
+    /// by the session funnel the way it reads `lastPosterBoardEffect`.
+    private(set) var lastRestoreDryRun: RestoreDryRunReport?
+    /// Retained so the confirmed write-back reaches the same prepared
+    /// package the dry run audited; nil outside a pending dry run.
+    private var restoreService: DriftRestoreService?
+
     /// The `eta.py` port.  Recreated per run so a new apply starts estimating
     /// from a clean slate even though the engine object is a singleton.
     private var etaEstimator = ProgressEta()
@@ -228,6 +235,7 @@ final class DriftEngine {
         clearProgress()
         lastPosterBoardEffect = nil
         lastVerification = nil
+        lastRestoreDryRun = nil
         let runStage = StageTimer("RUN apply")
         defer { runStage.done() }
 
@@ -329,16 +337,66 @@ final class DriftEngine {
             return
 
         case .backup:
-            // The restore route is suspended (feedback #30) and its whole
-            // delivery machinery was removed in the 2.0.0 swap: there is no
-            // backup or restore code behind this facade to fall back to.
-            // The session funnel refuses this mode first; this is the
-            // second, engine-side refusal with the same notice.
-            throw DriftError("暂不可用")
+            // The restore route (feedback #30): the session funnel
+            // refuses this mode while the gate is closed, and this is
+            // the second, engine-side refusal with the same notice.
+            // The gate opens only on the Alpha research line
+            // (DriftRestoreGate), and there a run in this mode is the
+            // DRY RUN only — pull, compile, prune, inject, audit,
+            // fingerprint — never a write-back. The write-back is the
+            // separate confirmed action `writeBackRestore` below, and
+            // the dry run's report rides back on `lastRestoreDryRun`,
+            // mirroring `lastPosterBoardEffect`.
+            guard DriftRestoreGate.isEnabled else {
+                throw DriftError("暂不可用")
+            }
+            let minimuxer = Minimuxer.shared()
+            guard await testReady(minimuxer) else {
+                throw DriftError("核心还没就绪。请确保 Wi-Fi 可用，并打开 LocalDevVPN 连上隧道，然后选择配对文件。")
+            }
+            markRustLog()
+            let service = DriftRestoreService()
+            let report = try await service.dryRun(
+                selection: selection,
+                deviceVersion: modeVersion,
+                buildVersion: modeIdentity.buildVersion,
+                onProgress: { overall in self.logProgress("restore dry run", overall) })
+            restoreService = service
+            lastRestoreDryRun = report
+            log("Restore dry run complete: \(report.payloadCount) payload(s) compiled, "
+                + "package \(report.packageFileCount) file(s), fingerprint \(report.fingerprintShort)")
+            return
         }
     }
 
     // MARK: - Readiness
+
+    // MARK: - Restore write-back (Alpha line)
+
+    /// Write back the package the latest restore dry run prepared.
+    /// The service re-verifies the dry run's fingerprint first; a
+    /// mismatch — or no dry run at all — refuses here.
+    func writeBackRestore() async throws {
+        guard let restoreService else {
+            throw DriftError("还没有干跑结果，请先干跑一次。")
+        }
+        do {
+            try await restoreService.writeBack()
+        } catch {
+            self.restoreService = nil
+            lastRestoreDryRun = nil
+            throw error
+        }
+        self.restoreService = nil
+        lastRestoreDryRun = nil
+    }
+
+    /// Throw a prepared dry run away without writing it back.
+    func discardRestoreDryRun() {
+        restoreService?.discard()
+        restoreService = nil
+        lastRestoreDryRun = nil
+    }
 
     private func testReady(_ minimuxer: Minimuxer) async -> Bool {
         if case .success(true) = await minimuxer.core.isReady() {

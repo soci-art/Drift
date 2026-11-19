@@ -11,23 +11,41 @@ import SwiftUI
 ///   status card only once it is ready, and the judge blocks a
 ///   kernel pick with the turn-it-on reminder. Turning it off is
 ///   silent.
-/// * 恢复刷 — a placeholder switch (Grace, 2026-11-19): the route
-///   itself is still sealed behind `DriftRestoreGate`, so this
-///   switch is kept off and any attempt to move it answers
+/// * 恢复刷 — a placeholder switch on the shipped lines (Grace,
+///   2026-11-19): the route is sealed behind `DriftRestoreGate`,
+///   so this switch is kept off and any attempt to move it answers
 ///   「暂不可用」. It exists so the Home pick's go-turn-it-on
-///   reminder has somewhere to point, and so the day the restore
-///   research lands, the route opens by making this switch real —
-///   no Home surgery needed.
+///   reminder has somewhere to point. On the Alpha research line
+///   the gate is open and this same switch is real (stored in
+///   `RestoreFlashPremise`), behind a risk-worded confirmation —
+///   the route opened here with no Home surgery, as planned.
 struct ExperimentalFeaturesView: View {
     @EnvironmentObject private var session: DriftSession
     @AppStorage(KernelDirectPremise.enabledKey) private var kernelEnabled = false
+    @AppStorage(RestoreFlashPremise.enabledKey) private var restoreEnabled = false
     @State private var confirmKernelOn = false
+    @State private var confirmRestoreOn = false
 
-    /// The restore switch never turns on in this build: it reads as
-    /// off, and moving it only answers 「暂不可用」 (Grace,
-    /// 2026-11-19). Nothing is stored — there is no on state to keep.
+    /// The restore switch, per line. On the shipped lines it never
+    /// turns on: it reads as off, and moving it only answers
+    /// 「暂不可用」 (Grace, 2026-11-19) — nothing is stored, there is
+    /// no on state to keep. On the Alpha line it is a real switch:
+    /// turning it on goes through the risk-worded confirmation sheet
+    /// and the stored value is `RestoreFlashPremise`'s; turning it
+    /// off is silent, like the kernel switch.
     private var restoreBinding: Binding<Bool> {
-        Binding(
+        if AppVersion.channel == .alpha {
+            return Binding(
+                get: { restoreEnabled },
+                set: { newValue in
+                    if newValue {
+                        confirmRestoreOn = true
+                    } else {
+                        restoreEnabled = false
+                    }
+                })
+        }
+        return Binding(
             get: { false },
             set: { _ in
                 session.noticeTitle = "恢复刷"
@@ -84,7 +102,9 @@ struct ExperimentalFeaturesView: View {
                                             in: RoundedRectangle(cornerRadius: 4, style: .continuous))
                                 .foregroundStyle(.orange)
                         }
-                        Text("通过恢复方式刷入壁纸。")
+                        Text(AppVersion.channel == .alpha
+                             ? "通过恢复方式刷入壁纸。研究功能，只在备用机上用：先干跑对账，确认后才写回。"
+                             : "通过恢复方式刷入壁纸。")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -103,6 +123,13 @@ struct ExperimentalFeaturesView: View {
             // 取消 would show twice (Grace's catch, 2026-11-14).
             actions: [
                 DriftSheetAction("确定") { kernelEnabled = true },
+            ])
+        .driftActionSheet(
+            isPresented: $confirmRestoreOn,
+            title: "打开恢复刷？",
+            message: "恢复刷还在研究阶段，没有在真机上验证过。打开后刷入也只会先干跑对账，真正写回前还要再确认一次。只在备用机上打开，主力机不要开。",
+            actions: [
+                DriftSheetAction("确定") { restoreEnabled = true },
             ])
     }
 }

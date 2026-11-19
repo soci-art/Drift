@@ -22,6 +22,8 @@ struct DriftHomeView: View {
     @State private var importingPairing = false
     @State private var statusLine: String?
     @State private var confirmRespring = false
+    /// The restore write-back's danger confirmation (Alpha line).
+    @State private var confirmRestoreWriteBack = false
     /// #337 (Grace, 2026-11-16): the signature notice's entry
     /// window state — see `openEntryWindow()`.
     @State private var signatureNotice = false
@@ -178,16 +180,38 @@ struct DriftHomeView: View {
                         // an orange 「预发行版」 to its right; the name
                         // itself never moves. Release builds keep the
                         // system large title and never show this row.
-                        if AppVersion.channel == .nightly {
+                        // The Alpha research line (Grace, 2026-11-19)
+                        // wears a red "Alpha-test" in the same place, and
+                        // a red warning banner under it: the restore
+                        // route inside is unverified research.
+                        if AppVersion.channel != .release {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Text("Drift")
                                     .font(.largeTitle)
                                     .fontWeight(.bold)
-                                Text("预发行版")
-                                    .font(.headline)
-                                    .foregroundStyle(.orange)
+                                if AppVersion.channel == .alpha {
+                                    Text("Alpha-test")
+                                        .font(.headline)
+                                        .foregroundStyle(.red)
+                                } else {
+                                    Text("预发行版")
+                                        .font(.headline)
+                                        .foregroundStyle(.orange)
+                                }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        if AppVersion.channel == .alpha {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                Text("研究包：恢复刷未验证，勿在主力机使用")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(Color.red,
+                                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
                         headerCard
                         tutorialEntryCard
@@ -196,6 +220,9 @@ struct DriftHomeView: View {
                         }
                         judgeCard
                         actionFrame
+                        if let dryRun = session.pendingRestoreDryRun {
+                            restoreDryRunCard(dryRun)
+                        }
                         activationCard
                         // Collection #289 (Grace, 2026-11-13): no log
                         // card on this page any more — the log is still
@@ -206,8 +233,8 @@ struct DriftHomeView: View {
                     .driftPageWidth()
                 }
             }
-            .navigationTitle(AppVersion.channel == .nightly ? "" : "Drift")
-            .navigationBarTitleDisplayMode(AppVersion.channel == .nightly ? .inline : .large)
+            .navigationTitle(AppVersion.channel == .release ? "Drift" : "")
+            .navigationBarTitleDisplayMode(AppVersion.channel == .release ? .large : .inline)
             // Collection #223 (Grace, 2026-11-12): no toolbar pairing
             // shortcut — it duplicated the status card's full-width
             // 「导入配对文件」button directly below it.
@@ -228,6 +255,10 @@ struct DriftHomeView: View {
                               title: "本机直刷不可用",
                               message: InstallEnvironment.noUsableGroupReason,
                               actions: [DriftSheetAction("知道了") {}])
+            .driftActionSheet(isPresented: $confirmRestoreWriteBack,
+                              title: "确认写回？",
+                              message: "写回会把干跑备好的恢复包真正恢复到这台设备上。可能出现的情况：\n· 顺利：重启后新壁纸生效，其他数据不动。\n· 设备拒绝或中途失败：壁纸不变，一般不会丢数据，但要重新干跑。\n· 最坏：恢复异常导致设备恢复出厂、数据全丢（2026-11-10 发生过一次）。\n只在已经用电脑完整备份过的备用机上写回，主力机不要写回。",
+                              actions: [DriftSheetAction("确认写回") { runRestoreWriteBack() }])
             .onAppear {
                 AppLog.op("打开壁纸页")
                 if !didFirstAppear {
@@ -819,6 +850,60 @@ struct DriftHomeView: View {
             statusLine = triggered
                 ? "已触发注销；PosterBoard 重新启动后会读到新壁纸。"
                 : "现在没有可用的窗口触发注销，请手动从系统里注销一次。"
+        }
+    }
+
+    /// The restore dry-run card (Alpha line): what the dry run
+    /// prepared, and the two ways out — write it back (behind the
+    /// danger confirmation) or throw it away. Shown only while a dry
+    /// run is pending; the session clears it on either outcome.
+    private func restoreDryRunCard(_ report: RestoreDryRunReport) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text("恢复刷 · 干跑完成")
+                    .font(.subheadline.weight(.semibold))
+                Text("还没写回")
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Color.red.opacity(0.16),
+                                in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .foregroundStyle(.red)
+            }
+            Text("已拉取设备清单并对账通过：将写回 \(report.packageFileCount) 个文件（共 \(ByteCountFormatter.string(fromByteCount: report.packageBytes, countStyle: .file))），其中这次新做的 \(report.payloadCount) 个。干跑指纹 \(report.fingerprintShort)，写回前会再验一次，对不上就取消。")
+                .font(.subheadline).foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Button {
+                    confirmRestoreWriteBack = true
+                } label: {
+                    Label("确认写回", systemImage: "arrow.up.doc")
+                }
+                .driftGlassButton()
+                .disabled(session.running)
+                Button("放弃") {
+                    session.discardRestoreDryRun()
+                    statusLine = "已放弃这次干跑，什么都没有写回。"
+                }
+                .driftGlassButton()
+                .disabled(session.running)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .driftGlassSlab()
+    }
+
+    /// The dry-run card's confirmed write-back: same outcome
+    /// presentation as a flash run (status line on success, error
+    /// notice on failure).
+    private func runRestoreWriteBack() {
+        Task {
+            let outcome = await session.runRestoreWriteBack(identity: identity)
+            if outcome.ok {
+                statusLine = outcome.message
+            } else {
+                statusLine = nil
+                session.errorText = outcome.message
+            }
         }
     }
 

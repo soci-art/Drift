@@ -136,6 +136,7 @@ final class AppUpdateChecker: ObservableObject {
         // so a formal release can never be offered to it (and a
         // nightly swap finally reaches its own users); a release
         // build keeps the historical route below unchanged.
+        if AppVersion.channel == .alpha { return try await fetchAlpha() }
         if AppVersion.channel == .nightly { return try await fetchNightly() }
         // Three tiers (#310): her accelerator, the public domestic
         // accelerator, then direct — the API first, and the release
@@ -207,6 +208,33 @@ final class AppUpdateChecker: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The Alpha line's stamp, same shape as the nightly one:
+    /// `<!-- drift-alpha: 3.3.6 1 -->` (version, then build), written
+    /// by the Alpha workflow into the "Alpha" pre-release's body.
+    /// The two stamps are deliberately distinct: a nightly check
+    /// never parses an Alpha body (its matcher also demands the
+    /// "Nightly" name / "nightly" tag), and an Alpha check never
+    /// parses a nightly body, so the lines cannot see each other.
+    nonisolated static func alphaStamp(in body: String) -> (version: String, build: Int)? {
+        guard let start = body.range(of: "<!-- drift-alpha:"),
+              let end = body.range(of: "-->", range: start.upperBound..<body.endIndex)
+        else { return nil }
+        let parts = body[start.upperBound..<end.lowerBound]
+            .split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" || $0 == "\r" })
+        guard parts.count == 2, let build = Int(parts[1]) else { return nil }
+        return (String(parts[0]), build)
+    }
+
+    /// The Alpha body with the stamp removed — what a human reader
+    /// (the announcement) should see.
+    nonisolated static func strippingAlphaStamp(_ body: String) -> String {
+        guard let start = body.range(of: "<!-- drift-alpha:"),
+              let end = body.range(of: "-->", range: start.upperBound..<body.endIndex)
+        else { return body }
+        return (String(body[..<start.lowerBound]) + String(body[end.upperBound...]))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private static func fetchNightly() async throws -> ReleaseInfo {
         // The same three API tiers as the release line. There is no
         // page fallback here: the version lives in the body stamp,
@@ -257,6 +285,59 @@ final class AppUpdateChecker: ObservableObject {
         return ReleaseInfo(version: stamp.version,
                            build: stamp.build,
                            notes: strippingNightlyStamp(rawBody),
+                           dateLine: dateLine, assetName: name,
+                           assetSize: asset["size"] as? Int ?? 0, directURL: assetURL)
+    }
+
+    // MARK: - Alpha line
+
+    private static func fetchAlpha() async throws -> ReleaseInfo {
+        // The same three API tiers as the nightly line, and the same
+        // reasoning: the version lives in the body stamp, which only
+        // the API returns.
+        if let info = try? await fetchAlphaViaAPI(base: mirrorPrefix) { return info }
+        if let info = try? await fetchAlphaViaAPI(base: secondMirrorPrefix) { return info }
+        return try await fetchAlphaViaAPI(base: "")
+    }
+
+    private static func fetchAlphaViaAPI(base: String) async throws -> ReleaseInfo {
+        guard let url = URL(string: base + nightlyListAPI) else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 12
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        // The Alpha release is a pre-release titled "Alpha" under the
+        // fixed "alpha" tag whose body carries the drift-alpha stamp.
+        // Nothing else can match: formal releases are never
+        // pre-releases, and the nightly carries its own name, tag and
+        // stamp.
+        guard let list = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              let object = list.first(where: { candidate in
+                  guard candidate["prerelease"] as? Bool == true,
+                        (candidate["name"] as? String) == "Alpha"
+                            || (candidate["tag_name"] as? String) == "alpha"
+                  else { return false }
+                  return alphaStamp(in: candidate["body"] as? String ?? "") != nil
+              }),
+              let stamp = alphaStamp(in: object["body"] as? String ?? "")
+        else { throw URLError(.cannotParseResponse) }
+        let rawBody = object["body"] as? String ?? ""
+        let assets = object["assets"] as? [[String: Any]] ?? []
+        guard let asset = assets.first(where: { ($0["name"] as? String) == "Drift-unsigned.ipa" })
+                ?? assets.first(where: { ($0["name"] as? String)?.hasSuffix(".ipa") == true }),
+              let name = asset["name"] as? String,
+              let download = asset["browser_download_url"] as? String,
+              let assetURL = URL(string: download) else {
+            throw URLError(.cannotParseResponse)
+        }
+        let dateLine = (asset["updated_at"] as? String)
+            .flatMap(AppAnnouncement.dateLine(fromISO:))
+        return ReleaseInfo(version: stamp.version,
+                           build: stamp.build,
+                           notes: strippingAlphaStamp(rawBody),
                            dateLine: dateLine, assetName: name,
                            assetSize: asset["size"] as? Int ?? 0, directURL: assetURL)
     }
