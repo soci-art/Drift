@@ -8,6 +8,8 @@ import AVFoundation
 struct DriftVideoView: View {
     @EnvironmentObject private var session: DriftSession
     @EnvironmentObject private var identityMonitor: DeviceIdentityMonitor
+    @ObservedObject private var tunnelMonitor = TunnelMonitor.shared
+    @AppStorage(DriftJudge.manualKey) private var manualPickRaw: String?
     @Binding var selection: PosterBoardSelection
 
     @State private var importingVideo = false
@@ -16,6 +18,7 @@ struct DriftVideoView: View {
     @State private var videoPreview: UIImage?
 
     private var identity: DeviceIdentity { identityMonitor.current }
+    private var manualPick: DriftMethodPick { DriftMethodPick.fromStored(manualPickRaw) }
     private var canApply: Bool {
         selection.video != nil && !session.running
             && (selection.loop || selection.thumbnail != nil)
@@ -65,10 +68,10 @@ struct DriftVideoView: View {
     private var introCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                DriftPill(text: "本机直刷", tint: .green)
-                DriftPill(text: "关闭 PosterBoard 后生效")
+                DriftPill(text: manualPick.label, tint: .green)
+                DriftPill(text: "按首页选定通道执行")
             }
-            Text("视频描述符会在本机生成并写入 PosterBoard 容器，不需要恢复刷、配对文件或设备重启。循环模式最多 400 帧；非循环是实况照片式（视频 + 一张定格帧）。")
+            Text("视频描述符会在本机生成，再交给首页当前选定的刷入通道。恢复刷仍保持封存。循环模式最多 400 帧；非循环是实况照片式（视频 + 一张定格帧）。")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -141,7 +144,7 @@ struct DriftVideoView: View {
 
     private var applyCard: some View {
         VStack(spacing: 10) {
-            NativePrimaryButton(title: session.running ? "刷入中…" : "本机直刷视频壁纸",
+            NativePrimaryButton(title: session.running ? "刷入中…" : "按当前通道刷入视频壁纸",
                                 systemImage: "film",
                                 running: session.running,
                                 disabled: !canApply) {
@@ -173,13 +176,22 @@ struct DriftVideoView: View {
         videoSelection.foreground = selection.foreground
         videoSelection.calculationMode = selection.calculationMode
         Task {
-            let outcome = await session.run(selection: videoSelection, mode: .worseQuery,
-                                            pick: .local, identity: identity)
-            if outcome.ok {
-                statusLine = outcome.message
+            let checked = DriftJudge.judge(
+                identity: identity, selection: videoSelection, pick: manualPick,
+                tunnelReady: tunnelMonitor.status == .ready)
+            guard !checked.isBlocked else {
+                session.errorText = checked.blockedReason
+                return
+            }
+            if checked.useKernel {
+                let outcome = await session.runKernelApply(identity: identity, selection: videoSelection)
+                if outcome.ok { statusLine = outcome.message }
+                else { statusLine = nil; session.errorText = outcome.message }
             } else {
-                statusLine = nil
-                session.errorText = outcome.message
+                let outcome = await session.run(selection: videoSelection, mode: checked.mode,
+                                                 pick: manualPick, identity: identity)
+                if outcome.ok { statusLine = outcome.message }
+                else { statusLine = nil; session.errorText = outcome.message }
             }
         }
     }
