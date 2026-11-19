@@ -1,9 +1,20 @@
 name: Build IPA
 
 on:
+  # Publishing (Grace, 2026-11-19): pushing a bare version tag
+  # (e.g. 3.3.7) builds that version and swaps it into the single
+  # rolling Nightly pre-release under the fixed `nightly` tag (the old
+  # pre-lockout scheme); the one-shot version tag is removed again
+  # afterwards. Ordinary branch pushes never trigger this workflow.
+  # A manual dispatch only builds the IPA artifact - it never publishes.
   push:
-  pull_request:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
+
+concurrency:
+  group: drift-nightly-release
+  cancel-in-progress: false
 
 # The release step below creates/updates a GitHub release with this run's IPA,
 # which needs a write token. Nothing else in the workflow writes to the repo.
@@ -18,33 +29,37 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
 
-      # The probe / preview / release steps below key off marker words in
-      # the commit message. Only the subject (first line) counts: a marker
-      # mentioned in the body is prose, not an instruction. (Commit
-      # b2021ae described this very flow in its body and so triggered all
-      # three steps; the release step then failed on a notes file that
-      # never existed on main.) Every gate reads these outputs instead of
-      # scanning the full message.
-      - name: Parse commit-subject markers
-        id: markers
+      - name: Resolve version and build from the tag or project.yml
+        id: version
         shell: bash
-        env:
-          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          subject="$(printf '%s' "$HEAD_MESSAGE" | head -n 1)"
-          probe=false
-          preview=false
-          release=false
-          case "$subject" in *'[probe]'*) probe=true ;; esac
-          case "$subject" in *'[preview]'*) preview=true ;; esac
-          case "$subject" in *'[release]'*) release=true ;; esac
-          {
-            echo "probe=$probe"
-            echo "preview=$preview"
-            echo "release=$release"
-          } >> "$GITHUB_OUTPUT"
-          echo "subject markers: probe=$probe preview=$preview release=$release"
+          set -euo pipefail
+          PROJECT_VERSION="$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*//p' project.yml | tr -d '"' | head -1)"
+          BUILD="$(sed -n 's/^[[:space:]]*CURRENT_PROJECT_VERSION:[[:space:]]*//p' project.yml | tr -d '"' | head -1)"
+          if [ -z "$PROJECT_VERSION" ] || [ -z "$BUILD" ]; then
+            echo "::error::MARKETING_VERSION or CURRENT_PROJECT_VERSION missing from project.yml"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VERSION="$GITHUB_REF_NAME"
+            if [ "$VERSION" != "$PROJECT_VERSION" ]; then
+              echo "::error::Tag $VERSION does not match project.yml version $PROJECT_VERSION; set project.yml to the tagged version first."
+              exit 1
+            fi
+          else
+            VERSION="$PROJECT_VERSION"
+          fi
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid version format: $VERSION (expected x.y.z)"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "tag=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Nightly version $VERSION (build $BUILD), tag $VERSION"
 
       - name: Cache Rust dependencies and build
         uses: actions/cache@v4
@@ -120,14 +135,8 @@ jobs:
       - name: Build IPA
         shell: bash
         env:
-          # A [probe] commit compiles the temporary enumeration button in.
-          # Ordinary pushes leave the flag empty, so the button is absent.
-          PROBE_BUILD: ${{ steps.markers.outputs.probe == 'true' && '1' || '0' }}
-          # Preview/probe builds are the nightly line: stamp that
-          # into the app (build-ipa.sh passes it to xcodebuild) so
-          # its update check stays on the nightly line. Everything
-          # else builds as the release line.
-          DRIFT_CHANNEL: ${{ (steps.markers.outputs.preview == 'true' || steps.markers.outputs.probe == 'true') && 'nightly' || 'release' }}
+          PROBE_BUILD: '0'
+          DRIFT_CHANNEL: nightly
         run: |
           set -o pipefail
           # GitHub runs bash with -e; the build is expected to fail on the
@@ -165,141 +174,117 @@ jobs:
           path: build/Drift.ipa
           if-no-files-found: error
 
-      # Recreate the rolling `nightly` pre-release with this build
-      # (Grace, 2026-11-14, SideStore's shape; delete-and-recreate
-      # added 2026-11-16 at her order): pre-releases carry no
-      # version — one fixed tag `nightly`, title "Nightly", asset
-      # `Drift-unsigned.ipa` — so test builds never consume a formal
-      # version number. GitHub sorts the releases list by creation
-      # date and offers no pinning, so the previous pre-release is
-      # deleted and a fresh one created on every preview/probe
-      # build: its creation date is then the newest and it sits at
-      # the top of the list until a later formal release is
-      # published. A formal release is never touched: if `nightly`
-      # exists and is not a pre-release the step fails rather than
-      # deleting anything. [probe] builds the probe package;
-      # [preview] builds the formal handover package without the
-      # probe switch.
-      - name: Recreate the nightly pre-release with this build
-        if: >-
-          github.event_name == 'push' &&
-          github.ref == 'refs/heads/main' &&
-          (steps.markers.outputs.probe == 'true' ||
-           steps.markers.outputs.preview == 'true')
+      # Publishing happens only on a version-tag push: the tag IS the
+      # release decision. Version and build come from project.yml at the
+      # tagged commit (validated above to match the tag), the release
+      # notes come from the annotated tag's message when one is present,
+      # and the build replaces the single rolling Nightly pre-release
+      # under the fixed `nightly` tag (deleted and recreated, tag moved
+      # onto the tagged commit). The hidden drift-nightly stamp stays
+      # in the body: the in-app nightly update check parses version and
+      # build from it.
+      - name: Publish the Nightly pre-release (fixed nightly tag)
+        if: github.event_name == 'push'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build }}
+          TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_TAG: nightly
         run: |
           set -euo pipefail
-          VERSION="$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*//p' project.yml | tr -d '\"' | head -1)"
-          BUILD="$(sed -n 's/^[[:space:]]*CURRENT_PROJECT_VERSION:[[:space:]]*//p' project.yml | tr -d '\"' | head -1)"
-          if [ -z "$VERSION" ] || [ -z "$BUILD" ]; then
-            echo "error: VERSION or BUILD missing from project.yml" >&2
-            exit 1
-          fi
-          TAG="nightly"
           ASSET="build/Drift-unsigned.ipa"
           cp build/Drift.ipa "$ASSET"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            if [ "$(gh release view "$TAG" --json isPrerelease --jq '.isPrerelease')" != "true" ]; then
-              echo "error: $TAG is not a pre-release; refusing to delete it" >&2
-              exit 1
-            fi
-            REL_ID="$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
-              -H 'Accept: application/vnd.github+json' \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$TAG" \
-              | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
-            echo "deleting the previous $TAG pre-release (id $REL_ID) so a fresh one takes its place"
-            CODE="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H 'Accept: application/vnd.github+json' \
-              -H 'X-GitHub-Api-Version: 2022-11-28' \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/$REL_ID")"
-            if [ "$CODE" != "204" ]; then
-              echo "::error::delete of the previous $TAG release failed: HTTP ${CODE}"
-              exit 1
-            fi
-            # The tag goes too, so the fresh release's tag points at
-            # this commit instead of an old one.
-            curl -sS -o /dev/null -X DELETE \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H 'Accept: application/vnd.github+json' \
-              -H 'X-GitHub-Api-Version: 2022-11-28' \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" || true
+
+          NOTES="$(git tag -l "$TAG" --format='%(contents)' | sed -e 's/[[:space:]]*$//' || true)"
+          if [ -z "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
+            NOTES="Drift $VERSION Nightly pre-release, build $BUILD_NUMBER. Published automatically from the version tag."
           fi
-          echo "creating the $TAG pre-release fresh for $VERSION ($BUILD)"
-          # Created with curl rather than gh: both `gh release create`
-          # and `gh api` failed here with an EMPTY message, so this form
-          # records the HTTP status and response body, which can be put
-          # on the public run page when it fails. The body carries this
-          # build's version stamp from the start: the nightly asset
-          # name is fixed and carries neither number, so the stamp is
-          # how a nightly build's update check learns what the current
-          # nightly is; the announcement text above it is what
-          # nightly users see in the app (#343).
-          RESP="$(mktemp)"
-          ERR="$(mktemp)"
-          BODY="$(printf '{"tag_name":"%s","target_commitish":"%s","name":"Nightly","body":"这是预发行版，滚动更新，供测试使用，不影响正式版。装的时候自己签名。\\n\\n这次请重点帮忙测 iOS 17 的内核直刷：\\n- 上一版在 iOS 17.0 正式版和 iOS 17.0.3 正式版上，点刷入会让手机重启。这一版针对这个问题做了修复，预期不会再重启，但还没有真机验证过，就是拿这一版来测的。\\n- 刷入前，先把手机里的重要东西备份好。\\n- 要是没刷成功，请在设置里把日志上传回来。这一版把刷入过程的日志补全了，靠日志才能知道卡在哪一步。\\n- 本机定位改成边找边问，手机里东西多的时候能快些找到。\\n\\n主页名字右边标了「预发行版」，装的是哪条线一眼就能看清。\\n\\n<!-- drift-nightly: %s %s -->","prerelease":true}' \
-            "$TAG" "$GITHUB_SHA" "$VERSION" "$BUILD")"
-          CODE="$(curl -sS -o "$RESP" -w '%{http_code}' -X POST \
+
+          RELEASE_JSON="$(mktemp)"
+          RELEASE_STATUS="$(curl -sS -o "$RELEASE_JSON" -w '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          if [ "$RELEASE_STATUS" = "200" ]; then
+            IS_PRERELEASE="$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1])).get("prerelease", False)).lower())' "$RELEASE_JSON")"
+            if [ "$IS_PRERELEASE" != "true" ]; then
+              echo "::error::Release $RELEASE_TAG is a formal release, not a pre-release; refusing to replace it."
+              exit 1
+            fi
+            RELEASE_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$RELEASE_JSON")"
+            DELETE_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
+            if [ "$DELETE_STATUS" != "204" ]; then
+              echo "::error::Could not delete existing pre-release $RELEASE_TAG (HTTP $DELETE_STATUS)"
+              exit 1
+            fi
+            echo "Deleted existing pre-release $RELEASE_TAG."
+          elif [ "$RELEASE_STATUS" != "404" ]; then
+            echo "::error::Could not inspect Release $RELEASE_TAG (HTTP $RELEASE_STATUS)"
+            cat "$RELEASE_JSON"
+            exit 1
+          fi
+          rm -f "$RELEASE_JSON"
+
+          # Move the rolling nightly tag onto this commit: drop the old
+          # ref here; the create call below recreates it at TARGET_COMMIT.
+          curl -sS -o /dev/null -X DELETE \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/tags/$RELEASE_TAG" || true
+
+          TARGET_COMMIT="$(git rev-parse HEAD)"
+          export TARGET_COMMIT NOTES
+          BODY="$(python3 - <<'PY'
+          import json, os
+          version = os.environ["VERSION"]
+          build = os.environ["BUILD_NUMBER"]
+          notes = os.environ["NOTES"].rstrip()
+          notes += chr(10) + chr(10) + "<!-- drift-nightly: " + version + " " + build + " -->"
+          print(json.dumps({
+              "tag_name": os.environ["RELEASE_TAG"],
+              "target_commitish": os.environ["TARGET_COMMIT"],
+              "name": "Nightly",
+              "body": notes,
+              "prerelease": True
+          }, ensure_ascii=False))
+          PY
+          )"
+          RESPONSE="$(mktemp)"
+          CREATE_STATUS="$(curl -sS -o "$RESPONSE" -w '%{http_code}' -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H 'Accept: application/vnd.github+json' \
             -H 'X-GitHub-Api-Version: 2022-11-28' \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/releases" \
-            --data-binary "$BODY" 2>"$ERR")" || CODE="${CODE:-000}"
-          if [ "$CODE" != "201" ]; then
-            # The run page's log needs a sign-in; an annotation is the
-            # only part of a failure a public reader can see, so the
-            # reason goes there as well as into the log.
-            echo "::error::release create $TAG failed: HTTP ${CODE}; $(head -c 400 "$RESP" | tr '\n' ' '); $(head -c 300 "$ERR" | tr '\n' ' ')"
-            head -c 2000 "$RESP" >&2; echo >&2; cat "$ERR" >&2
+            --data-binary "$BODY")"
+          if [ "$CREATE_STATUS" != "201" ]; then
+            echo "::error::Could not create Nightly $RELEASE_TAG (HTTP $CREATE_STATUS)"
+            head -c 2000 "$RESPONSE"
             exit 1
           fi
-          rm -f "$RESP" "$ERR"
-          gh release upload "$TAG" "$ASSET"
+          rm -f "$RESPONSE"
+          gh release upload "$RELEASE_TAG" "$ASSET"
+          echo "Nightly $VERSION (build $BUILD_NUMBER) published under the fixed nightly tag."
 
-      # Publish a curated release, but only when the pushed commit says so:
-      # an ordinary push still just produces the artifact above. The tag and
-      # asset name come from MARKETING_VERSION in project.yml, so a release
-      # cannot advertise a version the binary does not carry. The asset
-      # name is the version alone, no build number (Grace's rule of
-      # 2026-11-13, first applied to 3.2.2): the in-app update checker
-      # tolerates a build-less name and falls back to comparing versions;
-      # the accepted cost is that an in-place asset swap under the same
-      # version no longer prompts an in-app update.
-      - name: Publish unsigned IPA to Releases
-        if: >-
-          github.event_name == 'push' &&
-          github.ref == 'refs/heads/main' &&
-          steps.markers.outputs.release == 'true'
+      # The version tag was a one-shot trigger: remove it so the repo
+      # keeps only the fixed nightly tag and the formal version tags.
+      - name: Remove the one-shot version trigger tag
+        if: success() && github.event_name == 'push'
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          set -euo pipefail
-          VERSION="$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*//p' project.yml | tr -d '"' | head -1)"
-          if [ -z "$VERSION" ]; then
-            echo "error: MARKETING_VERSION not found in project.yml" >&2
-            exit 1
-          fi
-          BUILD="$(sed -n 's/^[[:space:]]*CURRENT_PROJECT_VERSION:[[:space:]]*//p' project.yml | tr -d '"' | head -1)"
-          if [ -z "$BUILD" ]; then
-            echo "error: CURRENT_PROJECT_VERSION not found in project.yml" >&2
-            exit 1
-          fi
-          TAG="v$VERSION"
-          ASSET="build/Drift-$VERSION-unsigned.ipa"
-          cp build/Drift.ipa "$ASSET"
-          NOTES="$(cat "RELEASE-NOTES-$VERSION.md")"
-          NOTES="${NOTES//__COMMIT__/${GITHUB_SHA:0:12}}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$ASSET" --clobber
-            gh release edit "$TAG" --title "Drift $VERSION" --notes "$NOTES" --latest
-          else
-            gh release create "$TAG" "$ASSET" \
-              --title "Drift $VERSION" \
-              --notes "$NOTES" \
-              --latest
-          fi
-
-# Manual rebuild trigger
+          curl -sS -o /dev/null -X DELETE \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" || true
+          echo "Trigger tag $TAG removed; the Nightly lives under the fixed nightly tag."
