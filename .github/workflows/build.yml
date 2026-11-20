@@ -222,7 +222,12 @@ jobs:
           RELEASE_TAG: nightly
         run: |
           set -euo pipefail
-          ASSET="build/Drift-unsigned.ipa"
+          # The published asset carries the version (Grace, 2026-11-20:
+          # nightly and alpha assets are Drift-<version>-unsigned.ipa
+          # from the next version on; the fixed nightly tag and the
+          # "Nightly" title do not change). The app's update check finds
+          # it through its any-.ipa fallback.
+          ASSET="build/Drift-${VERSION}-unsigned.ipa"
           cp build/Drift.ipa "$ASSET"
 
           NOTES="$(git tag -l "$TAG" --format='%(contents)' | sed -e 's/[[:space:]]*$//' || true)"
