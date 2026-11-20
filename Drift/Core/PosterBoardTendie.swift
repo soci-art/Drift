@@ -612,7 +612,15 @@ enum PosterBoardImports {
         // that joins the list is already clean. Best-effort: any
         // failure keeps the pack exactly as imported.
         PackIdentity.normalizeStoredPack(at: tendie.url, siblings: load().map(\.url))
-        let clean = (try? PosterBoardTendie(url: tendie.url)) ?? tendie
+        var clean = (try? PosterBoardTendie(url: tendie.url)) ?? tendie
+        let version = DeviceIdentityMonitor.shared.current.version.isEmpty
+            ? WorseQueryEscape.processVersion
+            : DeviceIdentityMonitor.shared.current.version
+        // iOS 17 only: fill missing per-descriptor instance plists at import.
+        // Existing pack files are preserved; failures leave the original pack.
+        if let completed = PackInstanceConfigs.completeIfNeeded(clean, deviceVersion: version) {
+            clean = completed
+        }
         var result = [clean]
         // #269: structural problems are repaired at import too, the
         // same repair the detail flow offered by hand. Best-effort —
