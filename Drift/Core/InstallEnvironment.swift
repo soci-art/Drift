@@ -11,10 +11,10 @@ import Foundation
 ///   path, and it blocks the local channel whatever the signature is.
 /// * Everything else about the signature is *not* guessed here. Whether a
 ///   usable App Group exists is a functional fact the group discovery
-///   itself establishes (it reads the profile and tries each group); when
-///   it finds none, the reason says so in one unified wording that is true
-///   for every no-group install — a free-ID signature, a store re-sign, or
-///   a paid profile whose groups will not open.
+///   itself establishes (it reads the process's effective SecTask
+///   application-groups entitlement and tries each group); when it finds
+///   none, the reason describes the missing runtime capability without
+///   guessing from the signing method.
 ///
 /// An earlier version of this file parsed the provisioning profile itself
 /// to classify the install, and got it wrong on a paid-certificate install
@@ -44,7 +44,7 @@ enum InstallEnvironment {
     /// normal one, and the signature carries no usable storage area".
     /// The status card and the method row print it, and #337's
     /// entry popup keys on exactly this state.
-    static let noUsableGroupReason = "签名没有能用的存储区，本机直刷用不了，证书签才行。"
+    static let noUsableGroupReason = "当前进程没有可用的 App Group，本机直刷用不了。请检查签名实际授予的共享组权限。"
 
     /// #337 (Grace, 2026-11-16): whether the local channel stands
     /// blocked by the signature alone — system in range, a normal
@@ -63,7 +63,7 @@ enum InstallEnvironment {
         guard WorseQueryEscape.isSupported(deviceVersion: version, buildVersion: build)
         else { return functional }
         if current == .nested {
-            return "这个 App 是套在另一个 App 里装的（比如 LiveContainer），不是正经装在手机上，本机直刷用不了；要用证书正常签名装到手机上才行。隧道那两种不受这个影响。"
+            return "这个 App 是套在另一个 App 里运行的（比如 LiveContainer），当前安装环境不支持本机直刷；请将 App 正常安装到系统应用目录。隧道那两种不受这个影响。"
         }
         // #332 (Grace, 2026-11-14): one line — header card and method
         // row both print this, and the named install methods were the
