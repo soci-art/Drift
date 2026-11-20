@@ -430,39 +430,35 @@ private struct VideoFramePickerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var duration: Double = 0
     @State private var time: Double = 0
-    @State private var preview: UIImage?
     @State private var confirming = false
-    /// The in-flight scrub preview (Grace, 2026-11-19): a drag used to
-    /// spawn one full decode per slider tick and queue them all, so
-    /// the picture trailed far behind the finger. Now a new position
-    /// cancels the previous decode and only the latest position is
-    /// ever rendered — small, with a loose time tolerance. The full-
-    /// resolution, exact frame is rendered only on confirm.
-    @State private var previewTask: Task<Void, Never>?
-    /// The scrub filmstrip (Grace, 2026-11-20): decode-only previews
-    /// still trail a moving finger, because one frame extraction
-    /// takes longer than a slider tick and any result that lands
-    /// after the slider has moved on is dropped — the picture only
-    /// caught up once the drag paused. So on load the view
-    /// pre-renders a strip of small frames across the whole video;
-    /// while dragging, the nearest strip frame is shown
-    /// synchronously, so the picture moves with the slider, and the
-    /// async decode above still sharpens the frame once it settles.
-    @State private var strip: [(time: Double, image: UIImage)] = []
-    @State private var stripTask: Task<Void, Never>?
+    @State private var editing = false
+    /// Live preview by player, not by extracted stills (Grace,
+    /// 2026-11-20). Two still-based attempts failed on device: the
+    /// per-tick decode trailed the finger (a finished frame was
+    /// dropped whenever the slider had already moved on), and
+    /// pre-rendering a whole filmstrip on open burned CPU alongside
+    /// the drag decodes — lag and a hot phone. The paused player
+    /// renders the scrub itself: the system video pipeline shows
+    /// the frame at the slider position, and AVFoundation coalesces
+    /// rapid seek requests on its own. Only the confirm step still
+    /// extracts a still — once, at full resolution, exact frame.
+    @State private var player = AVPlayer()
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
                 ZStack {
-                    if let preview {
-                        Image(uiImage: preview).resizable().scaledToFit()
+                    if duration > 0 {
+                        PlayerLayerView(player: player)
                     } else {
                         ProgressView()
                     }
                 }
                 .frame(maxHeight: 420)
-                Slider(value: $time, in: 0...max(duration, 0.1))
+                Slider(value: $time, in: 0...max(duration, 0.1)) { isEditing in
+                    editing = isEditing
+                    if !isEditing { seek(exact: true) }
+                }
                 Text("第 \(String(format: "%.1f", time)) 秒 / 共 \(String(format: "%.1f", duration)) 秒")
                     .font(.caption).foregroundStyle(.secondary)
                 Text("拖动滑杆挑一帧，停在想要的那一画面，再点「用这一帧」。")
@@ -478,14 +474,14 @@ private struct VideoFramePickerView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("用这一帧") { confirm() }
-                        .disabled(preview == nil || confirming)
+                        .disabled(duration <= 0 || confirming)
                 }
             }
             .task { await load() }
             .onChange(of: time) { _, _ in
-                if let frame = stripFrame(for: time) { preview = frame }
-                schedulePreview()
+                if editing { seek(exact: false) }
             }
+            .onDisappear { player.pause() }
         }
     }
 
@@ -493,65 +489,24 @@ private struct VideoFramePickerView: View {
         let asset = AVURLAsset(url: videoURL)
         let loaded = (try? await asset.load(.duration).seconds) ?? 0
         duration = loaded > 0 ? loaded : 0
+        player.replaceCurrentItem(with: AVPlayerItem(asset: asset))
+        player.pause()
         time = min(0.1, duration)
-        schedulePreview()
-        buildStrip()
+        seek(exact: true)
     }
 
-    /// Pre-render the scrub filmstrip: small frames evenly spaced
-    /// across the video, appended in order as they decode, so the
-    /// strip is already usable while it is still filling in. Kept
-    /// small and capped — a scrub aid, not a second copy of the
-    /// video.
-    private func buildStrip() {
-        let total = duration
-        guard total > 0 else { return }
-        let count = min(80, max(20, Int((total / 0.15).rounded(.up))))
-        let url = videoURL
-        stripTask?.cancel()
-        stripTask = Task {
-            let asset = AVURLAsset(url: url)
-            let generator = AVAssetImageGenerator(asset: asset)
-            generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: 320, height: 568)
-            generator.requestedTimeToleranceBefore = CMTime(seconds: 0.1, preferredTimescale: 600)
-            generator.requestedTimeToleranceAfter = CMTime(seconds: 0.1, preferredTimescale: 600)
-            for i in 0..<count {
-                if Task.isCancelled { return }
-                let t = total * Double(i) / Double(max(count - 1, 1))
-                if let cg = try? await generator.image(
-                    at: CMTime(seconds: t, preferredTimescale: 600)).image {
-                    strip.append((time: t, image: UIImage(cgImage: cg)))
-                }
-            }
-        }
-    }
-
-    /// The strip frame closest to a slider position, once the strip
-    /// has started filling in.
-    private func stripFrame(for t: Double) -> UIImage? {
-        strip.min(by: { abs($0.time - t) < abs($1.time - t) })?.image
-    }
-
-    /// Render the scrub preview for the current slider position,
-    /// cancelling whatever decode the previous position started. A
-    /// result that arrives after the slider has moved on (or after
-    /// its task was cancelled) is dropped, never shown.
-    private func schedulePreview() {
-        previewTask?.cancel()
-        let requested = time
-        let url = videoURL
-        previewTask = Task {
-            let asset = AVURLAsset(url: url)
-            let generator = AVAssetImageGenerator(asset: asset)
-            generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: 480, height: 854)
-            generator.requestedTimeToleranceBefore = CMTime(seconds: 0.15, preferredTimescale: 600)
-            generator.requestedTimeToleranceAfter = CMTime(seconds: 0.15, preferredTimescale: 600)
-            if let cg = try? await generator.image(at: CMTime(seconds: requested, preferredTimescale: 600)).image,
-               !Task.isCancelled, abs(time - requested) < 0.01 {
-                preview = UIImage(cgImage: cg)
-            }
+    /// Point the paused player at the slider position. While the
+    /// finger is moving the seek takes a loose tolerance, so the
+    /// pipeline can land on a nearby frame fast; when the drag ends
+    /// (and for the first frame) it seeks with zero tolerance, so
+    /// what is on screen is exactly the frame confirm will extract.
+    private func seek(exact: Bool) {
+        let target = CMTime(seconds: time, preferredTimescale: 600)
+        if exact {
+            player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+        } else {
+            let slack = CMTime(seconds: 0.35, preferredTimescale: 600)
+            player.seek(to: target, toleranceBefore: slack, toleranceAfter: slack)
         }
     }
 
@@ -570,4 +525,32 @@ private struct VideoFramePickerView: View {
             confirming = false
         }
     }
+}
+
+/// The paused player's picture: a plain AVPlayerLayer host with no
+/// controls — the slider is the only control on this page.
+private struct PlayerLayerView: UIViewRepresentable {
+    let player: AVPlayer
+
+    func makeUIView(context: Context) -> PlayerHostView {
+        let view = PlayerHostView()
+        view.playerLayer.player = player
+        return view
+    }
+
+    func updateUIView(_ uiView: PlayerHostView, context: Context) {
+        uiView.playerLayer.player = player
+    }
+}
+
+private final class PlayerHostView: UIView {
+    override class var layerClass: AnyClass { AVPlayerLayer.self }
+    var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        playerLayer.videoGravity = .resizeAspect
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
