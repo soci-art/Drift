@@ -38,6 +38,8 @@ struct DriftRootView: View {
             // when the in-process route is unavailable; a cached path is
             // verified rather than assumed to be valid.
             PosterBoardLocal.startPrewarmIfNeeded()
+            // Seed the kernel probe's container cache from safe, non-kernel sources.
+            PosterBoardLocal.startKernelPrewarmIfNeeded()
             session.bootstrap()
             startLiveDetection()
             runPermissionPass()
