@@ -47,15 +47,14 @@ struct PosterBoardManagerView: View {
     }
 
     /// The kernel route, judged exactly as the store listing judges
-    /// it: switch on and premise ready. This gate was missing when
-    /// the kernel source was added to the page (#334) — on a 17/18
+    /// it: premise ready. This gate was missing when the kernel source
+    /// was added to the page (#334) — on a 17/18
     /// device the label fell through to 不可用 and the delete button
     /// stayed disabled no matter what was selected (user report,
     /// 2026-11-15).
     private var kernelAvailable: Bool {
-        KernelDirectPremise.isEnabled
-            && KernelDirectPremise.evaluate(
-                version: WorseQueryEscape.processVersion).ready
+        KernelDirectPremise.evaluate(
+            version: WorseQueryEscape.processVersion).ready
     }
 
     private var routeLabel: String {
@@ -94,7 +93,7 @@ struct PosterBoardManagerView: View {
                 Button(role: .destructive) {
                     confirmDelete = true
                 } label: {
-                    Label(deleting ? "正在删除…" : "删除选中的 \(selected.count) 项",
+                    Label(deleting ? "正在删除…" : "删除选中的 \\(selected.count) 项",
                           systemImage: "trash")
                 }
                 .disabled(selected.isEmpty || deleting || routeLabel == "不可用")
@@ -115,10 +114,10 @@ struct PosterBoardManagerView: View {
         }
         .driftActionSheet(isPresented: $confirmDelete, title: "确认删除这些壁纸？",
                           message: selectedEntries.map { entry in
-                            "· \(entry.name)（\(entry.provider) / \(entry.uuid)）"
-                                + (receipt(for: entry).map { " · 来自导入的包：\($0.pack)" } ?? "")
-                          }.joined(separator: "\n")
-                            + "\n如果删的正是当前正在使用的壁纸，生效后系统会换回默认壁纸。",
+                            "· \\(entry.name)（\\(entry.provider) / \\(entry.uuid)）"
+                                + (receipt(for: entry).map { " · 来自导入的包：\\($0.pack)" } ?? "")
+                          }.joined(separator: "\\n")
+                            + "\\n如果删的正是当前正在使用的壁纸，生效后系统会换回默认壁纸。",
                           actions: [
                             DriftSheetAction("删除", destructive: true) {
                                 Task { await deleteSelected() }
@@ -132,9 +131,9 @@ struct PosterBoardManagerView: View {
         // Settings deletion chain's「删除完成」ask — one look for the
         // same question everywhere. Wording and choices unchanged.
         .driftActionSheet(isPresented: $showActivationPrompt, title: "删除完成",
-                          message: activationMessage + "\n\n" + activationKind.needText
+                          message: activationMessage + "\\n\\n" + activationKind.needText
                             + (kernelBatch && activationKind == .endPosterBoard
-                                ? "\n如果上滑关掉后还没生效，可以去主页手动注销一次。"
+                                ? "\\n如果上滑关掉后还没生效，可以去主页手动注销一次。"
                                 : ""),
                           actions: [
                             DriftSheetAction(activationKind.actionTitle) {
@@ -192,9 +191,9 @@ struct PosterBoardManagerView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(entry.name).font(.subheadline.weight(.medium))
                 Text(entry.provider).font(.caption2).foregroundStyle(.secondary)
-                Text("文件夹：\(entry.uuid)").font(.caption2).foregroundStyle(.secondary)
+                Text("文件夹：\\(entry.uuid)").font(.caption2).foregroundStyle(.secondary)
                 if !entry.packageName.isEmpty {
-                    Text("包名：\(entry.packageName)").font(.caption2).foregroundStyle(.secondary)
+                    Text("包名：\\(entry.packageName)").font(.caption2).foregroundStyle(.secondary)
                 }
                 packChip(for: entry)
             }
@@ -219,9 +218,9 @@ struct PosterBoardManagerView: View {
     /// inferred from package names; an entry either matches the
     /// app's own write journal or it does not.
     private func receipt(for entry: PosterBoardManagement.ManagedEntry) -> PosterBoardLocalReceipt? {
-        let key = "\(entry.provider)/\(entry.uuid)/\(entry.generation)"
+        let key = "\\(entry.provider)/\\(entry.uuid)/\\(entry.generation)"
         return receipts.last {
-            "\($0.extensionID)/\($0.folderName)/\($0.generation)" == key
+            "\\($0.extensionID)/\\($0.folderName)/\\($0.generation)" == key
         }
     }
 
@@ -229,9 +228,9 @@ struct PosterBoardManagerView: View {
     /// imported from, shown only on entries the journal proves are
     /// Drift's own.
     @ViewBuilder
-    private func packChip(for entry: PosterBoardManagement.ManagedEntry) -> some View {
+    private func packChip(for entry: PosterBoardManagement.ManagedEntry) {
         if let receipt = receipt(for: entry) {
-            Text("来自导入的包：\(receipt.pack)")
+            Text("来自导入的包：\\(receipt.pack)")
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(Color.blue)
                 .padding(.horizontal, 7)
@@ -260,7 +259,7 @@ struct PosterBoardManagerView: View {
                 session.errorText = reason
             }
         }
-        selected = selected.intersection(Set(entries.map(\.id)))
+        selected = selected.intersection(Set(entries.map(\\.id)))
     }
 
     private func deleteSelected() async {
@@ -313,9 +312,9 @@ struct PosterBoardManagerView: View {
             let freshReceipts = PosterBoardLocalReceipts.load()
             func flashedChannel(of entry: PosterBoardManagement.ManagedEntry)
                 -> PosterBoardReceiptChannel? {
-                let key = "\(entry.provider)/\(entry.uuid)/\(entry.generation)"
+                let key = "\\(entry.provider)/\\(entry.uuid)/\\(entry.generation)"
                 return freshReceipts.last {
-                    "\($0.extensionID)/\($0.folderName)/\($0.generation)" == key
+                    "\\($0.extensionID)/\\($0.folderName)/\\($0.generation)" == key
                 }?.resolvedChannel
             }
             let channels = succeeded.map { flashedChannel(of: $0) }
@@ -351,7 +350,7 @@ struct PosterBoardManagerView: View {
             // completion sheet's pointer at Home's manual respring
             // (Grace, 2026-11-15).
             kernelBatch = !kernelDeletedIDs.isEmpty
-            activationMessage = messages.joined(separator: "\n\n")
+            activationMessage = messages.joined(separator: "\\n\\n")
             showActivationPrompt = true
         }
     }
