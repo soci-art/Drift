@@ -18,14 +18,6 @@ struct DriftAboutView: View {
                 DriftBackground()
                 ScrollView {
                     VStack(spacing: 14) {
-                        // Feedback #30: the suspension is stated first,
-                        // before any row that describes the restore route
-                        // as a way to flash — nothing below may read as
-                        // "restore is available" while the gate is closed.
-                        if !DriftRestoreGate.isEnabled {
-                            DriftFactRow(title: "恢复刷已封存",
-                                         text: DriftRestoreGate.notice)
-                        }
                         rangeTable
                         // Collection #270 (Grace, 2026-11-13): the
                         // eight fact rows that used to follow the table

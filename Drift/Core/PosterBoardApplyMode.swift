@@ -36,7 +36,7 @@ enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
     var title: String {
         switch self {
         case .backup:
-            return DriftRestoreGate.isEnabled ? "恢复刷" : "恢复刷（封存）"
+            return "恢复刷"
         case .direct: return "免注销直刷"
         case .airlift: return "注销直刷"
         case .worseQuery: return "本机直刷"
@@ -59,7 +59,7 @@ enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
     var summary: String {
         switch self {
         case .backup:
-            return "通过恢复刷写入壁纸。适用于所有受支持的设备，最后会重启设备。恢复刷已封存，暂时不可用。"
+            return "暂不可用。"
         case .direct:
             return "通过配对隧道直写 PosterBoard 的容器，再只重启 PosterBoard 守护进程——不注销、不重启。支持 iOS 18.0–27.1 正式版及 27.2 beta 1 / 2；需要配对、隧道、LocalDevVPN，且设备保持解锁。刷新未确认时只提示，可手动注销。"
         case .airlift:
