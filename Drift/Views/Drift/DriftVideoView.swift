@@ -439,6 +439,17 @@ private struct VideoFramePickerView: View {
     /// ever rendered — small, with a loose time tolerance. The full-
     /// resolution, exact frame is rendered only on confirm.
     @State private var previewTask: Task<Void, Never>?
+    /// The scrub filmstrip (Grace, 2026-11-20): decode-only previews
+    /// still trail a moving finger, because one frame extraction
+    /// takes longer than a slider tick and any result that lands
+    /// after the slider has moved on is dropped — the picture only
+    /// caught up once the drag paused. So on load the view
+    /// pre-renders a strip of small frames across the whole video;
+    /// while dragging, the nearest strip frame is shown
+    /// synchronously, so the picture moves with the slider, and the
+    /// async decode above still sharpens the frame once it settles.
+    @State private var strip: [(time: Double, image: UIImage)] = []
+    @State private var stripTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -471,7 +482,10 @@ private struct VideoFramePickerView: View {
                 }
             }
             .task { await load() }
-            .onChange(of: time) { _, _ in schedulePreview() }
+            .onChange(of: time) { _, _ in
+                if let frame = stripFrame(for: time) { preview = frame }
+                schedulePreview()
+            }
         }
     }
 
@@ -481,6 +495,42 @@ private struct VideoFramePickerView: View {
         duration = loaded > 0 ? loaded : 0
         time = min(0.1, duration)
         schedulePreview()
+        buildStrip()
+    }
+
+    /// Pre-render the scrub filmstrip: small frames evenly spaced
+    /// across the video, appended in order as they decode, so the
+    /// strip is already usable while it is still filling in. Kept
+    /// small and capped — a scrub aid, not a second copy of the
+    /// video.
+    private func buildStrip() {
+        let total = duration
+        guard total > 0 else { return }
+        let count = min(80, max(20, Int((total / 0.15).rounded(.up))))
+        let url = videoURL
+        stripTask?.cancel()
+        stripTask = Task {
+            let asset = AVURLAsset(url: url)
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 320, height: 568)
+            generator.requestedTimeToleranceBefore = CMTime(seconds: 0.1, preferredTimescale: 600)
+            generator.requestedTimeToleranceAfter = CMTime(seconds: 0.1, preferredTimescale: 600)
+            for i in 0..<count {
+                if Task.isCancelled { return }
+                let t = total * Double(i) / Double(max(count - 1, 1))
+                if let cg = try? await generator.image(
+                    at: CMTime(seconds: t, preferredTimescale: 600)).image {
+                    strip.append((time: t, image: UIImage(cgImage: cg)))
+                }
+            }
+        }
+    }
+
+    /// The strip frame closest to a slider position, once the strip
+    /// has started filling in.
+    private func stripFrame(for t: Double) -> UIImage? {
+        strip.min(by: { abs($0.time - t) < abs($1.time - t) })?.image
     }
 
     /// Render the scrub preview for the current slider position,
