@@ -1,45 +1,11 @@
 import Foundation
 
-/// The kernel direct channel's premises (collections #319/#329,
-/// Grace 2026-11-13/14): a fifth flash method for iOS 17 / 18 that
-/// needs no pairing, no tunnel and no App Group. Like the local
-/// premise, it judges the app's own device only.
-///
-/// Two gates, both deliberate:
-/// * The user's own switch in Settings → 实验性功能 (`enabledKey`,
-///   default off). The method does not exist anywhere in the UI
-///   until the user turns it on.
-/// * The version band plus the chip-offset table. The band is
-///   iOS 17.0–17.7.x and 18.0–18.7.1; 18.7.2 and later sit outside
-///   even though the table would reach them (the upstream gate
-///   closes there). A model outside the offset table is not
-///   covered — the upstream code silently fell back to its oldest
-///   values in that case, and Drift's guard exists to refuse
-///   instead (RESEARCH-17-18-KERNEL-OFFSETS.md).
-///
-/// Phase note: the channel itself lands separately. Until it does,
-/// the judge blocks kernel picks with an honest "being wired up"
-/// reason, so nothing in this file can make a run start.
+/// The kernel direct channel's compatibility premise (Grace, 2026-11-20):
+/// the device must be inside the supported iOS version band and present
+/// in the chip-offset table. There is no user switch or suspension gate.
+/// The method needs no pairing, tunnel or App Group, and judges the
+/// app's own device only.
 enum KernelDirectPremise {
-    /// UserDefaults key of the 实验性功能 switch for this method.
-    static let enabledKey = "DriftKernelDirectEnabled"
-
-    /// Formal-line suspension (#341, Grace, 2026-11-16): on the
-    /// formal line the kernel channel is closed for now — the build
-    /// it carries predates the fix for the iOS 17.0.3 whole-device
-    /// restart, and the fixes land on the nightly line first. A
-    /// device that would otherwise be ready reads as not ready,
-    /// with the closure itself as the reason, so every surface
-    /// (Home row, judge, flash entry) refuses in the same words.
-    /// This constant exists only in the formal tree; the nightly
-    /// tree does not carry it.
-    static let channelSuspended = true
-
-    /// Whether the user has turned the method on in Settings.
-    static var isEnabled: Bool {
-        UserDefaults.standard.bool(forKey: enabledKey)
-    }
-
     /// The outcome of the band + table check for one device.
     struct Evaluation {
         let inBand: Bool
@@ -51,16 +17,11 @@ enum KernelDirectPremise {
         /// iOS 17 / 18」 told an 18.7.7 user nothing about where
         /// they stand).
         var pastBandTop: Bool = false
-        /// The formal line's closure (#341): set when this device
-        /// would be ready but the channel is suspended — see
-        /// `channelSuspended`.
-        var suspended: Bool = false
-        /// Both gates passed and the channel is not suspended: the
-        /// method may be offered as usable.
-        var ready: Bool { inBand && chipCovered && !suspended }
+
+        /// Both compatibility requirements passed.
+        var ready: Bool { inBand && chipCovered }
         /// Why not, in one user-facing line (empty when ready).
         var reason: String {
-            if suspended { return "内核直刷暂时关闭" }
             if !inBand { return pastBandTop ? "只支持到 iOS 18.7.1" : "只支持 iOS 17 / 18" }
             if !chipCovered { return "这台机型不在支持表里" }
             return ""
@@ -73,8 +34,7 @@ enum KernelDirectPremise {
         let major = Int(version.split(separator: ".").first ?? "") ?? 0
         return Evaluation(inBand: band,
                           chipCovered: covered,
-                          pastBandTop: !band && (major == 17 || major == 18),
-                          suspended: channelSuspended && band && covered)
+                          pastBandTop: !band && (major == 17 || major == 18))
     }
 
     /// iOS 17.0–17.7.x and 18.0–18.7.1.

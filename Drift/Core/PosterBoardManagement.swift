@@ -437,9 +437,6 @@ enum PosterBoardManagement {
 
         let kernelPremise = KernelDirectPremise.evaluate(version: WorseQueryEscape.processVersion)
         if kernelPremise.inBand && kernelPremise.chipCovered {
-            guard KernelDirectPremise.isEnabled else {
-                return ([], "", "这台设备支持内核直刷，请到「设置 → 实验性功能」打开内核直刷后，再列出商店里的壁纸。")
-            }
             guard let store = await kernelStore(log: log) else {
                 return ([], "内核", "内核探针未通过，无法列出商店；请查看管理页日志中的具体失败原因。")
             }
@@ -540,9 +537,6 @@ enum PosterBoardManagement {
 
         let kernelPremise = KernelDirectPremise.evaluate(version: WorseQueryEscape.processVersion)
         if kernelPremise.inBand && kernelPremise.chipCovered {
-            guard KernelDirectPremise.isEnabled else {
-                throw DriftError("请先到「设置 → 实验性功能」打开内核直刷，再删除这条商店描述符。")
-            }
             guard let store = await kernelStore(log: log) else {
                 throw DriftError("内核探针未通过，无法删除；请查看日志中的具体失败原因。")
             }
