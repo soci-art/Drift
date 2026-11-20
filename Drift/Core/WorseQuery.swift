@@ -258,6 +258,16 @@ enum WorseQueryEscape {
         return ""
     }
 
+    /// Resolve an app data container through LaunchServices' CSStore. This is
+    /// an additional cold-start source; callers still validate the returned
+    /// container with their own store identity / read-write checks.
+    static func launchServicesContainerPath(bundleID: String) -> String? {
+        guard backend(deviceVersion: processVersion, buildVersion: processBuildVersion) == .worseQuery,
+              let group = discoveredGroupIdentifier else { return nil }
+        let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+        return wq_ls_container_path_for_bundle_id(bundleID, group, major == 26)
+    }
+
     // MARK: - Extension handles
 
     /// Consume an extension for `path` and return its handle.

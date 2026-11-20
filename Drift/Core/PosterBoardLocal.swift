@@ -831,6 +831,29 @@ enum PosterBoardLocal {
             }
         }
 
+        // 1. LaunchServices CSStore: on iOS 26.1 this resolves the app-data
+        //    container directly from Bundle / Plugin records, without scanning
+        //    every Application container. The path is still consumed and checked
+        //    against the actual PosterBoard store before it is trusted.
+        if let container = WorseQueryEscape.launchServicesContainerPath(bundleID: bundleID),
+           isApplicationContainerPath(container) {
+            log("[CSStore] LaunchServices 返回 PosterBoard 容器：\\(container)，开始授权和内容核验")
+            do {
+                let handle = try WorseQueryEscape.consume(path: container, createDirectory: false)
+                if isPosterBoardContainer(atPath: container) {
+                    cachedContainer = container
+                    log("[CSStore] 容器授权和商店目录身份核验通过")
+                    return (container, handle)
+                }
+                WorseQueryEscape.release(handle)
+                log("[CSStore] CSStore 候选未通过商店目录核验，回退现有定位流程")
+            } catch {
+                log("[CSStore] 容器授权失败：\\(error.localizedDescription)，回退现有定位流程")
+            }
+        } else {
+            log("[CSStore] 未取得可验证的 PosterBoard 容器，回退现有定位流程")
+        }
+
         // 1. Exact paths already known: the tunnel's cached container and the
         // containers in old receipts. One or two probes instead of a scan.
         var known: [String] = []
