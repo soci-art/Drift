@@ -434,10 +434,14 @@ struct DriftHomeView: View {
             status = available ? "可用" : "不支持"
         } else if pick == .restore {
             // The restore pick is selectable like the kernel pick,
-            // but there is no device premise to judge — while the
-            // route is sealed its honest state is 不可用； the switch
-            // reminder bites at the flash tap (Grace, 2026-11-19).
-            status = "不可用"
+            // and its status follows the judged premises: on the
+            // Alpha line, with its switch on, the tunnel premises
+            // ready and the device in the iOS 27 segment it honestly
+            // reads 可用； anywhere else — and on the shipped lines,
+            // where the route stays sealed — 不可用. The switch
+            // reminder still bites at the flash tap (Grace,
+            // 2026-11-19; status made premise-driven 2026-11-20).
+            status = judged.restoreAvailable ? "可用" : "不可用"
         } else {
             status = available ? "可用" : "不可用"
         }

@@ -1090,6 +1090,13 @@ struct DriftModeJudgement {
     /// 实验性功能 switch is off — the tap answers with the same
     /// kind of reminder.
     var restoreNeedsSwitch: Bool = false
+    /// Whether the restore method's premises all hold on this device
+    /// right now (Alpha line: its switch on, the tunnel premises ready,
+    /// the iOS 27 segment; shipped lines: never, the route is sealed).
+    /// The Home restore row reads this for its 可用/不可用 status —
+    /// until the Alpha line existed the row's status was hardcoded
+    /// 不可用 (Grace, 2026-11-20).
+    var restoreAvailable: Bool = false
     var isBlocked: Bool { blockedReason != nil }
 }
 
@@ -1373,12 +1380,14 @@ enum DriftJudge {
 
         func judged(_ mode: PosterBoardApplyMode, _ reason: String) -> DriftModeJudgement {
             DriftModeJudgement(pick: pick, mode: mode, reason: reason,
-                               options: rows, expectedEffect: expectedEffect(for: mode))
+                               options: rows, expectedEffect: expectedEffect(for: mode),
+                               restoreAvailable: p.restoreReady)
         }
         func blocked(_ reason: String, notice: String) -> DriftModeJudgement {
             DriftModeJudgement(pick: pick, mode: .backup, reason: reason,
                                blockedReason: notice, options: rows,
-                               expectedEffect: expectedEffect(for: .backup))
+                               expectedEffect: expectedEffect(for: .backup),
+                               restoreAvailable: p.restoreReady)
         }
         /// Blocked because the selection can only travel the sealed method.
         func sealedBlocked(_ reason: String) -> DriftModeJudgement {
@@ -1454,7 +1463,8 @@ enum DriftJudge {
                 blockedReason: nil,
                 options: rows,
                 expectedEffect: "写完提示：打开应用切换器，上滑关闭 PosterBoard，系统重新拉起后生效",
-                useKernel: true)
+                useKernel: true,
+                restoreAvailable: p.restoreReady)
         }
 
         if pick == .restore {
@@ -1515,7 +1525,8 @@ enum DriftJudge {
                 blockedReason: nil,
                 options: rows,
                 expectedEffect: "写完提示：打开应用切换器，上滑关闭 PosterBoard，系统重新拉起后生效",
-                useKernel: true)
+                useKernel: true,
+                restoreAvailable: p.restoreReady)
         }
 
         if let channel = firstAvailable(p) {
