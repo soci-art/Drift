@@ -608,7 +608,7 @@ struct DriftHomeView: View {
             } else if judgement.mode == .worseQuery {
                 NativeNote("本机直刷在本机写入，不需要配对文件，也不用开隧道。刷完先打开 PosterBoard 刷新集合，再从应用切换器上滑关闭它，系统重新拉起后壁纸生效。App 不会自动注销。")
             } else if !session.paired {
-                NativeNote("两条隧道通道都需要先导入配对文件；本机直刷不需要，但只有证书签名才能用。")
+                NativeNote("两条隧道通道都需要先导入配对文件；本机直刷不需要。iOS 26.0–26.6.1 不挑签名、不需要 App Group；其他支持版本需要当前进程带有可打开的 App Group。")
             } else if selection.tendies.isEmpty && !imports.isEmpty {
                 NativeNote("在上面的列表里点圆圈勾选要刷的包。")
             }

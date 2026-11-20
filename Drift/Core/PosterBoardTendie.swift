@@ -222,7 +222,11 @@ struct PosterBoardTendie: Identifiable, Hashable {
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if let number = Int(text) {
                 switch number {
-                case 7000...7999:
+                // Grace (2026-11-16): the Collections band is the
+                // 74xx line only — the wider 7000...7999 reading
+                // this shipped with could call a non-74 7xxx pack a
+                // collection pack by mistake.
+                case 7400...7499:
                     if detected != .container { detected = .collections }
                 case 3000...3999, 9000...9999:
                     detected = .mercury
