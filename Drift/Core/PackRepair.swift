@@ -34,6 +34,34 @@ import ImageIO
 /// parts: the junk sweep and the per-descriptor conversion, never a
 /// reshuffle and never the nested-pack swap.
 ///
+/// A store-copied descriptor in a PLAIN pack is a different patient
+/// (user report, 2026-11-20 — a pack lifted whole out of another
+/// phone's wallpaper store): its version folder is still numbered 0
+/// where this pack family numbers it 1, the descriptor's two identity
+/// sidecars never made the trip, and the source phone's pre-rendered
+/// `.atx` snapshots came along. All three are shell damage, fixed at
+/// import like the structural issues above: the version folder is
+/// renamed (only when the version's contents carry a `.wallpaper`
+/// bundle — descriptor kinds that natively live in versions/0, live
+/// photos among them, have none and are never touched), the sidecars
+/// are stamped with the pack's OWN identifier (never invented, never
+/// overwriting an existing one; Mercury is skipped, its identifier
+/// being its own lookup key), and the snapshots are swept (the phone
+/// re-renders its own previews).
+///
+/// Two content findings ride the manual repair only — they change
+/// what the wallpaper looks like, so they never run at import
+/// (same reasoning as the depth completion):
+///   * a plane whose CAML carries a state op the renderer traps on
+///     (or an external script): the plane is flattened to a still
+///     through the converter's own flatten, on every system version —
+///     the flash-time conversion that used to catch this only exists
+///     on iOS 27 and only when the pack's answer is "convert";
+///   * a CAPlayground "video" floating plane: frames stacked with
+///     ordering only in `caplay*` attributes the system ignores, so
+///     nothing animates; the plane is flattened to the frame the
+///     pack says the locked screen settles on. A still, not a video.
+///
 /// Repair never touches the original: it produces a NEW pack named
 /// `name(patched).tendies` in the imports folder, and the detail page
 /// shows「已修复」for a pack whose name carries that mark.
@@ -59,12 +87,34 @@ enum PackRepair {
         /// not a full-frame opaque picture). A pack with no usable
         /// depth is told so, never "repaired".
         case depthConfig
+        /// A store-copied descriptor whose version folder is still
+        /// numbered 0 where this pack family numbers it 1 — gated on
+        /// the version's contents carrying a `.wallpaper` bundle, so
+        /// descriptor kinds that natively live in versions/0 (live
+        /// photos) never report it.
+        case staleVersionDir
+        /// One of the descriptor's two identity sidecars
+        /// (`provider.descriptor.identifier`, `role.identifier`) is
+        /// missing. Never reported for Mercury packs.
+        case missingIdentity
+        /// Pre-rendered `.atx` snapshots carried over from the phone
+        /// the pack was copied out of; the target phone re-renders
+        /// its own.
+        case staleSnapshots
+        /// A plane's CAML carries a state op the renderer traps on,
+        /// or an external script. Manual repair only.
+        case unsupportedCAML
+        /// A CAPlayground "video" floating plane: frames ordered only
+        /// by attributes the system ignores, so nothing animates.
+        /// Manual repair only.
+        case caplayVideo
 
         /// Blocking issues stop a flash from finding the wallpapers;
         /// junk alone never does, so junk alone earns no import notice.
         var isBlocking: Bool {
             switch self {
-            case .junk, .depthConfig: return false
+            case .junk, .depthConfig, .missingIdentity, .staleSnapshots,
+                 .unsupportedCAML, .caplayVideo: return false
             default: return true
             }
         }
@@ -78,6 +128,11 @@ enum PackRepair {
             case .nestedPack(let name): return "包里还套着一个包（\(name)）"
             case .junk: return "混进了打包垃圾文件"
             case .depthConfig: return "缺景深配置，开景深时锁屏时间会被浮动层盖住"
+            case .staleVersionDir: return "版本文件夹编号不对（标成 0，这一类包应该是 1）"
+            case .missingIdentity: return "缺身份文件（描述符编号、锁屏角色）"
+            case .staleSnapshots: return "带着在别台手机上预先渲染好的快照文件"
+            case .unsupportedCAML: return "有一层用了系统不支持的写法"
+            case .caplayVideo: return "这个包的动画做法系统不支持"
             }
         }
     }
@@ -119,7 +174,45 @@ enum PackRepair {
             let paths = archive.map { $0.path }
             return inspect(paths: paths).filter { $0 == .junk }
         }
-        return inspect(paths: archive.map { $0.path })
+        let paths = archive.map { $0.path }
+        var issues = inspect(paths: paths)
+        if pack.posterType != .mercury, identitySidecarMissing(paths: paths) {
+            issues.append(.missingIdentity)
+        }
+        return issues
+    }
+
+    /// Whether any descriptor in the pack lacks one of its two
+    /// identity sidecars. Read off the entry paths: a descriptor root
+    /// is the folder directly under a `descriptors/` component, and
+    /// the sidecars sit in it by exact name. A root is only registered
+    /// from a path that reaches BELOW it — a stray file parked in
+    /// `descriptors/` itself (a `.DS_Store`) is not a descriptor —
+    /// and `__MACOSX` shadow trees are skipped whole, as everywhere
+    /// else in this file. A pack whose layout is itself broken (no
+    /// `descriptors/` anywhere) reports nothing here — the layout
+    /// findings dominate, and once the layout is repaired this check
+    /// reads the normalised tree on its own.
+    private static func identitySidecarMissing(paths: [String]) -> Bool {
+        var roots = Set<String>()
+        var withID = Set<String>()
+        var withRole = Set<String>()
+        for path in paths {
+            let components = path.split(separator: "/").map(String.init)
+            guard !components.contains(where: { $0.lowercased() == "__macosx" }),
+                  let anchor = components.firstIndex(of: "descriptors"),
+                  components.count > anchor + 2 else { continue }
+            let root = components[...(anchor + 1)].joined(separator: "/")
+            roots.insert(root)
+            guard components.count == anchor + 3 else { continue }
+            if components[anchor + 2] == "com.apple.posterkit.provider.descriptor.identifier" {
+                withID.insert(root)
+            }
+            if components[anchor + 2] == "com.apple.posterkit.role.identifier" {
+                withRole.insert(root)
+            }
+        }
+        return roots.contains { !withID.contains($0) || !withRole.contains($0) }
     }
 
     /// The blocking subset — what the post-import notice names a pack for.
@@ -135,13 +228,54 @@ enum PackRepair {
     /// the target device's version in hand.
     static func inspect(_ pack: PosterBoardTendie, deviceVersion: String?) -> [Issue] {
         var issues = inspect(pack)
-        guard let deviceVersion,
-              let atLeast17 = PosterBoard.compareVersion(deviceVersion, "17"), atLeast17 >= 0,
-              let below19 = PosterBoard.compareVersion(deviceVersion, "19"), below19 < 0,
-              !pack.isContainer,
-              depthConfigMissing(pack) else { return issues }
-        issues.append(.depthConfig)
+        if let deviceVersion,
+           let atLeast17 = PosterBoard.compareVersion(deviceVersion, "17"), atLeast17 >= 0,
+           let below19 = PosterBoard.compareVersion(deviceVersion, "19"), below19 < 0,
+           !pack.isContainer,
+           depthConfigMissing(pack) {
+            issues.append(.depthConfig)
+        }
+        // Content findings (trapping CAML ops, caplay video planes)
+        // ride this overload only: they are manual-repair business,
+        // and the plain inspect above — read by the import-time
+        // automatic repair and the deep-repair stock-take — must
+        // never grow them.
+        for issue in contentIssues(pack) where !issues.contains(issue) {
+            issues.append(issue)
+        }
         return issues
+    }
+
+    /// The content findings, read out of the pack's plane documents:
+    /// any `main.caml` carrying a trapping state op or an external
+    /// script, and any floating plane that is a CAPlayground "video"
+    /// stack. Each finding is reported once per pack, however many
+    /// planes carry it. Container snapshots are not read — inside a
+    /// snapshot the store's own contents are not repair business.
+    private static func contentIssues(_ pack: PosterBoardTendie) -> [Issue] {
+        guard !pack.isContainer,
+              let archive = try? Archive(url: pack.url, accessMode: .read) else { return [] }
+        var found: [Issue] = []
+        for entry in archive {
+            let lower = entry.path.lowercased()
+            guard lower.hasSuffix("/main.caml") else { continue }
+            var data = Data()
+            guard (try? archive.extract(entry) { data.append($0) }) != nil,
+                  let text = String(data: data, encoding: .utf8) else { continue }
+            if !found.contains(.unsupportedCAML),
+               PosterBoardConverter.hasUnsupportedCAML(
+                   PosterBoardConverter.stripScripts(text))
+                   || PosterBoardConverter.hasExternalScript(text) {
+                found.append(.unsupportedCAML)
+            }
+            if !found.contains(.caplayVideo),
+               lower.contains("floating"),
+               text.contains("caplayKind=\"video\"") {
+                found.append(.caplayVideo)
+            }
+            if found.count == 2 { break }
+        }
+        return found
     }
 
     /// The depth gates, listing-level: the rendering-configuration
@@ -248,6 +382,21 @@ enum PackRepair {
         }
 
         if hasJunk { issues.append(.junk) }
+
+        // A store-copied descriptor still numbering its version folder
+        // 0 where this family numbers it 1. The gate is the version's
+        // contents carrying a `.wallpaper` bundle: descriptor kinds
+        // that natively live in versions/0 have none.
+        let hasV0Wallpaper = real.contains {
+            $0.contains("/versions/0/contents/") && $0.contains(".wallpaper/")
+        }
+        let hasV1 = real.contains { $0.contains("/versions/1/") }
+        if hasV0Wallpaper && !hasV1 { issues.append(.staleVersionDir) }
+
+        // Pre-rendered snapshots from the source phone.
+        if real.contains(where: { $0.hasSuffix(".atx") }) {
+            issues.append(.staleSnapshots)
+        }
         return issues
     }
 
@@ -324,6 +473,11 @@ enum PackRepair {
         // walks the whole tree at any depth.
         sweepJunk(in: work)
         if !pack.isContainer { try normalizeLayout(in: work) }
+        // Store-copy shell fixes, on the normalised tree: the version
+        // folder renumber and the snapshot sweep. Both re-check their
+        // gates per descriptor on the real tree, like the depth pass.
+        if issues.contains(.staleVersionDir) { applyVersionDirFix(in: work) }
+        if issues.contains(.staleSnapshots) { sweepSnapshots(in: work) }
         let wantsConvert = pack.autoConvert ?? true
         if wantsConvert,
            let atLeast27 = PosterBoard.compareVersion(deviceVersion, "27"), atLeast27 >= 0 {
@@ -336,6 +490,16 @@ enum PackRepair {
         // on iOS 18.3.1 正式版, pack family WWDC22).
         if issues.contains(.depthConfig) {
             applyDepthConfigs(in: work)
+        }
+        // Manual-only content fixes, after every transformation above
+        // so they read the tree in its final shape: flatten the planes
+        // the system cannot render as shipped, and stamp the identity
+        // sidecars the pack's own identifier backs.
+        if issues.contains(.unsupportedCAML) || issues.contains(.caplayVideo) {
+            applyContentFlattens(issues: issues, in: work)
+        }
+        if issues.contains(.missingIdentity) {
+            applyIdentityStamps(pack, in: work)
         }
         progress(2.0 / 3.0)
 
@@ -400,6 +564,135 @@ enum PackRepair {
             if imageFileHasAlpha(url) { return true }
         }
         return false
+    }
+
+    /// Every descriptor directory in an extracted tree, found through
+    /// its Wallpaper.plist: the `.wallpaper` bundle's parent chain is
+    /// contents → version → versions → descriptor. Collected up front
+    /// for the same reason as the depth pass — the fixes below write
+    /// into the tree while it is being walked otherwise.
+    private static func descriptorDirs(in root: URL) -> [URL] {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: nil) else { return [] }
+        var dirs = Set<String>()
+        for case let url as URL in enumerator {
+            guard url.lastPathComponent == "Wallpaper.plist" else { continue }
+            let descriptor = url.deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+            dirs.insert(descriptor.path)
+        }
+        return dirs.sorted().map { URL(fileURLWithPath: $0) }
+    }
+
+    /// Renumber versions/0 to versions/1, per descriptor, re-checking
+    /// the inspect gates on the real tree: no versions/1 yet, and the
+    /// version's contents carry a `.wallpaper` bundle.
+    private static func applyVersionDirFix(in root: URL) {
+        let fm = FileManager.default
+        for descriptor in descriptorDirs(in: root) {
+            let versions = descriptor.appendingPathComponent("versions", isDirectory: true)
+            let v0 = versions.appendingPathComponent("0", isDirectory: true)
+            let v1 = versions.appendingPathComponent("1", isDirectory: true)
+            guard fm.fileExists(atPath: v0.path),
+                  !fm.fileExists(atPath: v1.path) else { continue }
+            let contents = v0.appendingPathComponent("contents", isDirectory: true)
+            let names = (try? fm.contentsOfDirectory(atPath: contents.path)) ?? []
+            guard names.contains(where: { $0.hasSuffix(".wallpaper") }) else { continue }
+            try? fm.moveItem(at: v0, to: v1)
+        }
+    }
+
+    /// Take out the pre-rendered `.atx` snapshots a store copy
+    /// carries; the phone re-renders its own previews.
+    private static func sweepSnapshots(in root: URL) {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(atPath: root.path) else { return }
+        for case let relative as String in enumerator {
+            if relative.lowercased().hasSuffix(".atx") {
+                try? fm.removeItem(at: root.appendingPathComponent(relative))
+            }
+        }
+    }
+
+    /// The manual-only content fixes: flatten, per descriptor, the
+    /// planes the system cannot render as shipped. Both converter
+    /// entry points re-check their own gates on the descriptor they
+    /// are handed, so a multi-descriptor pack only rewrites the
+    /// planes that actually carry the problem.
+    private static func applyContentFlattens(issues: [Issue], in root: URL) {
+        for descriptor in descriptorDirs(in: root) {
+            if issues.contains(.unsupportedCAML) {
+                PosterBoardConverter.flattenUnsupportedPlanes(descriptor)
+            }
+            if issues.contains(.caplayVideo) {
+                PosterBoardConverter.flattenCaplayVideoPlane(descriptor)
+            }
+        }
+    }
+
+    /// Stamp the identity sidecars a store copy lost, per descriptor:
+    /// the role always (it is a constant), the descriptor identifier
+    /// only with the pack's own declared identifier behind it.
+    /// Existing sidecars are never overwritten, and Mercury packs are
+    /// skipped whole — a Mercury identifier is its own lookup key.
+    private static func applyIdentityStamps(_ pack: PosterBoardTendie, in root: URL) {
+        guard pack.posterType != .mercury else { return }
+        let fm = FileManager.default
+        for descriptor in descriptorDirs(in: root) {
+            let role = descriptor.appendingPathComponent(
+                "com.apple.posterkit.role.identifier")
+            if !fm.fileExists(atPath: role.path) {
+                try? Data("PRPosterRoleLockScreen".utf8).write(to: role)
+            }
+            let idFile = descriptor.appendingPathComponent(
+                "com.apple.posterkit.provider.descriptor.identifier")
+            if !fm.fileExists(atPath: idFile.path),
+               let own = packOwnIdentifier(descriptor) {
+                try? Data(own.utf8).write(to: idFile)
+            }
+        }
+    }
+
+    /// The identifier the pack itself declares: `identifier` in a
+    /// version's Wallpaper.plist first, the contents userInfo's
+    /// `wallpaperRepresentingIdentifier` as the fallback. Nil when the
+    /// pack declares neither — the sidecar is then left missing
+    /// rather than stamped with an invented number.
+    private static func packOwnIdentifier(_ descriptor: URL) -> String? {
+        let fm = FileManager.default
+        let versions = descriptor.appendingPathComponent("versions", isDirectory: true)
+        let versionNames = ((try? fm.contentsOfDirectory(atPath: versions.path)) ?? []).sorted()
+        for version in versionNames {
+            let contents = versions.appendingPathComponent(version, isDirectory: true)
+                .appendingPathComponent("contents", isDirectory: true)
+            let names = ((try? fm.contentsOfDirectory(atPath: contents.path)) ?? []).sorted()
+            for name in names where name.hasSuffix(".wallpaper") {
+                let plistURL = contents.appendingPathComponent(name, isDirectory: true)
+                    .appendingPathComponent("Wallpaper.plist")
+                if let dict = readPlistDict(plistURL), let raw = dict["identifier"] {
+                    if let number = raw as? NSNumber { return number.stringValue }
+                    if let string = raw as? String, !string.isEmpty { return string }
+                }
+            }
+            let userInfoURL = contents.appendingPathComponent(
+                "com.apple.posterkit.provider.contents.userInfo")
+            if let dict = readPlistDict(userInfoURL),
+               let string = dict["wallpaperRepresentingIdentifier"] as? String,
+               !string.isEmpty {
+                return string
+            }
+        }
+        return nil
+    }
+
+    private static func readPlistDict(_ url: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: url),
+              let object = try? PropertyListSerialization.propertyList(
+                  from: data, options: [], format: nil) else { return nil }
+        return object as? [String: Any]
     }
 
     // MARK: - Layout surgery on an extracted tree

@@ -545,6 +545,8 @@ struct PackListView: View {
             defer { session.cover = nil; session.coverProgress = nil }
             var repairedNames: [String] = []
             var depthNames: [String] = []
+            var trapNames: [String] = []
+            var caplayNames: [String] = []
             var noNeed = 0
             for (index, target) in targets.enumerated() {
                 let issues = PackRepair.inspect(target, deviceVersion: version)
@@ -566,6 +568,12 @@ struct PackListView: View {
                     if issues.contains(.depthConfig) {
                         depthNames.append(repaired.name)
                     }
+                    if issues.contains(.unsupportedCAML) {
+                        trapNames.append(repaired.name)
+                    }
+                    if issues.contains(.caplayVideo) {
+                        caplayNames.append(repaired.name)
+                    }
                 } catch {
                     session.errorText = error.localizedDescription
                 }
@@ -574,6 +582,12 @@ struct PackListView: View {
                 var message = "修好的包已放进列表，就在原包下面：\(repairedNames.joined(separator: "、"))。"
                 if !depthNames.isEmpty {
                     message += "其中 \(depthNames.joined(separator: "、")) 还补了景深配置，开着景深时锁屏时间不会再被浮动层盖住。"
+                }
+                if !trapNames.isEmpty {
+                    message += "其中 \(trapNames.joined(separator: "、")) 有一层用了系统不支持的写法，已转成静态图：能正常显示，但那一层不会动了。"
+                }
+                if !caplayNames.isEmpty {
+                    message += "其中 \(caplayNames.joined(separator: "、")) 的动画做法系统不支持，已转成一帧静态图：能正常显示，但不会动了。"
                 }
                 repairSummary = RepairSummary(
                     title: "修好了",
