@@ -16,6 +16,7 @@
 
 #include "app_group.h"
 #import <Foundation/Foundation.h>
+#import <CoreFoundation/CFByteOrder.h>
 #include <dlfcn.h>
 #include <stdlib.h>
 #include <string.h>
