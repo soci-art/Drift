@@ -124,6 +124,23 @@ struct DriftRootView: View {
                             .controlSize(.large)
                         Text(session.flashCover ? "正在刷入" : (session.cover?.title ?? ""))
                             .font(.headline)
+                        // The one exception to the bare flash cover
+                        // below (build 4, 2026-11-21, Grace): a restore
+                        // dry run's pull can hold this cover for
+                        // minutes, so it shows a real progress bar —
+                        // the pull stream's own percent, fed through
+                        // `coverProgress` as the engine reports it. It
+                        // holds still on the stream's slow stretches
+                        // rather than creeping: real, not smoothed.
+                        if session.flashCover, session.coverShowsProgress,
+                           let progress = session.coverProgress {
+                            ProgressView(value: progress, total: 100)
+                                .progressViewStyle(.linear)
+                                .frame(width: 220)
+                            Text("\(Int(progress))%")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                         // Grace (2026-11-15): while a flash runs, the
                         // cover shows 「正在刷入」 and nothing else —
                         // no caution line, no stage text, no progress

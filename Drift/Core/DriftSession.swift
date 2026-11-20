@@ -52,6 +52,14 @@ final class DriftSession: ObservableObject {
     /// reported. Fed by the engine's real run progress while flashing,
     /// and by phase marks for restart / repair.
     @Published var coverProgress: Double?
+    /// Whether the flash cover may show that progress as a bar. The
+    /// flash cover is bare by Grace's 2026-11-15 call — spinner and
+    /// 「正在刷入」only, every channel — with one exception (build 4,
+    /// 2026-11-21): a restore dry run can hold the cover for minutes
+    /// on its pull, so its run raises this and the cover shows the
+    /// pull's own percent as a real bar. Set by the funnel for the
+    /// `.backup` mode only, cleared with the cover.
+    @Published var coverShowsProgress = false
 
     enum CoverKind {
         case restartingPosterBoard, respringing, repairing
@@ -452,7 +460,8 @@ final class DriftSession: ObservableObject {
         }
         flashCover = true
         flashStage = (mode == .worseQuery) ? "正在定位壁纸商店，第一次会慢一些" : nil
-        defer { flashCover = false; flashStage = nil }
+        coverShowsProgress = (mode == .backup)
+        defer { flashCover = false; flashStage = nil; coverShowsProgress = false }
         lastEffect = nil
         // Feedback #30: the funnel refuses a restore run while the gate
         // is closed, even if a caller forgot to consult it — judgement,

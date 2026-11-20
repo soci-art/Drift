@@ -131,8 +131,9 @@ struct RestoreDryRunReport {
 ///
 /// Two phases, separately invoked, per the build plan:
 ///
-///   * `dryRun` — strict preflight, the single-domain protective pull,
-///     the PosterBoard fetch, the compile, prune + inject, the
+///   * `dryRun` — strict preflight, the PosterBoard fetch (the run's
+///     one and only backup session), the compile, the restore base
+///     derived locally from the fetched manifest, prune + inject, the
 ///     against-disk audit and the fingerprint. It prepares a complete
 ///     restore package and then STOPS. Nothing is written back, and a
 ///     failed audit prepares nothing.
@@ -208,13 +209,33 @@ final class DriftRestoreService {
 
         // The device's own PosterBoard store first (its database is
         // what a wallpaper is compiled against), then the compile.
-        let fetched = try await PosterBoardBackup.fetch(
-            backupRoot: AppPaths.posterBoardFetchRoot,
-            udid: udid,
-            ios27: true,
-            preserveExisting: true,
-            onProgress: onProgress,
-            log: log)
+        // This fetch is the dry run's ONLY backup session (build 4,
+        // 2026-11-21): it streams the device's whole manifest, and the
+        // restore base below is derived from what it brought back
+        // instead of a second, protective session re-streaming the
+        // same enumeration. Either way the pull ends — cleanly or in a
+        // refusal like the field log's closing MBErrorDomain/205 — the
+        // shortfall audit reconciles the pulled manifest against the
+        // disk and names what the pull meant to keep but did not land,
+        // so a refusal stops being a bare count.
+        let fetched: PosterBoardBackup.Result
+        do {
+            fetched = try await PosterBoardBackup.fetch(
+                backupRoot: AppPaths.posterBoardFetchRoot,
+                udid: udid,
+                ios27: true,
+                preserveExisting: true,
+                onProgress: onProgress,
+                log: log)
+        } catch {
+            await Self.logPullShortfallAudit(
+                deviceDir: AppPaths.deviceDir(backupRoot: AppPaths.posterBoardFetchRoot,
+                                              udid: udid))
+            throw error
+        }
+        await Self.logPullShortfallAudit(
+            deviceDir: AppPaths.deviceDir(backupRoot: AppPaths.posterBoardFetchRoot,
+                                          udid: udid))
         let payloads = try await PosterBoard.compile(
             selection: selection,
             templates: [],
@@ -230,19 +251,32 @@ final class DriftRestoreService {
         }
         AppLog.write("restore dry run: compiled \(payloads.count) payload(s)")
 
-        // The protective pull: device-produced manifests, single-domain
-        // on the wire (metadata only — see ProtectiveBackup).
-        let backupRoot = AppPaths.fullBackupRoot(udid: udid)
-        try await ProtectiveBackup.run(backupRoot: backupRoot, udid: udid,
-                                       onProgress: onProgress)
-
-        // Post-pull encryption verdict (see the preflight note above).
+        // Post-pull encryption verdict (see the preflight note above),
+        // read off the manifest the fetch pull just brought back.
         // Nothing has been written to the device — the pull only reads —
         // so stopping here is still stopping before anything happened.
         guard Self.pulledManifestParses(
-            deviceDir: AppPaths.deviceDir(backupRoot: backupRoot, udid: udid)) else {
+            deviceDir: AppPaths.deviceDir(backupRoot: AppPaths.posterBoardFetchRoot,
+                                          udid: udid)) else {
             throw DriftRestoreError("拉回来的备份清单打不开，多半是这台设备开着「加密本地备份」。请先在电脑的 Finder 或 iTunes 里关掉「加密本地备份」，再重试；如果本来就没开，请把日志传上来。")
         }
+
+        // The restore base, derived locally from the fetch pull (build
+        // 4, 2026-11-21 — the two pulls merged into one session). The
+        // dry run used to open a second backup session here (the
+        // protective pull) whose only product the rest of the run
+        // consumed was the device-produced Manifest.db in a root of
+        // its own; that same manifest is already on disk in the fetch
+        // root, so the base is now assembled, not pulled. The package
+        // the prune below produces is unchanged: this root still holds
+        // no PosterBoard payloads, so the domain's file rows drop at
+        // prune time and are re-imported from the fetch snapshot by
+        // the merge, exactly as when the base came from its own pull.
+        let backupRoot = AppPaths.fullBackupRoot(udid: udid)
+        try Self.deriveRestoreBase(
+            backupRoot: backupRoot, udid: udid,
+            from: AppPaths.deviceDir(backupRoot: AppPaths.posterBoardFetchRoot,
+                                     udid: udid))
 
         // Prune to the single domain, merge the snapshot's native rows
         // for the delivering set, inject the compiled payloads.
@@ -307,6 +341,114 @@ final class DriftRestoreService {
         guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM Files",
                                  -1, &stmt, nil) == SQLITE_OK else { return false }
         return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
+    /// Assemble the restore base in `backupRoot` from a manifest a
+    /// pull already brought back (build 4, 2026-11-21: the dry run's
+    /// second session, retired). Fresh host seeds first — the same
+    /// `reset` + full-backup `ensure` the protective pull seeded its
+    /// own root with — then the device's own `Manifest.db`, with its
+    /// WAL sidecars, copied over. No seed manifest is written: the
+    /// empty SQLite database `writeSQLiteManifest` would plant exists
+    /// only to be handed to a device at a session's start, and there
+    /// is no session here.
+    private static func deriveRestoreBase(backupRoot: URL, udid: String,
+                                          from sourceDeviceDir: URL) throws {
+        try HostManifests.reset(backupRoot: backupRoot, udid: udid)
+        let deviceDir = AppPaths.deviceDir(backupRoot: backupRoot, udid: udid)
+        try HostManifests.ensure(deviceDir: deviceDir, udid: udid, isFullBackup: true)
+        let fm = FileManager.default
+        for name in ["Manifest.db", "Manifest.db-wal", "Manifest.db-shm"] {
+            let source = sourceDeviceDir.appendingPathComponent(name)
+            guard fm.fileExists(atPath: source.path) else { continue }
+            let destination = deviceDir.appendingPathComponent(name)
+            try? fm.removeItem(at: destination)
+            try fm.copyItem(at: source, to: destination)
+        }
+        AppLog.write("restore dry run: restore base derived from the fetch pull "
+            + "(one backup session this run) — the device's Manifest.db copied "
+            + "into the restore root")
+    }
+
+    /// Reconcile a pulled manifest against what actually landed on
+    /// disk, and NAME the shortfall (build 4, 2026-11-21).
+    ///
+    /// The field log of 2026-11-20 ended a pull with the device
+    /// refusing the backup (MBErrorDomain/205) over a commit shortfall
+    /// of four files out of 26,976 — a count with no names, because
+    /// nothing reconciled the manifest against the disk afterwards.
+    /// This audit is that reconciliation, run on the fetch root
+    /// whether the pull finished or refused: every file row the fetch
+    /// filter meant to KEEP (a PosterBoard container file it could
+    /// map) whose payload is not on disk is named, one log line each
+    /// (first fifty). Rows in every other domain are drained by design
+    /// and are only counted, per domain — their absence is the filter
+    /// working, not a shortfall. Read-write open, like the snapshot's
+    /// own reader: a WAL-mode manifest needs its bookkeeping
+    /// initialised before it can be read at all.
+    private static func logPullShortfallAudit(deviceDir: URL) async {
+        guard pulledManifestParses(deviceDir: deviceDir) else {
+            AppLog.write("pull audit: no readable pulled Manifest.db — nothing to reconcile")
+            return
+        }
+        let container = (try? await Minimuxer.shared()
+            .appFactoryEntry(bundleId: PosterBoard.bundleID))?["Container"] as? String ?? ""
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(deviceDir.appendingPathComponent("Manifest.db").path,
+                              &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let db else {
+            sqlite3_close(db)
+            AppLog.write("pull audit: could not open the pulled Manifest.db")
+            return
+        }
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT fileID, domain, relativePath FROM Files WHERE flags = 1",
+                                 -1, &stmt, nil) == SQLITE_OK, let stmt else {
+            AppLog.write("pull audit: could not read the pulled manifest's file rows")
+            return
+        }
+        defer { sqlite3_finalize(stmt) }
+        let fm = FileManager.default
+        var present = 0
+        var suspects: [String] = []
+        var drainedByDomain: [String: Int] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let cID = sqlite3_column_text(stmt, 0),
+                  let cDomain = sqlite3_column_text(stmt, 1),
+                  let cPath = sqlite3_column_text(stmt, 2) else { continue }
+            let fileID = String(cString: cID)
+            let domain = String(cString: cDomain)
+            let relativePath = String(cString: cPath)
+            let landed = fm.fileExists(
+                atPath: deviceDir.appendingPathComponent("\(fileID.prefix(2))/\(fileID)").path)
+                || fm.fileExists(atPath: deviceDir.appendingPathComponent(fileID).path)
+            if landed { present += 1; continue }
+            if domain == PosterBoard.domain,
+               PosterBoardSnapshot.relativePath(deviceName: domain + "/" + relativePath,
+                                                container: container) != nil {
+                suspects.append(relativePath)
+            } else {
+                drainedByDomain[domain, default: 0] += 1
+            }
+        }
+        let drainedTotal = drainedByDomain.values.reduce(0, +)
+        AppLog.write("pull audit: \(present) file payload(s) on disk; "
+            + "\(suspects.count) PosterBoard file row(s) the pull meant to keep "
+            + "are missing"
+            + (drainedTotal > 0
+                ? "; \(drainedTotal) other file row(s) drained by design"
+                : ""))
+        for name in suspects.prefix(50) {
+            AppLog.write("pull audit: missing kept file — \(name)")
+        }
+        if suspects.count > 50 {
+            AppLog.write("pull audit: … and \(suspects.count - 50) more missing kept file(s)")
+        }
+        if !drainedByDomain.isEmpty {
+            let top = drainedByDomain.sorted { $0.value > $1.value }.prefix(5)
+                .map { "\($0.key): \($0.value)" }.joined(separator: ", ")
+            AppLog.write("pull audit: drained rows by domain (top): \(top)")
+        }
     }
 
     // MARK: - Write-back
