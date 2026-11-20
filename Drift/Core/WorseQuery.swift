@@ -45,14 +45,12 @@ enum WorseQueryEscape {
 
     /// The App Group this process actually carries, discovered at runtime.
     ///
-    /// 3106 reads the process's own entitlements with SecTask instead of
-    /// trusting the embedded provisioning profile: a p12 / SideStore / AltStore
-    /// re-sign carries whatever groups the signing certificate granted, and the
-    /// profile on disk can be absent or list a different set. Every grant name
-    /// is then tried in the entitlement's own order, and the first one whose
-    /// container opens is used. No group, or none that opens, means the
-    /// worse_query route is unavailable — there is deliberately no hard-coded
-    /// fallback.
+    /// Reads the effective process groups through SecTask; if that returns no
+    /// value, the bridge inspects the executable's signed Mach-O entitlements,
+    /// following Erosion-CN's fallback. The app's own group is preferred, then
+    /// the declared Drift group, then other signed groups. The first container
+    /// that opens is selected. Drift's declared group remains the final
+    /// candidate, matching Erosion-CN's default-group behavior.
     static let discoveredGroupIdentifier: String? = {
         guard let raw = drift_app_group() else { return nil }
         defer { drift_app_group_free(raw) }
@@ -60,8 +58,7 @@ enum WorseQueryEscape {
         return group.isEmpty ? nil : group
     }()
 
-    /// The App Group's container, or nil when the profile grants none this
-    /// process can open. Resolved once per process.
+    /// The App Group's container, or nil when no selected candidate opens. Resolved once per process.
     private static let resolvedGroupContainer: URL? =
         discoveredGroupIdentifier.flatMap {
             FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0)
@@ -216,7 +213,7 @@ enum WorseQueryEscape {
         backend(deviceVersion: deviceVersion, buildVersion: buildVersion) != .unsupported
     }
 
-    /// The App Group's container, or nil when the profile does not grant it.
+    /// The App Group's container, or nil when no selected candidate opens.
     ///
     /// Resolved once per process. The container path does not change while the
     /// app runs, and this is read from a view body (the mode menu, the
