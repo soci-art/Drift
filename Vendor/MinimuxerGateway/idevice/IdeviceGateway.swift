@@ -3378,6 +3378,11 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
             // shortfall there is what it reports as MBErrorDomain/104. These
             // numbers are the only host-side evidence of what happened.
             delegateLog?(ctx.commitSummary())
+            // Name whatever the commit did not carry away BEFORE the
+            // stand-ins are cleaned up: afterwards the evidence is gone
+            // by design (build 5, 2026-11-21 — the 205 shortfall of
+            // exactly four files, two runs running, had no names).
+            ctx.reportUnmovedPlaceholders()
             // The 0-byte stand-ins for filtered payloads must outlive the whole
             // exchange: the device validates the backup tree against the
             // Manifest.db it uploaded before it answers, and a payload that is

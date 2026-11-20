@@ -445,6 +445,13 @@ struct DriftHomeView: View {
         } else {
             status = available ? "可用" : "不可用"
         }
+        // The status text and its colour must come from the same
+        // judgement (Grace, build 4 field report 2026-11-21: the
+        // restore row read 可用 in the secondary grey). The restore
+        // pick has no row in `judged.options`, so the generic
+        // `available` is permanently false for it; its colour follows
+        // `judged.restoreAvailable`, the same value its text follows.
+        let statusAvailable = pick == .restore ? judged.restoreAvailable : available
         return Button {
             if sealed {
                 session.noticeTitle = "本机直刷不可选"
@@ -489,7 +496,7 @@ struct DriftHomeView: View {
                 Spacer(minLength: 6)
                 Text(status)
                     .font(.caption2.weight(.medium))
-                    .foregroundStyle(available ? Color.green : Color.secondary)
+                    .foregroundStyle(statusAvailable ? Color.green : Color.secondary)
                     .lineLimit(2)
                     .multilineTextAlignment(.trailing)
             }

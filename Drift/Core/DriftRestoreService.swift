@@ -323,24 +323,81 @@ final class DriftRestoreService {
     /// carry the SQLite header — so this reads the device's own evidence
     /// rather than a preference the host asked about beforehand.
     private static func pulledManifestParses(deviceDir: URL) -> Bool {
+        pulledManifestFilesCount(deviceDir: deviceDir) != nil
+    }
+
+    /// One stage of a failed SQLite call, in the log's own terms:
+    /// result code, extended code and SQLite's message.
+    private static func sqliteStage(_ db: OpaquePointer?, _ rc: Int32) -> String {
+        let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "no connection"
+        let extended = db.map { sqlite3_extended_errcode($0) } ?? rc
+        return "rc \(rc), extended \(extended), \(message)"
+    }
+
+    /// Open the pulled manifest and count its `Files` rows, logging
+    /// every stage that fails with SQLite's own error codes.
+    ///
+    /// Two passes on purpose (build 5, 2026-11-21). The first is the
+    /// read-only open this gate used before, kept as a log-only probe:
+    /// its failure code is the evidence for WHY a WAL-mode manifest
+    /// refuses a read-only reader (SQLITE_READONLY_CANTINIT /
+    /// _READONLY_RECOVERY), and dropping it would leave that diagnosis
+    /// a guess. The verdict itself reads read-write, like the
+    /// snapshot's own reader — a WAL-mode manifest needs its
+    /// bookkeeping initialised before it can be read at all — and this
+    /// copy is a working copy: the device can always pull it again.
+    private static func pulledManifestFilesCount(deviceDir: URL) -> Int? {
         let url = deviceDir.appendingPathComponent("Manifest.db")
         let magic = Data("SQLite format 3\u{0}".utf8)
-        guard let head = try? FileHandle(forReadingFrom: url) else { return false }
+        guard let head = try? FileHandle(forReadingFrom: url) else { return nil }
         let first = try? head.read(upToCount: magic.count)
         try? head.close()
-        guard first == magic else { return false }
+        guard first == magic else { return nil }
+
+        var probe: OpaquePointer?
+        let probeRC = sqlite3_open_v2(url.path, &probe, SQLITE_OPEN_READONLY, nil)
+        if probeRC == SQLITE_OK, let probe {
+            var probeStmt: OpaquePointer?
+            let prepareRC = sqlite3_prepare_v2(probe, "SELECT COUNT(*) FROM Files",
+                                               -1, &probeStmt, nil)
+            if prepareRC != SQLITE_OK {
+                AppLog.write("manifest probe: read-only prepare failed — "
+                    + sqliteStage(probe, prepareRC))
+            }
+            sqlite3_finalize(probeStmt)
+            sqlite3_close(probe)
+        } else {
+            AppLog.write("manifest probe: read-only open failed — "
+                + sqliteStage(probe, probeRC))
+            sqlite3_close(probe)
+        }
+
         var db: OpaquePointer?
-        guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
-              let db else {
+        let openRC = sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE, nil)
+        guard openRC == SQLITE_OK, let db else {
+            AppLog.write("manifest verdict: read-write open failed — "
+                + sqliteStage(db, openRC))
             sqlite3_close(db)
-            return false
+            return nil
         }
         defer { sqlite3_close(db) }
         var stmt: OpaquePointer?
+        let prepareRC = sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM Files",
+                                           -1, &stmt, nil)
+        guard prepareRC == SQLITE_OK, let stmt else {
+            AppLog.write("manifest verdict: prepare failed — "
+                + sqliteStage(db, prepareRC))
+            sqlite3_finalize(stmt)
+            return nil
+        }
         defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM Files",
-                                 -1, &stmt, nil) == SQLITE_OK else { return false }
-        return sqlite3_step(stmt) == SQLITE_ROW
+        let stepRC = sqlite3_step(stmt)
+        guard stepRC == SQLITE_ROW else {
+            AppLog.write("manifest verdict: count step failed — "
+                + sqliteStage(db, stepRC))
+            return nil
+        }
+        return Int(sqlite3_column_int64(stmt, 0))
     }
 
     /// Assemble the restore base in `backupRoot` from a manifest a
@@ -354,6 +411,40 @@ final class DriftRestoreService {
     /// is no session here.
     private static func deriveRestoreBase(backupRoot: URL, udid: String,
                                           from sourceDeviceDir: URL) throws {
+        // Quiescence assertion (build 5, 2026-11-21): the copy below
+        // must not lift a manifest whose WAL still holds unmerged
+        // pages — copying the main file alone would silently drop
+        // them. The pull session is over, so the device is not
+        // writing; the only thing that could still hold the WAL open
+        // is this app itself. Checkpoint explicitly, verify the
+        // close, and refuse to copy while a non-empty -wal remains.
+        let fmEarly = FileManager.default
+        let sourceManifest = sourceDeviceDir.appendingPathComponent("Manifest.db")
+        var qdb: OpaquePointer?
+        let qOpenRC = sqlite3_open_v2(sourceManifest.path, &qdb,
+                                      SQLITE_OPEN_READWRITE, nil)
+        guard qOpenRC == SQLITE_OK, let qdb else {
+            AppLog.write("restore base: quiescence open failed — "
+                + sqliteStage(qdb, qOpenRC))
+            sqlite3_close(qdb)
+            throw DriftRestoreError("拉回来的备份清单还没写完，这次停下，没有准备写回。请把日志传上来。")
+        }
+        let checkpointRC = sqlite3_wal_checkpoint_v2(qdb, nil,
+                                                     SQLITE_CHECKPOINT_TRUNCATE,
+                                                     nil, nil)
+        let qCloseRC = sqlite3_close(qdb)
+        if checkpointRC != SQLITE_OK || qCloseRC != SQLITE_OK {
+            AppLog.write("restore base: quiescence checkpoint rc \(checkpointRC), "
+                + "close rc \(qCloseRC)")
+        }
+        let walURL = sourceDeviceDir.appendingPathComponent("Manifest.db-wal")
+        let walSize = (try? fmEarly.attributesOfItem(atPath: walURL.path))?[.size] as? NSNumber
+        if let walSize, walSize.int64Value > 0 {
+            AppLog.write("restore base: the pulled manifest's WAL still holds "
+                + "\(walSize.int64Value) byte(s) after checkpoint — refusing to copy")
+            throw DriftRestoreError("拉回来的备份清单还没写完，这次停下，没有准备写回。请把日志传上来。")
+        }
+
         try HostManifests.reset(backupRoot: backupRoot, udid: udid)
         let deviceDir = AppPaths.deviceDir(backupRoot: backupRoot, udid: udid)
         try HostManifests.ensure(deviceDir: deviceDir, udid: udid, isFullBackup: true)
@@ -394,10 +485,13 @@ final class DriftRestoreService {
         let container = (try? await Minimuxer.shared()
             .appFactoryEntry(bundleId: PosterBoard.bundleID))?["Container"] as? String ?? ""
         var db: OpaquePointer?
-        guard sqlite3_open_v2(deviceDir.appendingPathComponent("Manifest.db").path,
-                              &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let db else {
+        let auditOpenRC = sqlite3_open_v2(
+            deviceDir.appendingPathComponent("Manifest.db").path,
+            &db, SQLITE_OPEN_READWRITE, nil)
+        guard auditOpenRC == SQLITE_OK, let db else {
+            AppLog.write("pull audit: could not open the pulled Manifest.db — "
+                + sqliteStage(db, auditOpenRC))
             sqlite3_close(db)
-            AppLog.write("pull audit: could not open the pulled Manifest.db")
             return
         }
         defer { sqlite3_close(db) }
