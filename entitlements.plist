@@ -15,13 +15,12 @@
 	  this group: worse_query stages its symlink inside the group's
 	  Library/Caches and asks containermanagerd to resolve it.
 
-	  The identifier must match WorseQueryEscape.groupIdentifier and must be
-	  registered to the signing team (Developer → Identifiers → App Groups).
-	  A free personal-team profile cannot grant it, in which case the mode
-	  reports itself unavailable and the app falls back to AirLift. When
-	  building with ⌘R on a personal team, drop this key — Xcode refuses to
-	  sign otherwise; the shipped IPA is unsigned and takes its entitlements
-	  from whichever profile the sideloader uses.
+	  This is Drift's declared default group. At runtime the app reads the
+	  effective process application-groups entitlement and falls back to the
+	  signed Mach-O entitlements when SecTask returns no value, matching
+	  Erosion-CN. SideStore / Personal Team signing is not rejected by label:
+	  the selected group must still resolve to a usable container.
+	  The final signed entitlement and container check remain decisive.
 	-->
 	<key>com.apple.security.application-groups</key>
 	<array>
