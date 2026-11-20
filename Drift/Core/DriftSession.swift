@@ -1162,8 +1162,9 @@ enum DriftJudge {
 
     /// Decide the channel for a selection.
     ///
-    /// Hard limits first (video, store reset, store-database packs — all
-    /// restore-only, hence blocked while 恢复刷 is sealed). Then: a manual pick
+    /// Hard limits first (store reset and store-database packs remain
+    /// restore-only, hence blocked while 恢复刷 is sealed). Video is accepted
+    /// by every non-restore writer. Then: a manual pick
     /// is used as-is and is *unavailable* — never substituted — when its own
     /// premise fails; `.auto` takes the first ready channel in order.
     ///
@@ -1194,11 +1195,6 @@ enum DriftJudge {
         }
         // Hard limits: these leave only the restore method, and while it is
         // sealed the answer is "cannot flash now".
-        if selection.video != nil {
-            return p.restoreReady
-                ? judged(.backup, "视频壁纸只能用恢复刷，刷完会重启")
-                : sealedBlocked("视频壁纸只能用恢复刷，但恢复刷已封存，现在刷不了")
-        }
         if selection.fullReset || !selection.resetModes.isEmpty {
             return p.restoreReady
                 ? judged(.backup, "重置壁纸商店只能用恢复刷，刷完会重启")

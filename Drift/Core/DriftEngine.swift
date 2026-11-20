@@ -375,11 +375,6 @@ final class DriftEngine {
                 + "要重置，请把刷入方式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
-        if selection.video != nil {
-            throw DriftError("免注销直刷无法应用 PosterBoard 视频：它的帧是为恢复准备的。"
-                + "请把刷入方式切换到「恢复刷」。"
-                + DriftRestoreGate.unavailableSuffix)
-        }
         if selection.tendies.contains(where: \.isUnsafeContainer) {
             throw DriftError("包含商店数据库的壁纸包只能用恢复刷；恢复刷已封存，暂时刷不了。")
         }
@@ -415,9 +410,9 @@ final class DriftEngine {
 
     /// Refuse a selection the AirLift path cannot carry, before anything is opened.
     ///
-    /// A reset is a store operation and the video stage's frames are computed for
-    /// the restore, so neither can travel a container write. Saying so up front is
-    /// the alternative to accepting the selection and quietly dropping half of it.
+    /// A reset is a store operation, so it cannot travel a container write.
+    /// Saying so up front is the alternative to accepting the selection and
+    /// quietly dropping half of it.
     private func checkAirliftCanApply(posterBoard: PosterBoardSelection,
                                      templates: [TemplateFile] = [], deviceVersion: String, buildVersion: String = "") throws {
         if templates.contains(where: \.isContainer) {
@@ -428,11 +423,6 @@ final class DriftEngine {
         if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
             throw DriftError("注销直刷无法重置 PosterBoard 库——它只会添加"
                 + "壁纸。要重置，请把刷入方式切换到「恢复刷」。"
-                + DriftRestoreGate.unavailableSuffix)
-        }
-        if posterBoard.video != nil {
-            throw DriftError("注销直刷无法应用 PosterBoard 视频：它的帧是"
-                + "为恢复准备的。请把刷入方式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         let reason = Airlift.unsupportedReason(deviceVersion: deviceVersion, buildVersion: buildVersion)
@@ -447,9 +437,8 @@ final class DriftEngine {
     ///
     /// The route copies descriptor folders into PosterBoard's container. It has
     /// no manifest, so tweak/skip-setup/status-bar payloads in the same run would
-    /// be dropped on the floor; a reset is a store operation it cannot express;
-    /// and the video stage's frames are computed for the restore. Each is named
-    /// instead of being silently ignored.
+    /// be dropped on the floor; a reset is a store operation it cannot express.
+    /// Each is named instead of being silently ignored.
     private func checkLocalCanApply(posterBoard: PosterBoardSelection,
                                     templates: [TemplateFile],
                                     hasOtherPayloads: Bool,
@@ -468,11 +457,6 @@ final class DriftEngine {
         if posterBoard.fullReset || !posterBoard.resetModes.isEmpty {
             throw DriftError("本机直刷无法重置 PosterBoard 库——它只会添加壁纸。"
                 + "要重置，请把刷入方式切换到「恢复刷」。"
-                + DriftRestoreGate.unavailableSuffix)
-        }
-        if posterBoard.video != nil {
-            throw DriftError("本机直刷无法应用 PosterBoard 视频：它的帧是为恢复准备的。"
-                + "请把刷入方式切换到「恢复刷」。"
                 + DriftRestoreGate.unavailableSuffix)
         }
         if posterBoard.tendies.contains(where: \.isUnsafeContainer) {
