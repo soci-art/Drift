@@ -249,8 +249,23 @@ enum PosterBoardLocal {
         let reported: (Double) -> Void = { value in
             DispatchQueue.main.async { progress(value) }
         }
+        var generatedVideoDirectory: URL?
+        defer {
+            if let generatedVideoDirectory {
+                try? FileManager.default.removeItem(at: generatedVideoDirectory)
+            }
+        }
+        if let plan = selection.plan {
+            let directory = PosterBoard.workDirectory
+                .appendingPathComponent("local-video-\(UUID().uuidString)", isDirectory: true)
+            generatedVideoDirectory = directory
+            try? FileManager.default.removeItem(at: directory)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await PosterBoardVideo.generate(plan: plan, outputDirectory: directory, log: log)
+        }
         let write = try await offMainActor {
             try inject(selection: selection, templates: templates,
+                       generatedVideoDirectory: generatedVideoDirectory,
                        deviceVersion: deviceVersion, log: log, progress: reported)
         }
         progress(99)
@@ -406,6 +421,7 @@ enum PosterBoardLocal {
     private static func inject(
         selection: PosterBoardSelection,
         templates: [TemplateFile],
+        generatedVideoDirectory: URL?,
         deviceVersion: String,
         log: @escaping @Sendable (String) -> Void,
         progress: @escaping (Double) -> Void
@@ -414,11 +430,13 @@ enum PosterBoardLocal {
             let name: String
             let url: URL
             let defaultExtension: String
+            let plannedDescriptors: Int
             let extract: (URL) throws -> Void
         }
         var sources = selection.tendies.map { pack in
             Source(name: pack.name, url: pack.url,
-                   defaultExtension: pack.posterType.extensionBundleID) { stage in
+                   defaultExtension: pack.posterType.extensionBundleID,
+                   plannedDescriptors: PosterBoardAirlift.countDescriptors(inArchiveAt: pack.url)) { stage in
                 try pack.extract(to: stage)
                 if PosterBoard.shouldConvertLegacy(pack: pack, deviceVersion: deviceVersion, log: log) {
                     PosterBoard.convertLegacyPack(pack.name, at: stage, log: log)
@@ -427,12 +445,29 @@ enum PosterBoardLocal {
         }
         sources += templates.map { template in
             Source(name: template.title, url: template.url,
-                   defaultExtension: PosterBoardPosterType.collections.extensionBundleID) { stage in
+                   defaultExtension: PosterBoardPosterType.collections.extensionBundleID,
+                   plannedDescriptors: PosterBoardAirlift.countDescriptors(inArchiveAt: template.url)) { stage in
                 try template.extract(to: stage)
                 PosterBoard.convertLegacyPack(template.title, at: stage, log: log)
             }
         }
-        guard !sources.isEmpty else { throw DriftError("没有可注入的 PosterBoard 包或模板。") }
+        if let generatedVideoDirectory {
+            sources.append(Source(
+                name: "视频：\(selection.video?.lastPathComponent ?? "Video")",
+                url: generatedVideoDirectory,
+                defaultExtension: PosterBoardPosterType.collections.extensionBundleID,
+                plannedDescriptors: 1
+            ) { stage in
+                let children = try FileManager.default.contentsOfDirectory(
+                    at: generatedVideoDirectory, includingPropertiesForKeys: nil)
+                for child in children {
+                    let destination = stage.appendingPathComponent(
+                        child.lastPathComponent, isDirectory: true)
+                    try FileManager.default.copyItem(at: child, to: destination)
+                }
+            })
+        }
+        guard !sources.isEmpty else { throw DriftError("没有可注入的 PosterBoard 包、模板或视频。") }
 
         // One extension for the whole run: every copy below needs it live.
         let opened = try openContainer(log: log)
@@ -444,9 +479,7 @@ enum PosterBoardLocal {
         let generations = generationDirectories(in: root)
         log("商店代际目录：\(generations.isEmpty ? "(无，按 \(PosterBoard.fallbackStructureVersion) 新建)" : generations.map(String.init).joined(separator: "、"))")
 
-        let planned = sources.reduce(0) {
-            $0 + PosterBoardAirlift.countDescriptors(inArchiveAt: $1.url)
-        }
+        let planned = sources.reduce(0) { $0 + $1.plannedDescriptors }
         var done = 0
         let overall = { (completed: Int) -> Double in
             guard planned > 0 else { return 0 }

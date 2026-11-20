@@ -61,7 +61,7 @@ struct DriftAboutView: View {
                 tableRow(row)
                 if row.version != Self.tableRows.last?.version { Divider() }
             }
-            Text("✓ = 能用，— = 用不了。iOS 26.0–26.6.1 使用 bad_query，不要求 App Group；其余本机直刷版本使用 worse_query，需要当前进程带有可打开的 App Group。")
+            Text("✓ = 能用，— = 用不了。iOS 26.0 – 26.6.1 有证书、没证书都能用：带着能用的组就走用组的那条路，没有组就走不用组的那条路。其余系统要证书签名带能用的组，没有能用的组就用不了。")
                 .font(.caption).foregroundStyle(.secondary)
             Text("iOS 18.7.2 起，内核直刷用不了，只能走两条隧道通道。")
                 .font(.caption).foregroundStyle(.secondary)
@@ -69,9 +69,7 @@ struct DriftAboutView: View {
                 .font(.caption).foregroundStyle(.secondary)
             Text("刷完怎么生效：免注销直刷直接生效；注销直刷要注销一次；本机直刷、内核直刷要把壁纸界面从后台划掉。")
                 .font(.caption).foregroundStyle(.secondary)
-            Text(DriftRestoreGate.isEnabled
-                 ? "视频壁纸在任何版本都只能走恢复刷。"
-                 : "视频壁纸在任何版本都只能走恢复刷，恢复刷封存期间暂时刷不了。")
+            Text("视频壁纸可以走任意一条直刷通道：在主页选哪种刷入方式，就走哪种。")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
