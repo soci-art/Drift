@@ -21,13 +21,13 @@ import WorseQuery
 ///
 /// ## What it is not
 ///
-/// It is not an entitlement bypass. The worse_query route needs an App Group
-/// the process *actually carries*. The bridge asks the system for that list
-/// with SecTask (the same way 3106 does) and uses the first group whose
-/// container opens (`discoveredGroupIdentifier`); the embedded provisioning
-/// profile is not consulted, because a re-sign can carry groups the profile on
-/// disk does not list. No group means every worse_query call fails with `-1`
-/// and `isAvailable` says no.
+/// It is not an entitlement bypass. The worse_query route needs a group
+/// present in the process's effective signed entitlements. Discovery follows
+/// Erosion-CN: SecTask first, then the executable's signed Mach-O entitlements
+/// if SecTask returns no value; the app's declared group is preferred and each
+/// candidate is checked for a usable container. The embedded profile is not
+/// used as an authority. If no candidate can be used, worse_query remains
+/// unavailable on systems that require it.
 ///
 /// iOS 26.0–26.6.1 is the overlap segment: both backends cover it, so the
 /// signing decides — a process carrying a usable App Group takes
