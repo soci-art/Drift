@@ -242,4 +242,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add project.yml
           git commit -m "版本号回写 ${{ steps.version.outputs.version }} 构建 ${{ steps.version.outputs.build }}"
-          git push origin HEAD:refs/heads/formal || echo "::warning::project.yml write-back push failed; the release itself is already published."
+          git push origin HEAD:refs/heads/main || echo "::warning::project.yml write-back push failed; the release itself is already published."
