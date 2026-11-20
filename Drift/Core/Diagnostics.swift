@@ -126,7 +126,7 @@ enum Diagnostics {
         }
         lines.append("  backup encryption (com.apple.mobile.backup/WillEncrypt): "
             + (encrypt.map { $0 ? "ON — premise broken (encrypted Manifest.db)" : "off" }
-                ?? "unknown (probe timed out or the device could not be asked)"))
+                ?? "unknown (no readable value — the device may never have made a computer backup, or the probe timed out)"))
         // Keyword slice first (the actual evidence), raw tail last (proves the
         // sink is live and shows an unclassified failure).  Both were captured
         // before the probes above wrote a single line.

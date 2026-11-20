@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Minimuxer
+import SQLite3
 
 /// An error whose message is meant for the user, in plain words.
 ///
@@ -184,18 +185,24 @@ final class DriftRestoreService {
             throw DriftRestoreError("恢复刷这一版只开 iOS 27 这一段，这台是 iOS \(deviceVersion)，这次停下。")
         }
 
-        // Encryption hard stops (plan): ON stops, unreadable stops —
-        // stricter than the shared preflight, which logs and continues,
-        // because an encrypted Manifest.db cannot be pruned or injected
-        // at all.
-        switch await Diagnostics.backupEncryptionEnabled() {
-        case .some(true):
+        // Encryption gate (revised 2026-11-20 after the first field log):
+        // the lockdown preference is only a pre-screen — explicitly ON
+        // stops here. Unreadable no longer stops: a device that never
+        // made a computer backup answers the WillEncrypt query with
+        // MissingValue (field log 2026-11-19, iPhone13,1 on iOS 27.0.1),
+        // which the gateway folds into nil even though the device is not
+        // encrypted, and the first build's hard stop turned that into a
+        // dead end. The verdict then comes from the pulled backup itself:
+        // the pull only reads, and an encrypted backup's device-produced
+        // Manifest.db does not parse as SQLite — checked right after the
+        // pull, before any pruning and long before any write-back.
+        let encryptionPreference = await Diagnostics.backupEncryptionEnabled()
+        if encryptionPreference == true {
             throw DriftRestoreError("这台设备开着「加密本地备份」，恢复刷用不了。请先在电脑的 Finder 或 iTunes 里关掉「加密本地备份」，再重试。")
-        case .none:
-            throw DriftRestoreError("读不到这台设备的备份加密状态，恢复刷这次停下。请确认隧道已连上后重试。")
-        case .some(false):
-            AppLog.write("restore preflight: encrypted local backup = OFF")
         }
+        AppLog.write(encryptionPreference == false
+            ? "restore preflight: encrypted local backup = OFF"
+            : "restore preflight: encryption preference unreadable — verdict deferred to the pulled manifest")
 
         let log: @Sendable (String) -> Void = { AppLog.write($0) }
 
@@ -228,6 +235,14 @@ final class DriftRestoreService {
         let backupRoot = AppPaths.fullBackupRoot(udid: udid)
         try await ProtectiveBackup.run(backupRoot: backupRoot, udid: udid,
                                        onProgress: onProgress)
+
+        // Post-pull encryption verdict (see the preflight note above).
+        // Nothing has been written to the device — the pull only reads —
+        // so stopping here is still stopping before anything happened.
+        guard Self.pulledManifestParses(
+            deviceDir: AppPaths.deviceDir(backupRoot: backupRoot, udid: udid)) else {
+            throw DriftRestoreError("拉回来的备份清单打不开，多半是这台设备开着「加密本地备份」。请先在电脑的 Finder 或 iTunes 里关掉「加密本地备份」，再重试；如果本来就没开，请把日志传上来。")
+        }
 
         // Prune to the single domain, merge the snapshot's native rows
         // for the delivering set, inject the compiled payloads.
@@ -266,6 +281,32 @@ final class DriftRestoreService {
         AppLog.write("restore dry run prepared: \(fingerprint.payloadFileCount) payload file(s), "
             + "fingerprint \(fingerprint.short) — awaiting the separate write-back confirmation")
         return report
+    }
+
+    /// Whether the device-produced `Manifest.db` in `deviceDir` is a
+    /// readable SQLite database holding a `Files` table. An encrypted
+    /// backup's manifest arrives encrypted end to end — it does not even
+    /// carry the SQLite header — so this reads the device's own evidence
+    /// rather than a preference the host asked about beforehand.
+    private static func pulledManifestParses(deviceDir: URL) -> Bool {
+        let url = deviceDir.appendingPathComponent("Manifest.db")
+        let magic = Data("SQLite format 3\u{0}".utf8)
+        guard let head = try? FileHandle(forReadingFrom: url) else { return false }
+        let first = try? head.read(upToCount: magic.count)
+        try? head.close()
+        guard first == magic else { return false }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
+              let db else {
+            sqlite3_close(db)
+            return false
+        }
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM Files",
+                                 -1, &stmt, nil) == SQLITE_OK else { return false }
+        return sqlite3_step(stmt) == SQLITE_ROW
     }
 
     // MARK: - Write-back
