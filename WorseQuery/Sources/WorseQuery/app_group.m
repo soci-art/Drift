@@ -121,12 +121,14 @@ char *drift_app_group(void)
         createTask = (SecTaskCreateFromSelfFn)dlsym(security, "SecTaskCreateFromSelf");
         copyEntitlement = (SecTaskCopyEntitlementFn)dlsym(security, "SecTaskCopyValueForEntitlement");
     });
-    if (!createTask || !copyEntitlement) return NULL;
-
-    SecTaskRef task = createTask(kCFAllocatorDefault);
-    if (!task) return NULL;
-    CFTypeRef value = copyEntitlement(task, CFSTR("com.apple.security.application-groups"), NULL);
-    CFRelease(task);
+    CFTypeRef value = NULL;
+    if (createTask && copyEntitlement) {
+        SecTaskRef task = createTask(kCFAllocatorDefault);
+        if (task) {
+            value = copyEntitlement(task, CFSTR("com.apple.security.application-groups"), NULL);
+            CFRelease(task);
+        }
+    }
     NSMutableArray<NSString *> *groups = [NSMutableArray array];
     if (value) {
         CFTypeID type = CFGetTypeID(value);
