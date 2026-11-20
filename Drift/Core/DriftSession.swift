@@ -854,17 +854,23 @@ struct DriftModeAvailability: Identifiable, Equatable {
     var id: String { mode.rawValue }
 }
 
-/// The user's method pick. Five methods, exactly as named: 自动选择 and the
-/// four channels. The sealed restore route is not a pick — since #329 it
-/// has no Home entry at all and never runs. The kernel pick is always in
-/// the list (Grace, 2026-11-15); its channel is not
-/// a `PosterBoardApplyMode` — the judge handles the pick directly.
+/// The user's method pick. Six methods, exactly as named: 自动选择 and the
+/// five channels. The kernel pick is always in the list (Grace,
+/// 2026-11-15); its channel is not a `PosterBoardApplyMode` — the judge
+/// handles the pick directly. The restore pick joined the list on
+/// 2026-11-19 (Grace): selectable, badged 实验， mirroring the kernel
+/// pick — while its 实验性功能 switch is off (and the route itself
+/// stays sealed behind `DriftRestoreGate`), the judge answers a
+/// restore pick with the go-turn-it-on reminder and never runs it.
+/// When the restore research lands, the switch becomes real and the
+/// route opens through this same pick.
 enum DriftMethodPick: String, CaseIterable, Identifiable {
     case auto
     case noRespring
     case respring
     case local
     case kernel
+    case restore
 
     var id: String { rawValue }
 
@@ -875,6 +881,7 @@ enum DriftMethodPick: String, CaseIterable, Identifiable {
         case .respring: return "注销直刷"
         case .local: return "本机直刷"
         case .kernel: return "内核直刷"
+        case .restore: return "恢复刷"
         }
     }
 
@@ -887,21 +894,27 @@ enum DriftMethodPick: String, CaseIterable, Identifiable {
         case .respring: return "隧道写入 · 注销后生效"
         case .local: return "本机写入，免配对、免隧道"
         case .kernel: return "内核写入，免配对、免隧道、不要求签名"
+        case .restore: return "通过恢复方式刷入壁纸"
         }
     }
 
     /// The channel a manual pick forces; `.auto` decides at run time.
+    /// The kernel and restore picks have no channel here — the judge
+    /// handles both directly.
     var channel: PosterBoardApplyMode? {
         switch self {
-        case .auto, .kernel: return nil
+        case .auto, .kernel, .restore: return nil
         case .noRespring: return .direct
         case .respring: return .airlift
         case .local: return .worseQuery
         }
     }
 
-    /// No current method pick carries an experimental badge.
-    var isExperimental: Bool { false }
+    /// 本机直刷 carried the 实验 badge until Grace graduated it
+    /// (#330, 2026-11-14); 内核直刷 carried it until it graduated
+    /// on 2026-11-20; the badge belongs to 恢复刷 now, since it
+    /// joined the list (Grace, 2026-11-19).
+    var isExperimental: Bool { self == .restore }
 
     /// Read a stored pick. Every value written by 2.0.0 or 1.x means the same
     /// thing now: let Drift choose. Only the three new raw values are picks.
@@ -911,6 +924,7 @@ enum DriftMethodPick: String, CaseIterable, Identifiable {
         case "respring": return .respring
         case "local": return .local
         case "kernel": return .kernel
+        case "restore": return .restore
         default: return .auto
         }
     }
@@ -935,6 +949,11 @@ struct DriftModeJudgement {
     /// placeholder, and dispatchers must honour this flag instead
     /// (set for a manual 内核直刷 pick and for 自动选择 landing on it).
     var useKernel: Bool = false
+    /// Blocked only because the restore method's 实验性功能 switch
+    /// is off (Grace, 2026-11-19): the flash button stays tappable
+    /// and the tap answers with the go-turn-it-on reminder, not an
+    /// error.
+    var restoreNeedsSwitch: Bool = false
     var isBlocked: Bool { blockedReason != nil }
 }
 
@@ -1193,6 +1212,13 @@ enum DriftJudge {
         func sealedBlocked(_ reason: String) -> DriftModeJudgement {
             blocked(reason, notice: DriftRestoreGate.notice)
         }
+        /// Blocked only because the restore switch is off
+        /// (Grace, 2026-11-19).
+        func restoreSwitchBlocked(_ reason: String, notice: String) -> DriftModeJudgement {
+            var judgement = blocked(reason, notice: notice)
+            judgement.restoreNeedsSwitch = true
+            return judgement
+        }
         // Hard limits: these leave only the restore method, and while it is
         // sealed the answer is "cannot flash now".
         if selection.fullReset || !selection.resetModes.isEmpty {
@@ -1236,6 +1262,22 @@ enum DriftJudge {
                 options: rows,
                 expectedEffect: "写完提示：打开应用切换器，上滑关闭 PosterBoard，系统重新拉起后生效",
                 useKernel: true)
+        }
+
+        if pick == .restore {
+            // A manual restore pick mirrors the kernel pick (Grace,
+            // 2026-11-19): selectable, never rerouted. While the
+            // route is sealed the answer is the go-turn-it-on
+            // reminder — the 实验性功能 switch it points at is
+            // itself still a placeholder that answers 暂不可用，
+            // and the session funnel refuses a restore run
+            // regardless. When the gate opens, this same branch
+            // judges the backup channel for real.
+            if p.restoreReady {
+                return judged(.backup, "已手动选择恢复刷：通过恢复方式刷入壁纸，刷完重启生效。")
+            }
+            return restoreSwitchBlocked("你手动选了恢复刷：它还没有打开。先到「设置 → 实验性功能」里打开恢复刷，再回来刷入。手动选定后不会自动改走别的通道。",
+                           notice: "请先到「设置 → 实验性功能」里打开恢复刷。")
         }
 
         if let channel = pick.channel {

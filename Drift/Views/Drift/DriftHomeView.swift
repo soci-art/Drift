@@ -64,6 +64,11 @@ struct DriftHomeView: View {
                 && selection.video == nil && !selection.fullReset
                 && selection.resetModes.isEmpty && !session.running
         }
+        // A restore pick blocked only by its switch: the tap must
+        // reach the reminder (Grace, 2026-11-19).
+        if judgement.restoreNeedsSwitch {
+            return !selection.tendies.isEmpty && !overLimit && !session.running
+        }
         // The in-process route is the one path that does not need a pairing
         // record; every other mode still does.
         return (session.paired || judgement.mode == .worseQuery)
@@ -347,6 +352,12 @@ struct DriftHomeView: View {
             status = "不可选"
         } else if pick == .kernel {
             status = available ? "可用" : "不支持"
+        } else if pick == .restore {
+            // The restore pick is selectable like the kernel pick,
+            // but there is no device premise to judge — while the
+            // route is sealed its honest state is 不可用； the switch
+            // reminder bites at the flash tap (Grace, 2026-11-19).
+            status = "不可用"
         } else {
             status = available ? "可用" : "不可用"
         }
@@ -646,7 +657,15 @@ struct DriftHomeView: View {
         // but a blocked selection must never even be shaped into one.)
         if judgement.isBlocked {
             session.flashCover = false
-            session.errorText = judgement.blockedReason
+            // Blocked only by the restore switch (Grace, 2026-11-19):
+            // this tap is the reminder moment — a notice pointing at
+            // 实验性功能, not an error.
+            if judgement.restoreNeedsSwitch {
+                session.noticeTitle = "恢复刷还没有打开"
+                session.noticeText = "请先到「设置 → 实验性功能」里打开恢复刷，再回来刷入。"
+            } else {
+                session.errorText = judgement.blockedReason
+            }
             return
         }
         var runSelection = selection
