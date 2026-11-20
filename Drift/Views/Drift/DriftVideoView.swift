@@ -438,11 +438,31 @@ private struct VideoFramePickerView: View {
     /// dropped whenever the slider had already moved on), and
     /// pre-rendering a whole filmstrip on open burned CPU alongside
     /// the drag decodes — lag and a hot phone. The paused player
-    /// renders the scrub itself: the system video pipeline shows
-    /// the frame at the slider position, and AVFoundation coalesces
-    /// rapid seek requests on its own. Only the confirm step still
-    /// extracts a still — once, at full resolution, exact frame.
+    /// renders the scrub itself — but the third attempt, one seek
+    /// per slider tick, froze on device too (recording-verified:
+    /// the preview tracked to 2.6 s, then froze while the slider
+    /// swept 3.6→9.1 s, then snapped twice at the end): AVFoundation
+    /// does NOT coalesce a 60 Hz seek flood; each new seek kills
+    /// the previous one without freeing its decode work at once,
+    /// so no frame ever lands. Round four (Grace + GPT cross-check,
+    /// 2026-11-20) therefore schedules seeks like an editor:
+    /// at most one seek in flight, the slider only ever records
+    /// the LATEST target, a landed seek chains to that target,
+    /// launches are rate-capped at ~12/s, and letting go runs one
+    /// separate zero-tolerance seek once the in-flight one lands.
+    /// Only the confirm step extracts a still — once, at full
+    /// resolution, exact frame, independent of the preview.
     @State private var player = AVPlayer()
+    /// Seek-scheduler state for the preview. `lastLanded` is the
+    /// last target whose seek completed with finished == true —
+    /// never read back from player.currentTime(), which during a
+    /// seek does not say what is actually on screen.
+    @State private var seekInFlight = false
+    @State private var lastLanded: Double = -1
+    @State private var lastSeekStart = Date.distantPast
+    @State private var finishing = false
+    @State private var generation = 0
+    @State private var delayedPump: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -457,7 +477,8 @@ private struct VideoFramePickerView: View {
                 .frame(maxHeight: 420)
                 Slider(value: $time, in: 0...max(duration, 0.1)) { isEditing in
                     editing = isEditing
-                    if !isEditing { seek(exact: true) }
+                    if !isEditing { finishing = true }
+                    pump()
                 }
                 Text("第 \(String(format: "%.1f", time)) 秒 / 共 \(String(format: "%.1f", duration)) 秒")
                     .font(.caption).foregroundStyle(.secondary)
@@ -478,10 +499,12 @@ private struct VideoFramePickerView: View {
                 }
             }
             .task { await load() }
-            .onChange(of: time) { _, _ in
-                if editing { seek(exact: false) }
+            .onChange(of: time) { _, _ in pump() }
+            .onDisappear {
+                generation += 1
+                delayedPump?.cancel()
+                player.pause()
             }
-            .onDisappear { player.pause() }
         }
     }
 
@@ -492,21 +515,56 @@ private struct VideoFramePickerView: View {
         player.replaceCurrentItem(with: AVPlayerItem(asset: asset))
         player.pause()
         time = min(0.1, duration)
-        seek(exact: true)
+        finishing = true
+        pump()
     }
 
-    /// Point the paused player at the slider position. While the
-    /// finger is moving the seek takes a loose tolerance, so the
-    /// pipeline can land on a nearby frame fast; when the drag ends
-    /// (and for the first frame) it seeks with zero tolerance, so
-    /// what is on screen is exactly the frame confirm will extract.
-    private func seek(exact: Bool) {
-        let target = CMTime(seconds: time, preferredTimescale: 600)
-        if exact {
-            player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
-        } else {
-            let slack = CMTime(seconds: 0.35, preferredTimescale: 600)
-            player.seek(to: target, toleranceBefore: slack, toleranceAfter: slack)
+    /// The seek scheduler. Invariants: at most one seek in flight;
+    /// the target is always the slider's current value (latest
+    /// wins, no queue); while dragging, launches are capped at
+    /// ~12/s and land loose (0.35 s tolerance); when the drag ends,
+    /// `finishing` makes the next launch a zero-tolerance seek to
+    /// the final value, fired only after the in-flight one lands.
+    private func pump() {
+        guard !seekInFlight else { return }
+        if finishing {
+            fireSeek(target: time, exact: true)
+            return
+        }
+        guard editing else { return }
+        if abs(time - lastLanded) < 0.01 { return }
+        let elapsed = Date().timeIntervalSince(lastSeekStart)
+        if elapsed < 0.08 {
+            delayedPump?.cancel()
+            delayedPump = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64((0.08 - elapsed) * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                pump()
+            }
+            return
+        }
+        fireSeek(target: time, exact: false)
+    }
+
+    private func fireSeek(target: Double, exact: Bool) {
+        seekInFlight = true
+        lastSeekStart = Date()
+        let gen = generation
+        let slack = CMTime(seconds: 0.35, preferredTimescale: 600)
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600),
+                    toleranceBefore: exact ? .zero : slack,
+                    toleranceAfter: exact ? .zero : slack) { finished in
+            Task { @MainActor in
+                // Stale completion from a previous page/video: the
+                // state it would touch no longer exists.
+                guard gen == generation else { return }
+                seekInFlight = false
+                if finished {
+                    lastLanded = target
+                    if exact { finishing = false }
+                }
+                pump()
+            }
         }
     }
 
