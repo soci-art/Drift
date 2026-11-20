@@ -228,7 +228,7 @@ struct PosterBoardManagerView: View {
     /// imported from, shown only on entries the journal proves are
     /// Drift's own.
     @ViewBuilder
-    private func packChip(for entry: PosterBoardManagement.ManagedEntry) {
+    private func packChip(for entry: PosterBoardManagement.ManagedEntry) -> some View {
         if let receipt = receipt(for: entry) {
             Text("来自导入的包：\(receipt.pack)")
                 .font(.caption2.weight(.medium))

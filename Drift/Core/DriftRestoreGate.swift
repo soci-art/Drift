@@ -27,7 +27,8 @@ import Foundation
 enum DriftRestoreGate {
     static let isEnabled = false
 
-    /// Blocked entry points answer with a plain 「暂不可用」 (Grace,
-    /// 2026-11-19: every restore-route text and error came out of the
-    /// app; the route itself stays sealed behind this flag).
+    /// The one suspension notice every blocked entry point shows, so the
+    /// wording cannot drift between pages. Plain and factual on purpose:
+    /// it says the route is off, why, and what still works.
+    static let notice = "恢复刷已封存：2026-11-10 一次恢复刷入在设备重启后把手机恢复了出厂设置、数据全部丢失。查清原因并在备用机上验证「从设备拉到真备份」之前不开放：入口可见，但没有任何可执行的恢复代码。重置商店与带数据库的容器包暂时都刷不了；其他直刷通道不受影响。"
 }
