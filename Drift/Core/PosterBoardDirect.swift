@@ -19,11 +19,11 @@ import ZIPFoundation
 ///
 /// ## What it does not do
 ///
-/// It adds descriptors; it cannot remove them, so a store reset still belongs
-/// to the backup route. The video stage is computed for the backup route and
-/// is refused by the engine before this runs. Only one descriptor is installed
-/// per transaction (the primary provider spot); the mirror spot is deferred,
-/// matching the transaction shape this is ported from.
+/// It adds descriptors; it cannot remove them, so a store reset remains
+/// unsupported here. Video descriptors are generated locally and travel as
+/// a Photos provider source through the same transaction. Only one descriptor
+/// is installed per transaction (the primary provider spot); the mirror spot
+/// is deferred, matching the transaction shape this is ported from.
 ///
 /// ## Refresh
 ///
@@ -120,11 +120,13 @@ enum PosterBoardDirect {
             let name: String
             let url: URL
             let defaultExtension: String
+            let plannedDescriptors: Int
             let extract: (URL) async throws -> Void
         }
         var sources = packs.map { pack in
             Source(name: pack.name, url: pack.url,
-                   defaultExtension: pack.posterType.extensionBundleID) { stage in
+                   defaultExtension: pack.posterType.extensionBundleID,
+                   plannedDescriptors: PosterBoardAirlift.countDescriptors(inArchiveAt: pack.url)) { stage in
                 try await Airlift.extractZip(archivePath: pack.url.path, destDir: stage.path)
                 if PosterBoard.shouldConvertLegacy(pack: pack, deviceVersion: deviceVersion, log: log) {
                     PosterBoard.convertLegacyPack(pack.name, at: stage, log: log)
@@ -133,12 +135,36 @@ enum PosterBoardDirect {
         }
         sources += templates.map { template in
             Source(name: template.title, url: template.url,
-                   defaultExtension: PosterBoardPosterType.collections.extensionBundleID) { stage in
+                   defaultExtension: PosterBoardPosterType.collections.extensionBundleID,
+                   plannedDescriptors: PosterBoardAirlift.countDescriptors(inArchiveAt: template.url)) { stage in
                 try template.extract(to: stage)
                 PosterBoard.convertLegacyPack(template.title, at: stage, log: log)
             }
         }
-        guard !sources.isEmpty else { throw DriftError("没有可写入的 PosterBoard 包或模板。") }
+        var generatedVideoDirectory: URL?
+        defer {
+            if let generatedVideoDirectory {
+                try? FileManager.default.removeItem(at: generatedVideoDirectory)
+            }
+        }
+        if let plan = selection.plan {
+            let directory = PosterBoard.workDirectory.appendingPathComponent(
+                "direct-video-\(UUID().uuidString)", isDirectory: true)
+            generatedVideoDirectory = directory
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await PosterBoardVideo.generate(plan: plan, outputDirectory: directory, log: log)
+            sources.append(Source(
+                name: "视频：\(selection.video?.lastPathComponent ?? "Video")",
+                url: directory,
+                defaultExtension: PosterBoardPosterType.collections.extensionBundleID,
+                plannedDescriptors: 1
+            ) { stage in
+                for child in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
+                    try FileManager.default.copyItem(at: child, to: stage.appendingPathComponent(child.lastPathComponent, isDirectory: true))
+                }
+            })
+        }
+        guard !sources.isEmpty else { throw DriftError("没有可写入的 PosterBoard 包、模板或视频。") }
 
         var container = PosterBoardAirlift.cachedContainer
         if container.isEmpty {
@@ -173,7 +199,7 @@ enum PosterBoardDirect {
         let preferenceFile = prefStage.appendingPathComponent(preferencesFileName)
         try reloadPreferences().write(to: preferenceFile)
 
-        let planned = sources.reduce(0) { $0 + PosterBoardAirlift.countDescriptors(inArchiveAt: $1.url) }
+        let planned = sources.reduce(0) { $0 + $1.plannedDescriptors }
         var done = 0
         let overall = { (completed: Int) -> Double in
             guard planned > 0 else { return 0 }
@@ -200,9 +226,7 @@ enum PosterBoardDirect {
                 let descriptors = PosterBoardAirlift.findDescriptors(
                     in: stage, defaultExtension: source.defaultExtension, log: log)
                 guard !descriptors.isEmpty else {
-                    throw DriftError("在 \(source.name) 中没有找到壁纸描述文件。"
-                        + "对于交付容器文件的模板，需要走「恢复刷」。"
-                        + DriftRestoreGate.unavailableSuffix)
+                    throw DriftError("在 \(source.name) 中没有找到壁纸描述文件。")
                 }
                 log("  \(descriptors.count) descriptor(s)")
 
