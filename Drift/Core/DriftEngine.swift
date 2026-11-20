@@ -190,16 +190,29 @@ final class DriftEngine {
 
     private func clearProgress() {
         progress = nil
+        lastLoggedPercents.removeAll()
         etaEstimator.reset()
         etaText = ""
         onProgress?(Double.nan)
         onEta?("")
     }
 
+    /// The last integer percent each progress stream wrote to the
+    /// log. Progress callbacks fire per file — an unthrottled line
+    /// per callback made a single restore dry run's log eleven
+    /// thousand lines, and the lines that mattered scrolled away in
+    /// it (field log, 2026-11-20). The bar still receives every
+    /// callback; only the log is stepped, to one line per whole
+    /// percent per stream (2026-11-21, same change as the Alpha line).
+    private var lastLoggedPercents: [String: Int] = [:]
+
     /// Clamp and throttle a Rust progress callback down to whole percent.
     private func logProgress(_ prefix: String, _ overall: Double) {
         let pct = overall < 0 ? 0 : min(overall, 100)
         reportProgress(pct)
+        let step = Int(pct)
+        guard lastLoggedPercents[prefix] != step else { return }
+        lastLoggedPercents[prefix] = step
         log(String(format: "\(prefix): %.0f%%", pct))
     }
 
