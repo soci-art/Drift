@@ -398,7 +398,7 @@ final class DriftEngine {
     /// mismatch — or no dry run at all — refuses here.
     func writeBackRestore() async throws {
         guard let restoreService else {
-            throw DriftError("还没有干跑结果，请先干跑一次。")
+            throw DriftError("还没有准备好的恢复包。")
         }
         do {
             // Second half of the run's one real bar (see the dry
@@ -413,6 +413,19 @@ final class DriftEngine {
         }
         self.restoreService = nil
         lastRestoreDryRun = nil
+    }
+
+    /// Ask the device to restart itself through the diagnostics
+    /// relay (Alpha line, Grace, 2026-11-21): the follow-up to a
+    /// successful restore write-back, offered to the user as a
+    /// choice — never automatic. The five restore switches are not
+    /// involved; this is a separate, ordinary paired service.
+    func restartDevice() async throws {
+        guard let gateway = Minimuxer.shared().ideviceGateway else {
+            throw DriftError("没有 idevice 网关——隧道通了吗？")
+        }
+        try await gateway.restartDevice()
+        log("已请设备重启（诊断通道）")
     }
 
     /// Throw a prepared dry run away without writing it back.

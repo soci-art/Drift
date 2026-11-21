@@ -2578,6 +2578,39 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
         }
     }
 
+    /// The diagnostics relay (com.apple.mobile.diagnostics_relay):
+    /// the paired channel desktop tools use for device power actions.
+    private func withDiagnosticsRelay<T: Sendable>(
+        _ action: (OpaquePointer) throws -> T
+    ) throws -> T {
+        try performWithEitherService(
+            connectRP: diagnostics_relay_client_connect_rsd,
+            connectLockdown: diagnostics_relay_client_connect,
+            cleanup: diagnostics_relay_client_free,
+            serviceName: "Diagnostics relay"
+        ) { client in
+            try action(client)
+        }
+    }
+
+    /// Ask the device to restart itself through the diagnostics
+    /// relay. The request is the whole conversation — the device
+    /// answers, then reboots — so there is no goodbye afterwards.
+    /// Throws when the service refuses the request itself. Drift
+    /// offers this after a successful restore write-back (Alpha
+    /// line, Grace, 2026-11-21).
+    public func restartDevice() async throws {
+        try await withFFIDispatch {
+            try self.withDiagnosticsRelay { client in
+                if let err = diagnostics_relay_client_restart(client) {
+                    let msg = self.getErrorMessage(from: err)
+                    defer { idevice_error_free(err) }
+                    throw IdeviceGatewayError(.serviceError, reason: "Diagnostics relay restart failed: \(msg)")
+                }
+            }
+        }
+    }
+
     /// The same, against one app's data container, via house_arrest.
     ///
     /// `startHouseArrestAfc` (above) already frees the house_arrest client and

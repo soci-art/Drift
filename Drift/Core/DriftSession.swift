@@ -91,6 +91,13 @@ final class DriftSession: ObservableObject {
     /// on it any more — there is no parked report and no dry-run card.
     @Published private(set) var pendingRestoreDryRun: RestoreDryRunReport?
 
+    /// A finished restore write-back is waiting on the user's answer
+    /// to the restart offer (Alpha line, Grace, 2026-11-21): the root
+    /// view shows「刷入成功，需要重启生效，是否重启？」while this is
+    /// set; 确定 sends the diagnostics-relay restart, 取消 leaves the
+    /// device as it is (a manual restart does the same job).
+    @Published var restoreRestartOffer = false
+
     private var didBootstrap = false
     private static let startLock = NSLock()
     private static var startInFlight = false
@@ -117,6 +124,19 @@ final class DriftSession: ObservableObject {
     func dismissError() {
         errorText = nil
         errorRetryAction = nil
+    }
+
+    /// The 确定 half of the post-restore restart offer: ask the
+    /// device to restart itself through the diagnostics relay. A
+    /// refusal lands as an ordinary error — the flash already
+    /// succeeded, and a manual restart does the same job.
+    func restartDeviceAfterRestore() async {
+        restoreRestartOffer = false
+        do {
+            try await DriftEngine.shared.restartDevice()
+        } catch {
+            presentError("重启命令没发出去：\(error.localizedDescription) 壁纸已经刷入，手动重启一次也能生效。")
+        }
     }
 
     // MARK: - Launch
@@ -531,11 +551,14 @@ final class DriftSession: ObservableObject {
                                         packFiles: dryRun.packFiles,
                                         logSliceText: RunLog.shared.recordSnapshot())
                     errorText = nil
-                    // Kept to one line at Grace's word (2026-11-21):
-                    // the counts, the fingerprint and any refusal note
-                    // live in the log and the history entry, not in
-                    // the user's face.
-                    return (true, "刷入成功，请重启手机", nil)
+                    // The completion itself is the restart offer
+                    // (Grace, 2026-11-21): the root view asks「刷入
+                    // 成功，需要重启生效，是否重启？」while the page's
+                    // status line just says it succeeded. Counts and
+                    // the fingerprint live in the log and the history
+                    // entry, not in the user's face.
+                    restoreRestartOffer = true
+                    return (true, "刷入成功", nil)
                 } catch {
                     pendingRestoreDryRun = nil
                     let message = error.localizedDescription

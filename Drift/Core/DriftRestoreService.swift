@@ -115,7 +115,7 @@ enum RestoreSetupPayload {
                 let original = try Data(contentsOf: originalURL, options: .mappedIfSafe)
                 guard let dictionary = try PropertyListSerialization.propertyList(
                     from: original, options: [], format: nil) as? [String: Any] else {
-                    throw DriftRestoreError("\(definition.name) 原文件不是字典格式，这次干跑停下，没有准备写回。")
+                    throw DriftRestoreError("\(definition.name) 原文件不是字典格式，这次刷入停下，什么都没写。")
                 }
                 values = dictionary
                 log("restore setup merge: retained original \(definition.name) (\(original.count) bytes, \(values.count) keys)")
@@ -272,7 +272,7 @@ struct RestoreFingerprint {
             guard let url = RestoreSetupPayload.payloadURL(
                 domain: definition.domain, relativePath: definition.relativePath,
                 deviceDir: deviceDir) else {
-                throw DriftRestoreError("恢复包缺少单独核验文件：\(definition.name)，这次写回准备取消。请重新干跑。")
+                throw DriftRestoreError("恢复包缺少单独核验文件：\(definition.name)，这次写回取消。请重新刷入。")
             }
             let bytes = ((try? fm.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.int64Value ?? 0
             let hash = try sha256Hex(of: url)
@@ -465,10 +465,10 @@ final class DriftRestoreService {
             deviceDir: AppPaths.deviceDir(backupRoot: AppPaths.posterBoardFetchRoot,
                                           udid: udid))
         guard pullAudit.keptMissing == 0 else {
-            throw DriftRestoreError("拉取对账没过：清单里应留的壁纸或设置文件有 \(pullAudit.keptMissing) 个没拉到，这次干跑停下，没有准备写回。详情看日志。")
+            throw DriftRestoreError("拉取对账没过：清单里应留的壁纸或设置文件有 \(pullAudit.keptMissing) 个没拉到，这次刷入停下，什么都没写。详情看日志。")
         }
         guard pullAudit.sizeMismatches.isEmpty else {
-            throw DriftRestoreError("拉取对账没过：有 \(pullAudit.sizeMismatches.count) 个应留文件的大小和清单对不上，这次干跑停下，没有准备写回。详情看日志。")
+            throw DriftRestoreError("拉取对账没过：有 \(pullAudit.sizeMismatches.count) 个应留文件的大小和清单对不上，这次刷入停下，什么都没写。详情看日志。")
         }
         // The store's size is judged by the store's own evidence
         // (build 7, 2026-11-21): the build-6 run stopped here on the
@@ -485,7 +485,7 @@ final class DriftRestoreService {
         // exactly like any other mismatch.
         if !pullAudit.storeMismatches.isEmpty {
             guard Self.storeSelfConsistent(databaseURL: fetched.database) else {
-                throw DriftRestoreError("拉取对账没过：壁纸库的大小和清单对不上，合并后的库自检也没通过，这次干跑停下，没有准备写回。详情看日志。")
+                throw DriftRestoreError("拉取对账没过：壁纸库的大小和清单对不上，合并后的库自检也没通过，这次刷入停下，什么都没写。详情看日志。")
             }
             AppLog.write("restore dry run: store size mismatch cleared by the store checks "
                 + "(consolidated copy self-consistent; full integrity check passed during the fetch)")
@@ -501,14 +501,14 @@ final class DriftRestoreService {
             workingDirectory: PosterBoard.workDirectory,
             log: log)
         guard !payloads.isEmpty else {
-            throw DriftRestoreError("这次没有可刷入的内容，干跑停下。")
+            throw DriftRestoreError("这次没有可刷入的内容，刷入停下。")
         }
         let fetchDeviceDir = AppPaths.deviceDir(
             backupRoot: AppPaths.posterBoardFetchRoot, udid: udid)
         let setupPayloads = try RestoreSetupPayload.makePayloads(from: fetchDeviceDir, log: log)
         let restorePayloads = payloads + setupPayloads
         guard setupPayloads.count == RestoreSetupPayload.definitions.count else {
-            throw DriftRestoreError("两份设置文件没有全部准备好，这次干跑停下。")
+            throw DriftRestoreError("两份设置文件没有全部准备好，这次刷入停下。")
         }
         AppLog.write("restore dry run: compiled \(payloads.count) PosterBoard payload(s) "
             + "and merged \(setupPayloads.count) setup plist(s)")
@@ -560,7 +560,7 @@ final class DriftRestoreService {
         let audit = ManifestStore(deviceDir: deviceDir).auditAgainstDisk()
         AppLog.write(audit)
         guard audit.contains("— consistent") else {
-            throw DriftRestoreError("干跑对账没过：恢复包和清单对不上，这次停下，没有准备写回。详情看日志。")
+            throw DriftRestoreError("对账没过：恢复包和清单对不上，这次停下，什么都没写。详情看日志。")
         }
 
         let fingerprint = try RestoreFingerprint.compute(
@@ -983,7 +983,7 @@ final class DriftRestoreService {
 
     func writeBack(onProgress: (@Sendable (Double) -> Void)? = nil) async throws {
         guard let prepared else {
-            throw DriftRestoreError("还没有干跑结果，请先干跑一次。")
+            throw DriftRestoreError("还没有准备好的恢复包。")
         }
         // Whatever happens from here, this dry run is spent: a package
         // is written back at most once, and a failed or refused
@@ -995,10 +995,10 @@ final class DriftRestoreService {
             deviceDir: prepared.deviceDir, udid: prepared.udid,
             version: prepared.report.version, build: prepared.report.buildVersion)
         guard now.digest == prepared.fingerprint.digest else {
-            throw DriftRestoreError("干跑之后文件变了（指纹对不上），这次写回取消。请重新干跑一次。")
+            throw DriftRestoreError("准备好之后文件变了（指纹对不上），这次写回取消。请重新刷入一次。")
         }
         guard now.setupFileFingerprints == prepared.fingerprint.setupFileFingerprints else {
-            throw DriftRestoreError("两份设置文件的独立指纹与干跑不一致，这次写回取消。请重新干跑一次。")
+            throw DriftRestoreError("两份设置文件的独立指纹与准备时不一致，这次写回取消。请重新刷入一次。")
         }
         AppLog.write("restore write-back: fingerprint re-verified (\(now.short))")
         for file in now.setupFileFingerprints {
@@ -1034,10 +1034,10 @@ final class DriftRestoreService {
             // still on. There is no programmatic check for it anywhere
             // in the stack, so the device's 211 is where it surfaces.
             if raw.contains("211") {
-                throw DriftRestoreError("设备拒绝了恢复，多半是「查找」还开着。先到设置里关掉「查找我的 iPhone」，再重新干跑一次。")
+                throw DriftRestoreError("设备拒绝了恢复，多半是「查找」还开着。先到设置里关掉「查找我的 iPhone」，再重新刷入一次。")
             }
             if raw.contains("205") {
-                throw DriftRestoreError("设备说恢复包对不上（205），写回没有完成。请重新干跑一次；还是这样，就把日志包发出来排查。")
+                throw DriftRestoreError("设备说恢复包对不上（205），写回没有完成。请重新刷入一次；还是这样，就把日志包发出来排查。")
             }
             throw DriftRestoreError("写回失败：\(raw)")
         }
