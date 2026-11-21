@@ -871,7 +871,7 @@ struct DriftHomeView: View {
     private var writeBackSheetMessage: String {
         var message = "写回会把干跑备好的恢复包真正恢复到这台设备上。可能出现的情况：\n· 顺利：重启后新壁纸生效，其他数据不动。\n· 设备拒绝或中途失败：壁纸不变，一般不会丢数据，但要重新干跑。\n· 最坏：恢复异常导致设备恢复出厂、数据全丢（2026-11-10 发生过一次）。\n只在已经用电脑完整备份过的备用机上写回，主力机不要写回。"
         if session.pendingRestoreDryRun?.deviceRefusal != nil {
-            message += "\n· 补一句：这次拉取收尾时设备曾以 205 拒绝登记这份提取（原因还没有证实），是凭本机逐项核对放行的；写回时设备可能同样拒绝。"
+            message += "\n· 补一句：这次拉取收尾时设备曾以 205 没有接受这份提取（原因还没有证实），是凭本机逐项核对放行的；写回时设备可能同样拒绝。"
         }
         return message
     }
@@ -900,7 +900,7 @@ struct DriftHomeView: View {
                 // device refused to register it, and the person about
                 // to confirm a write-back must see that fact here —
                 // not discover it in a log afterwards.
-                Text("注意：这次拉取收尾时，设备拒绝把这份提取登记成备份（\(refusal)）。拉到的文件已逐项验过；设备为什么拒绝还在研究中、没有证实。写回是另一次恢复，设备会另外裁决。")
+                Text("注意：这次拉取收尾时，设备没有接受这份提取（\(refusal)）。拉到的文件已逐项验过；设备为什么没接受还在研究中、没有证实。写回是另一次恢复，设备会另外裁决。")
                     .font(.subheadline).foregroundStyle(.orange)
             }
             HStack(spacing: 10) {

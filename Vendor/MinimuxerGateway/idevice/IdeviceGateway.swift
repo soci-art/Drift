@@ -3445,6 +3445,15 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
                 throw IdeviceGatewayError(.serviceError, reason: "The device refused the backup: "
                     + refusal)
             }
+            // The accepted final response is evidence too (build 7,
+            // 2026-11-21): three pulls were refused at close and the
+            // fourth was accepted, and until now only refusals were
+            // kept. With both sides on record, a future refusal can be
+            // diffed against an acceptance from the same device
+            // instead of theorised about.
+            if !dict.isEmpty {
+                delegateLog?("device final response (accepted): \(dict)")
+            }
             verboseLog("[IdeviceGateway] syncBackupBackup() mobilebackup2_backup completed")
             return dict
         }

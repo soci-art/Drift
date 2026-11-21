@@ -129,8 +129,8 @@ struct RestoreDryRunReport {
             + "（共 \(ByteCountFormatter.string(fromByteCount: packageBytes, countStyle: .file))），"
             + "指纹 \(fingerprintShort)。确认无误后，点主页干跑卡上的「确认写回」才会真正恢复。"
         if let deviceRefusal {
-            line += " 另外说明：这次拉取收尾时，设备拒绝把这份提取登记成备份"
-                + "（\(deviceRefusal)）。拉到的文件已在本机逐项验过；设备为什么拒绝"
+            line += " 另外说明：这次拉取收尾时，设备没有接受这份提取"
+                + "（\(deviceRefusal)）。拉到的文件已在本机逐项验过；设备为什么没接受"
                 + "还在研究中、没有证实。写回是另一次恢复，设备会另外裁决。"
         }
         return line
@@ -259,6 +259,26 @@ final class DriftRestoreService {
         }
         guard pullAudit.sizeMismatches.isEmpty else {
             throw DriftRestoreError("拉取对账没过：有 \(pullAudit.sizeMismatches.count) 个应留文件的大小和清单对不上，这次干跑停下，没有准备写回。详情看日志。")
+        }
+        // The store's size is judged by the store's own evidence
+        // (build 7, 2026-11-21): the build-6 run stopped here on the
+        // store database alone — manifest 65,536 B, disk 57,344 B —
+        // a live database the device kept writing through an
+        // eight-minute pull, which then passed its full integrity
+        // check. A store mismatch clears ONLY on the consolidated
+        // copy's self-consistency, and reaching this line at all
+        // means the fetch's consolidation and integrity check
+        // already passed (the fetch throws otherwise) — the coupling
+        // both consulted models insisted on: no validation, no
+        // clearance. The header evidence is in the audit log either
+        // way; a store whose own arithmetic fails stops the run
+        // exactly like any other mismatch.
+        if !pullAudit.storeMismatches.isEmpty {
+            guard Self.storeSelfConsistent(databaseURL: fetched.database) else {
+                throw DriftRestoreError("拉取对账没过：壁纸库的大小和清单对不上，合并后的库自检也没通过，这次干跑停下，没有准备写回。详情看日志。")
+            }
+            AppLog.write("restore dry run: store size mismatch cleared by the store checks "
+                + "(consolidated copy self-consistent; full integrity check passed during the fetch)")
         }
         let payloads = try await PosterBoard.compile(
             selection: selection,
@@ -515,6 +535,17 @@ final class DriftRestoreService {
         var keptMissing = 0
         var sizeMismatches: [String] = []
         var keptChecked = 0
+        /// Store-file size mismatches, kept apart from the generic
+        /// ones (build 7, 2026-11-21): the store is a LIVE database
+        /// the device keeps writing during the pull, so its manifest
+        /// size is stale by construction and a mismatch there is not
+        /// the same evidence as a mismatch on a static file. The dry
+        /// run judges these by the store's own checks instead (see
+        /// the gate in `dryRun`); the static-exemption shape both
+        /// consulted models rejected is NOT what this is — a store
+        /// mismatch still stops the run unless the store evidence
+        /// clears it.
+        var storeMismatches: [String] = []
     }
 
     @discardableResult
@@ -548,6 +579,10 @@ final class DriftRestoreService {
         var present = 0
         var suspects: [String] = []
         var drainedByDomain: [String: Int] = [:]
+        // The store trio's landing spots, for the header evidence
+        // below (build 7, 2026-11-21).
+        var storeMain: (url: URL, diskSize: Int)?
+        var storeWalDiskSize: Int?
         while sqlite3_step(stmt) == SQLITE_ROW {
             guard let cID = sqlite3_column_text(stmt, 0),
                   let cDomain = sqlite3_column_text(stmt, 1),
@@ -570,14 +605,27 @@ final class DriftRestoreService {
                 // size is the check this format offers.
                 if isKeptRow {
                     outcome.keptChecked += 1
+                    let diskSize = ((try? fm.attributesOfItem(atPath: payloadURL.path))?[.size] as? NSNumber)?.intValue ?? -1
+                    if PosterBoardSnapshot.isStoreFile(relativePath: relativePath) {
+                        if relativePath.hasSuffix(".sqlite3") {
+                            storeMain = (payloadURL, diskSize)
+                        } else if relativePath.hasSuffix(".sqlite3-wal") {
+                            storeWalDiskSize = diskSize
+                        }
+                    }
                     if let blobBytes = sqlite3_column_blob(stmt, 3) {
                         let blob = Data(bytes: blobBytes,
                                         count: Int(sqlite3_column_bytes(stmt, 3)))
-                        if let declared = mbFileBlobSize(blob) {
-                            let diskSize = ((try? fm.attributesOfItem(atPath: payloadURL.path))?[.size] as? NSNumber)?.intValue ?? -1
-                            if diskSize != declared {
-                                outcome.sizeMismatches.append(
-                                    "\(relativePath) (manifest \(declared) B, disk \(diskSize) B)")
+                        if let declared = mbFileBlobSize(blob), diskSize != declared {
+                            let entry = "\(relativePath) (manifest \(declared) B, disk \(diskSize) B)"
+                            // Store files are judged apart (build 7,
+                            // 2026-11-21): a live database's manifest
+                            // size is stale by construction; every
+                            // other kept file keeps the hard gate.
+                            if PosterBoardSnapshot.isStoreFile(relativePath: relativePath) {
+                                outcome.storeMismatches.append(entry)
+                            } else {
+                                outcome.sizeMismatches.append(entry)
                             }
                         }
                     }
@@ -609,12 +657,101 @@ final class DriftRestoreService {
         for name in outcome.sizeMismatches.prefix(20) {
             AppLog.write("pull audit: size mismatch — \(name)")
         }
+        if !outcome.storeMismatches.isEmpty {
+            for name in outcome.storeMismatches {
+                AppLog.write("pull audit: store size mismatch — \(name)")
+            }
+            logStoreHeaderEvidence(storeMain: storeMain, walDiskSize: storeWalDiskSize)
+        }
         if !drainedByDomain.isEmpty {
             let top = drainedByDomain.sorted { $0.value > $1.value }.prefix(5)
                 .map { "\($0.key): \($0.value)" }.joined(separator: ", ")
             AppLog.write("pull audit: drained rows by domain (top): \(top)")
         }
         return outcome
+    }
+
+    /// The pulled store's own header, as evidence (build 7,
+    /// 2026-11-21). When the store's size disagrees with the
+    /// manifest, two readings compete: the device shrank or grew its
+    /// own live database coherently mid-pull, or the transfer tore
+    /// the file. The header discriminates: its page count, read with
+    /// the change counter it is valid for, describes the database as
+    /// the device itself last committed it. The WAL's frame
+    /// arithmetic is the cheap torn-tail check (a WAL is a 32-byte
+    /// header plus whole frames of 24 + pageSize bytes; a remainder
+    /// means the tail frame was cut).
+    private static func logStoreHeaderEvidence(storeMain: (url: URL, diskSize: Int)?,
+                                               walDiskSize: Int?) {
+        guard let storeMain else {
+            AppLog.write("pull audit: store header — main database payload not on disk")
+            return
+        }
+        guard let head = try? Data(contentsOf: storeMain.url, options: .mappedIfSafe),
+              head.count >= 100 else {
+            AppLog.write("pull audit: store header — could not read the main database's header")
+            return
+        }
+        func be32(_ offset: Int) -> Int {
+            Int(head[offset]) << 24 | Int(head[offset + 1]) << 16
+                | Int(head[offset + 2]) << 8 | Int(head[offset + 3])
+        }
+        let rawPageSize = Int(head[16]) << 8 | Int(head[17])
+        let pageSize = rawPageSize == 1 ? 65_536 : rawPageSize
+        let changeCounter = be32(24)
+        let headerPages = be32(28)
+        let versionValidFor = be32(92)
+        AppLog.write("pull audit: store header — page size \(pageSize) B, header page count "
+            + "\(headerPages) (\(headerPages * pageSize) B), on disk \(storeMain.diskSize) B; "
+            + "change counter \(changeCounter), version-valid-for \(versionValidFor) "
+            + (changeCounter == versionValidFor
+                ? "(counters match: the header page count describes the current database)"
+                : "(counters differ: pages may still live in the WAL)"))
+        if let walDiskSize {
+            if walDiskSize > 32, pageSize > 0 {
+                let remainder = (walDiskSize - 32) % (24 + pageSize)
+                AppLog.write("pull audit: store WAL — \(walDiskSize) B on disk; frame arithmetic "
+                    + "remainder \(remainder) (0 = whole frames only)")
+            } else {
+                AppLog.write("pull audit: store WAL — \(walDiskSize) B on disk")
+            }
+        }
+    }
+
+    /// The consolidated store's own arithmetic (build 7, 2026-11-21):
+    /// after the fetch folded the WAL into a standalone copy and ran
+    /// a full integrity check over it, its page count × page size
+    /// must equal its file size exactly. That is the consistency a
+    /// live store can be held to; the manifest's enumeration-time
+    /// size is not (the device may legitimately change its own
+    /// database during an eight-minute pull).
+    private static func storeSelfConsistent(databaseURL: URL) -> Bool {
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(databaseURL.path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK,
+              let db else {
+            AppLog.write("pull audit: consolidated store — could not open it for the self-check")
+            sqlite3_close(db)
+            return false
+        }
+        defer { sqlite3_close(db) }
+        func pragma(_ sql: String) -> Int64? {
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK,
+                  let stmt else { return nil }
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            return sqlite3_column_int64(stmt, 0)
+        }
+        guard let pages = pragma("PRAGMA page_count"),
+              let pageSize = pragma("PRAGMA page_size") else {
+            AppLog.write("pull audit: consolidated store — page count/size unreadable")
+            return false
+        }
+        let fileSize = ((try? FileManager.default
+            .attributesOfItem(atPath: databaseURL.path))?[.size] as? NSNumber)?.int64Value ?? -1
+        AppLog.write("pull audit: consolidated store — \(pages) page(s) × \(pageSize) B "
+            + "= \(pages * pageSize) B; on disk \(fileSize) B")
+        return pages * pageSize == fileSize
     }
 
     // MARK: - Write-back
@@ -636,6 +773,18 @@ final class DriftRestoreService {
             throw DriftRestoreError("干跑之后文件变了（指纹对不上），这次写回取消。请重新干跑一次。")
         }
         AppLog.write("restore write-back: fingerprint re-verified (\(now.short))")
+        // The restore options this package goes out with, made
+        // visible (build 7, 2026-11-21): they are fixed by
+        // construction in the gateway call — no reboot, no system
+        // files, settings preserved, backup copied — and
+        // RemoveItemsNotRestored is never passed, so its Rust-side
+        // default (false) holds: the device must never read "not in
+        // this pruned package" as "delete it". Logged on every
+        // write-back so the log shows what was in force, not just
+        // what the code claims.
+        AppLog.write("restore write-back: options — RestoreShouldReboot=false, "
+            + "RestoreSystemFiles=false, RestorePreserveSettings=true, "
+            + "RestoreDontCopyBackup=false, RemoveItemsNotRestored=false")
 
         do {
             _ = try await ChannelRecovery.retry(
