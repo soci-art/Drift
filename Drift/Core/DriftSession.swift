@@ -531,12 +531,11 @@ final class DriftSession: ObservableObject {
                                         packFiles: dryRun.packFiles,
                                         logSliceText: RunLog.shared.recordSnapshot())
                     errorText = nil
-                    var message = "写回完成：共 \(dryRun.packageFileCount) 个文件（干跑指纹 \(dryRun.fingerprintShort)）。"
-                        + "请手动重启手机，重启后新壁纸生效。"
-                    if dryRun.deviceRefusal != nil {
-                        message += "（这次拉取收尾时设备没有接受这份提取；写回是设备另行裁决的，已通过。）"
-                    }
-                    return (true, message, nil)
+                    // Kept to one line at Grace's word (2026-11-21):
+                    // the counts, the fingerprint and any refusal note
+                    // live in the log and the history entry, not in
+                    // the user's face.
+                    return (true, "刷入成功，请重启手机", nil)
                 } catch {
                     pendingRestoreDryRun = nil
                     let message = error.localizedDescription

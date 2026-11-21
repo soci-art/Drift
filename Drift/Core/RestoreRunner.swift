@@ -16,7 +16,8 @@ enum RestoreRunner {
     /// is safe only because of that check — the previous version returned 0
     /// unconditionally, which is how a 55 % restore was reported as a success.
     @discardableResult
-    static func run(backupRoot: URL, sourceIdentifier: String) async throws -> Int32 {
+    static func run(backupRoot: URL, sourceIdentifier: String,
+                    onProgress: (@Sendable (Double) -> Void)? = nil) async throws -> Int32 {
         let minimuxer = Minimuxer.shared()
         AppLog.write("Restoring backup at \(backupRoot.path) (source \(sourceIdentifier)) via mobilebackup2…")
 
@@ -71,6 +72,7 @@ enum RestoreRunner {
                 systemFiles: false,
                 onProgress: { overall in
                     let pct = overall < 0 ? 0 : min(overall, 100)
+                    onProgress?(pct)
                     if let step = progress.step(pct) {
                         AppLog.write("restore progress: \(step)%")
                     }

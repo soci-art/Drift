@@ -355,11 +355,12 @@ final class DriftEngine {
             // the second, engine-side refusal with the same notice.
             // The gate opens only on the Alpha research line
             // (DriftRestoreGate), and there a run in this mode is the
-            // DRY RUN only — pull, compile, prune, inject, audit,
-            // fingerprint — never a write-back. The write-back is the
-            // separate confirmed action `writeBackRestore` below, and
-            // the dry run's report rides back on `lastRestoreDryRun`,
-            // mirroring `lastPosterBoardEffect`.
+            // one-flow apply: this dry run (pull, compile, prune,
+            // inject, audit, fingerprint) first, then the session
+            // funnels straight into `writeBackRestore` below within
+            // the same run (Grace, 2026-11-21). The dry run's report
+            // rides back on `lastRestoreDryRun`, mirroring
+            // `lastPosterBoardEffect`.
             guard DriftRestoreGate.isEnabled else {
                 throw DriftError("暂不可用")
             }
@@ -373,7 +374,13 @@ final class DriftEngine {
                 selection: selection,
                 deviceVersion: modeVersion,
                 buildVersion: modeIdentity.buildVersion,
-                onProgress: { overall in self.logProgress("restore dry run", overall) })
+                // One real bar for the whole one-flow run (Grace,
+                // 2026-11-21): the dry run's device-reported pull
+                // progress fills the first half, the write-back's
+                // device-reported restore progress the second half
+                // (see writeBackRestore). The local prepare between
+                // them reports nothing, so the bar holds at halfway.
+                onProgress: { overall in self.logProgress("restore dry run", overall / 2) })
             restoreService = service
             lastRestoreDryRun = report
             log("Restore dry run complete: \(report.payloadCount) payload(s) compiled, "
@@ -394,7 +401,11 @@ final class DriftEngine {
             throw DriftError("还没有干跑结果，请先干跑一次。")
         }
         do {
-            try await restoreService.writeBack()
+            // Second half of the run's one real bar (see the dry
+            // run's mapping in applyWallpapersRun): the restore's own
+            // device-reported progress, 50→100.
+            try await restoreService.writeBack(
+                onProgress: { overall in self.logProgress("restore write-back", 50 + overall / 2) })
         } catch {
             self.restoreService = nil
             lastRestoreDryRun = nil

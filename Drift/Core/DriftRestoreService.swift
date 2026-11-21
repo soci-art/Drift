@@ -981,7 +981,7 @@ final class DriftRestoreService {
 
     // MARK: - Write-back
 
-    func writeBack() async throws {
+    func writeBack(onProgress: (@Sendable (Double) -> Void)? = nil) async throws {
         guard let prepared else {
             throw DriftRestoreError("还没有干跑结果，请先干跑一次。")
         }
@@ -1025,7 +1025,8 @@ final class DriftRestoreService {
                 diagnostics: { await Diagnostics.report() }
             ) {
                 try await RestoreRunner.run(backupRoot: prepared.backupRoot,
-                                            sourceIdentifier: prepared.udid)
+                                            sourceIdentifier: prepared.udid,
+                                            onProgress: onProgress)
             }
         } catch {
             let raw = error.localizedDescription
