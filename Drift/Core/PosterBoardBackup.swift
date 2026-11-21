@@ -1,4 +1,5 @@
 import Foundation
+import IdeviceGateway
 import Minimuxer
 import SQLite3
 
@@ -35,6 +36,13 @@ enum PosterBoardBackup {
         let preservedPayloads: [TweakPayload]
         /// Native backup graph, including empty directories and original MBFile metadata.
         let snapshotDirectory: URL?
+        /// The device's refusal when it declined to register this pull at
+        /// close under clean accounting (`BackupCloseRefusal`), else nil.
+        /// The pull's product stands on the host-side checks; this field
+        /// exists so the refusal is carried into the dry-run report and
+        /// the write-back confirmation instead of being silently dropped
+        /// at the one place it was observed (build 6, 2026-11-21).
+        let deviceRefusal: String?
     }
 
     /// Where a fetched database is kept between runs.
@@ -108,6 +116,15 @@ enum PosterBoardBackup {
         // and nobody was polling it. It also means the phase now has a
         // heartbeat: an upload that goes quiet is reported with the device's
         // liveness instead of looking like a slow one.
+        //
+        // A `BackupCloseRefusal` is caught here, not propagated (build 6,
+        // 2026-11-21): the gateway only produces it when the session's
+        // accounting is fully reconciled, and what the fetch was FOR —
+        // the pulled tree — is complete on disk in that case. The refusal
+        // is recorded on the result and judged by the dry run's own
+        // gates; every other error still fails the fetch outright.
+        var deviceRefusal: String? = nil
+        do {
         try await StallGuard.run(
             label: "PosterBoard fetch",
             idleSeconds: 120,
@@ -143,10 +160,16 @@ enum PosterBoardBackup {
                 let path = PosterBoardSnapshot.relativePath(deviceName: deviceName, container: container)
                 let isStore = path.map { PosterBoardSnapshot.isStoreFile(relativePath: $0) } ?? false
                 let keepContainerFile = path != nil && (preserveExisting || isStore)
-                let keep = ProtectiveBackup.isMetadataFile(fileName) || keepContainerFile
+                let isMetadata = ProtectiveBackup.isMetadataFile(fileName)
+                let keep = isMetadata || keepContainerFile
                 counter.note(deviceName: deviceName, fileName: fileName,
                              keep: keep, isStore: isStore,
                              relativePath: keepContainerFile ? path : nil)
+                if keep && !keepContainerFile {
+                    counter.noteKeptOutsidePayload(deviceName: deviceName,
+                                                   fileName: fileName,
+                                                   metadata: isMetadata)
+                }
                 return keep
             },
             onProgress: { overall in
@@ -158,7 +181,25 @@ enum PosterBoardBackup {
             delegateLog: { line in AppLog.write(line) }
             )
         }
+        } catch let refusal as IdeviceGateway.BackupCloseRefusal {
+            deviceRefusal = refusal.refusalText
+            log("PosterBoard: the device refused to register this pull at close "
+                + "(\(refusal.refusalText)). The pulled tree is on disk and the "
+                + "session's accounting reconciled; whether the dry run may "
+                + "proceed is decided by its own checks, and the refusal stays "
+                + "on the report — it is not a success.")
+        }
         log("PosterBoard: backup done — \(counter.summary)")
+        // Name what the filter kept that is NOT a container payload
+        // (build 6, 2026-11-21): three field runs left two small deltas
+        // explained only by category — kept consultations vs manifest
+        // payload rows, and offered vs moved. These transfers (backup
+        // metadata, anything the container mapping could not place) are
+        // the candidates; naming them closes the accounting by identity
+        // instead of by arithmetic.
+        if let outside = counter.outsideSummary() {
+            log("PosterBoard: kept transfers outside the container payloads — \(outside)")
+        }
         // Logged on every run, not only on failure: the first few offers are the
         // only record of which string this device's stream carries the path in.
         log("PosterBoard: offers — \(counter.sample())")
@@ -254,7 +295,8 @@ enum PosterBoardBackup {
                       structureVersion: extracted.structureVersion,
                       locatedBy: extracted.locatedBy,
                       preservedPayloads: preserveExisting ? captured : [],
-                      snapshotDirectory: preserveExisting && ios27 ? deviceDir : nil)
+                      snapshotDirectory: preserveExisting && ios27 ? deviceDir : nil,
+                      deviceRefusal: deviceRefusal)
     }
 
     // MARK: - Extraction
@@ -419,6 +461,33 @@ private final class Counter: @unchecked Sendable {
     private var _posterBoardOffers: [String] = []
     private var _files: [String: String] = [:]
     private var _lastActivity = Date()
+    /// Kept transfers that are not container payloads, by device name —
+    /// backup metadata in one bucket, anything the container mapping
+    /// could not place in the other (build 6, 2026-11-21; see the log
+    /// line at the end of `fetch`).
+    private var _keptMetadata: [String] = []
+    private var _keptUnmapped: [String] = []
+
+    func noteKeptOutsidePayload(deviceName: String, fileName: String, metadata: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        let name = deviceName.isEmpty ? fileName : deviceName
+        if metadata {
+            if !_keptMetadata.contains(name), _keptMetadata.count < 20 { _keptMetadata.append(name) }
+        } else if !_keptUnmapped.contains(name), _keptUnmapped.count < 20 {
+            _keptUnmapped.append(name)
+        }
+    }
+
+    func outsideSummary() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !_keptMetadata.isEmpty || !_keptUnmapped.isEmpty else { return nil }
+        var parts: [String] = []
+        if !_keptMetadata.isEmpty { parts.append("metadata: " + _keptMetadata.joined(separator: ", ")) }
+        if !_keptUnmapped.isEmpty { parts.append("unmapped: " + _keptUnmapped.joined(separator: ", ")) }
+        return parts.joined(separator: " | ")
+    }
 
     func note(deviceName: String, fileName: String, keep: Bool, isStore: Bool, relativePath: String?) {
         lock.lock()

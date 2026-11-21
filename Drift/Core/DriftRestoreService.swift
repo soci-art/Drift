@@ -117,12 +117,23 @@ struct RestoreDryRunReport {
     let fingerprintShort: String
     let packNames: [String]
     let packFiles: [String]
+    /// The device's refusal when the pull closed with one under clean
+    /// accounting (build 6, 2026-11-21), else nil. Carried on the report
+    /// so it is stated wherever the dry run is summarised — never
+    /// converted into a silent success.
+    let deviceRefusal: String?
 
     /// The one-paragraph result the funnel returns for a dry run.
     var summaryLine: String {
-        "干跑完成，还没有写回。拉取和对账都过了：将写回 \(packageFileCount) 个文件"
+        var line = "干跑完成，还没有写回。拉取和对账都过了：将写回 \(packageFileCount) 个文件"
             + "（共 \(ByteCountFormatter.string(fromByteCount: packageBytes, countStyle: .file))），"
             + "指纹 \(fingerprintShort)。确认无误后，点主页干跑卡上的「确认写回」才会真正恢复。"
+        if let deviceRefusal {
+            line += " 另外说明：这次拉取收尾时，设备拒绝把这份提取登记成备份"
+                + "（\(deviceRefusal)）。拉到的文件已在本机逐项验过；设备为什么拒绝"
+                + "还在研究中、没有证实。写回是另一次恢复，设备会另外裁决。"
+        }
+        return line
     }
 }
 
@@ -233,9 +244,22 @@ final class DriftRestoreService {
                                               udid: udid))
             throw error
         }
-        await Self.logPullShortfallAudit(
+        // The audit is a gate from build 6 (2026-11-21), not just a
+        // report: a pull may now close with the device refusing to
+        // register it (205 under clean accounting — see the gateway),
+        // and what lets the dry run proceed anyway is exactly this
+        // host-side evidence. A kept row missing, or a kept payload
+        // whose size disagrees with the manifest, voids that evidence
+        // and the dry run stops here, refusal or no refusal.
+        let pullAudit = await Self.logPullShortfallAudit(
             deviceDir: AppPaths.deviceDir(backupRoot: AppPaths.posterBoardFetchRoot,
                                           udid: udid))
+        guard pullAudit.keptMissing == 0 else {
+            throw DriftRestoreError("拉取对账没过：清单里应留的壁纸文件有 \(pullAudit.keptMissing) 个没拉到，这次干跑停下，没有准备写回。详情看日志。")
+        }
+        guard pullAudit.sizeMismatches.isEmpty else {
+            throw DriftRestoreError("拉取对账没过：有 \(pullAudit.sizeMismatches.count) 个应留文件的大小和清单对不上，这次干跑停下，没有准备写回。详情看日志。")
+        }
         let payloads = try await PosterBoard.compile(
             selection: selection,
             templates: [],
@@ -308,10 +332,16 @@ final class DriftRestoreService {
             auditLine: audit,
             fingerprintShort: fingerprint.short,
             packNames: selection.tendies.map(\.name),
-            packFiles: selection.tendies.map { $0.url.lastPathComponent })
+            packFiles: selection.tendies.map { $0.url.lastPathComponent },
+            deviceRefusal: fetched.deviceRefusal)
         prepared = Prepared(report: report, fingerprint: fingerprint,
                             backupRoot: backupRoot, deviceDir: deviceDir,
                             udid: udid)
+        if let refusal = fetched.deviceRefusal {
+            AppLog.write("restore dry run: the pull closed with a device refusal "
+                + "(\(refusal)); the host-side checks passed — the refusal is "
+                + "recorded on the report, not treated as success")
+        }
         AppLog.write("restore dry run prepared: \(fingerprint.payloadFileCount) payload file(s), "
             + "fingerprint \(fingerprint.short) — awaiting the separate write-back confirmation")
         return report
@@ -477,10 +507,22 @@ final class DriftRestoreService {
     /// working, not a shortfall. Read-write open, like the snapshot's
     /// own reader: a WAL-mode manifest needs its bookkeeping
     /// initialised before it can be read at all.
-    private static func logPullShortfallAudit(deviceDir: URL) async {
+    /// What the pull audit found, as values (build 6, 2026-11-21): the
+    /// dry run gates on these, because a pull that closed with a device
+    /// refusal is only allowed to proceed on host-side evidence — and
+    /// evidence means these numbers, not just log lines.
+    struct PullAuditOutcome {
+        var keptMissing = 0
+        var sizeMismatches: [String] = []
+        var keptChecked = 0
+    }
+
+    @discardableResult
+    private static func logPullShortfallAudit(deviceDir: URL) async -> PullAuditOutcome {
+        var outcome = PullAuditOutcome()
         guard pulledManifestParses(deviceDir: deviceDir) else {
             AppLog.write("pull audit: no readable pulled Manifest.db — nothing to reconcile")
-            return
+            return outcome
         }
         let container = (try? await Minimuxer.shared()
             .appFactoryEntry(bundleId: PosterBoard.bundleID))?["Container"] as? String ?? ""
@@ -492,14 +534,14 @@ final class DriftRestoreService {
             AppLog.write("pull audit: could not open the pulled Manifest.db — "
                 + sqliteStage(db, auditOpenRC))
             sqlite3_close(db)
-            return
+            return outcome
         }
         defer { sqlite3_close(db) }
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT fileID, domain, relativePath FROM Files WHERE flags = 1",
+        guard sqlite3_prepare_v2(db, "SELECT fileID, domain, relativePath, file FROM Files WHERE flags = 1",
                                  -1, &stmt, nil) == SQLITE_OK, let stmt else {
             AppLog.write("pull audit: could not read the pulled manifest's file rows")
-            return
+            return outcome
         }
         defer { sqlite3_finalize(stmt) }
         let fm = FileManager.default
@@ -513,18 +555,42 @@ final class DriftRestoreService {
             let fileID = String(cString: cID)
             let domain = String(cString: cDomain)
             let relativePath = String(cString: cPath)
-            let landed = fm.fileExists(
-                atPath: deviceDir.appendingPathComponent("\(fileID.prefix(2))/\(fileID)").path)
-                || fm.fileExists(atPath: deviceDir.appendingPathComponent(fileID).path)
-            if landed { present += 1; continue }
-            if domain == PosterBoard.domain,
-               PosterBoardSnapshot.relativePath(deviceName: domain + "/" + relativePath,
-                                                container: container) != nil {
+            let isKeptRow = domain == PosterBoard.domain
+                && PosterBoardSnapshot.relativePath(deviceName: domain + "/" + relativePath,
+                                                    container: container) != nil
+            let payloadURL = [deviceDir.appendingPathComponent("\(fileID.prefix(2))/\(fileID)"),
+                              deviceDir.appendingPathComponent(fileID)]
+                .first { fm.fileExists(atPath: $0.path) }
+            if let payloadURL {
+                present += 1
+                // Content check, not just existence (build 6,
+                // 2026-11-21): a kept payload that arrived truncated
+                // passes an existence audit and fails the device later.
+                // AppDomain blobs carry no digest, so the declared
+                // size is the check this format offers.
+                if isKeptRow {
+                    outcome.keptChecked += 1
+                    if let blobBytes = sqlite3_column_blob(stmt, 3) {
+                        let blob = Data(bytes: blobBytes,
+                                        count: Int(sqlite3_column_bytes(stmt, 3)))
+                        if let declared = mbFileBlobSize(blob) {
+                            let diskSize = ((try? fm.attributesOfItem(atPath: payloadURL.path))?[.size] as? NSNumber)?.intValue ?? -1
+                            if diskSize != declared {
+                                outcome.sizeMismatches.append(
+                                    "\(relativePath) (manifest \(declared) B, disk \(diskSize) B)")
+                            }
+                        }
+                    }
+                }
+                continue
+            }
+            if isKeptRow {
                 suspects.append(relativePath)
             } else {
                 drainedByDomain[domain, default: 0] += 1
             }
         }
+        outcome.keptMissing = suspects.count
         let drainedTotal = drainedByDomain.values.reduce(0, +)
         AppLog.write("pull audit: \(present) file payload(s) on disk; "
             + "\(suspects.count) PosterBoard file row(s) the pull meant to keep "
@@ -538,11 +604,17 @@ final class DriftRestoreService {
         if suspects.count > 50 {
             AppLog.write("pull audit: … and \(suspects.count - 50) more missing kept file(s)")
         }
+        AppLog.write("pull audit: kept payload sizes: \(outcome.keptChecked) checked, "
+            + "\(outcome.sizeMismatches.count) mismatch(es)")
+        for name in outcome.sizeMismatches.prefix(20) {
+            AppLog.write("pull audit: size mismatch — \(name)")
+        }
         if !drainedByDomain.isEmpty {
             let top = drainedByDomain.sorted { $0.value > $1.value }.prefix(5)
                 .map { "\($0.key): \($0.value)" }.joined(separator: ", ")
             AppLog.write("pull audit: drained rows by domain (top): \(top)")
         }
+        return outcome
     }
 
     // MARK: - Write-back

@@ -427,8 +427,21 @@ public final class MobileBackup2BackupContext: @unchecked Sendable {
     /// file still sitting in staging that the registry does not know
     /// about (a kept payload the commit never moved, say), and one
     /// reconciliation line. It changes nothing on disk.
-    func reportUnmovedPlaceholders() {
-        guard let root = backupRoot else { return }
+    ///
+    /// The counts are also returned (build 6, 2026-11-21): the gateway's
+    /// close classification needs them as values, not just as log lines —
+    /// a device refusal at close may only be reclassified when every one
+    /// of them is zero.
+    struct UnmovedPlaceholders {
+        var stillStaged = 0
+        var forgotten = 0
+        var unknown = 0
+    }
+
+    @discardableResult
+    func reportUnmovedPlaceholders() -> UnmovedPlaceholders {
+        var outcome = UnmovedPlaceholders()
+        guard let root = backupRoot else { return outcome }
         var base = root
         while base.hasSuffix("/"), base.count > 1 { base.removeLast() }
         placeholderLock.lock()
@@ -508,6 +521,25 @@ public final class MobileBackup2BackupContext: @unchecked Sendable {
             + "\(preexistingTotal) pre-existing, \(leftover + preexistingLeftover) still "
             + "staged, \(forgotten.count) forgotten move(s), \(unknown.count) unknown "
             + "file(s) left in staging")
+        outcome.stillStaged = leftover + preexistingLeftover
+        outcome.forgotten = forgotten.count
+        outcome.unknown = unknown.count
+        return outcome
+    }
+
+    /// The close-of-session accounting as values (build 6, 2026-11-21):
+    /// the numbers `commitSummary()` prints, for the gateway's refusal
+    /// classification. A refusal at close is only ever reclassified when
+    /// all three are zero — a session that skipped, failed or errored on
+    /// anything earlier may owe its refusal to that, and stays a failure.
+    func closeAccounting() -> (skipped: Int, failed: Int, delegateErrors: Int) {
+        commitLock.lock()
+        let skipped = skippedCount, failed = failedCount
+        commitLock.unlock()
+        errorLock.lock()
+        let errors = delegateErrors
+        errorLock.unlock()
+        return (skipped, failed, errors)
     }
 
     /// One line for the app log: what the filter did to the device's view of the

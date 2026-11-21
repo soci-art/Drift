@@ -3382,7 +3382,7 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
             // stand-ins are cleaned up: afterwards the evidence is gone
             // by design (build 5, 2026-11-21 — the 205 shortfall of
             // exactly four files, two runs running, had no names).
-            ctx.reportUnmovedPlaceholders()
+            let unmoved = ctx.reportUnmovedPlaceholders()
             // The 0-byte stand-ins for filtered payloads must outlive the whole
             // exchange: the device validates the backup tree against the
             // Manifest.db it uploaded before it answers, and a payload that is
@@ -3413,6 +3413,35 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
             // failure that is entirely about free space on the backup volume.
             if let refusal = Self.backupRefusal(dict, backupRoot: backupRoot) {
                 delegateLog?("device refused the backup: \(refusal)")
+                // The refusal dictionary in full (build 6, 2026-11-21):
+                // until now only the parsed code and description were
+                // kept, and the rest of what the device said — the most
+                // direct evidence of what 205 actually means — was
+                // thrown away at exactly this point.
+                delegateLog?("device final response: \(dict)")
+                // The one reclassification this gateway will ever make
+                // (build 6, 2026-11-21 — the 205 direction confirmed
+                // with GPT and Claude after the build-5 field log): a
+                // 205 that arrives as the session's FINAL response, in a
+                // session with no earlier error of any kind and a fully
+                // reconciled commit, is thrown as a distinct type so the
+                // caller can judge the pulled tree on host-side evidence
+                // instead of treating the refusal as a failed pull. It
+                // is NOT success: the type carries the refusal verbatim,
+                // and every other refusal — any other code, any earlier
+                // blemish, any unreconciled placeholder — throws exactly
+                // as before. A transport failure never reaches this
+                // branch at all (it throws above), so a disconnect or
+                // timeout can never be reclassified.
+                let code = (dict["ErrorCode"] as? NSNumber)?.intValue ?? 0
+                let accounting = ctx.closeAccounting()
+                if code == 205,
+                   accounting.skipped == 0, accounting.failed == 0,
+                   accounting.delegateErrors == 0,
+                   unmoved.stillStaged == 0, unmoved.forgotten == 0,
+                   unmoved.unknown == 0 {
+                    throw BackupCloseRefusal(code: code, refusalText: refusal)
+                }
                 throw IdeviceGatewayError(.serviceError, reason: "The device refused the backup: "
                     + refusal)
             }
@@ -3420,6 +3449,28 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
             return dict
         }
     }
+
+/// A device refusal delivered as the backup session's final response,
+/// under accounting clean enough that the caller may judge the pulled
+/// tree on host-side evidence (build 6, 2026-11-21 — see the
+/// classification site in `syncBackupBackup`).
+///
+/// This is a refusal, not a success: it carries the device's code and
+/// text verbatim, and any flow that receives it must keep saying so —
+/// in its report and in anything it later asks the user to confirm.
+/// Flows that do not opt into the distinction (the protective pull)
+/// surface it through `errorDescription`, whose wording matches the
+/// generic refusal error it replaces.
+public struct BackupCloseRefusal: Error, LocalizedError {
+    public let code: Int
+    /// The refusal as `backupRefusal` phrases it, e.g.
+    /// `MBErrorDomain/205 — Manifest references files not in backup`.
+    public let refusalText: String
+
+    public var errorDescription: String? {
+        "The device refused the backup: \(refusalText)"
+    }
+}
 
     /// The device's own reason for refusing a `Backup`, or `nil` when it accepted.
     ///

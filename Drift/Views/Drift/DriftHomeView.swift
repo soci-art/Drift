@@ -257,7 +257,7 @@ struct DriftHomeView: View {
                               actions: [DriftSheetAction("知道了") {}])
             .driftActionSheet(isPresented: $confirmRestoreWriteBack,
                               title: "确认写回？",
-                              message: "写回会把干跑备好的恢复包真正恢复到这台设备上。可能出现的情况：\n· 顺利：重启后新壁纸生效，其他数据不动。\n· 设备拒绝或中途失败：壁纸不变，一般不会丢数据，但要重新干跑。\n· 最坏：恢复异常导致设备恢复出厂、数据全丢（2026-11-10 发生过一次）。\n只在已经用电脑完整备份过的备用机上写回，主力机不要写回。",
+                              message: writeBackSheetMessage,
                               actions: [DriftSheetAction("确认写回") { runRestoreWriteBack() }])
             .onAppear {
                 AppLog.op("打开壁纸页")
@@ -864,6 +864,18 @@ struct DriftHomeView: View {
         }
     }
 
+    /// The write-back danger sheet's wording. When the pending dry
+    /// run's pull closed with a device refusal (build 6, 2026-11-21),
+    /// that fact is one of the listed outcomes — the confirmation must
+    /// not present the pull as an unqualified success.
+    private var writeBackSheetMessage: String {
+        var message = "写回会把干跑备好的恢复包真正恢复到这台设备上。可能出现的情况：\n· 顺利：重启后新壁纸生效，其他数据不动。\n· 设备拒绝或中途失败：壁纸不变，一般不会丢数据，但要重新干跑。\n· 最坏：恢复异常导致设备恢复出厂、数据全丢（2026-11-10 发生过一次）。\n只在已经用电脑完整备份过的备用机上写回，主力机不要写回。"
+        if session.pendingRestoreDryRun?.deviceRefusal != nil {
+            message += "\n· 补一句：这次拉取收尾时设备曾以 205 拒绝登记这份提取（原因还没有证实），是凭本机逐项核对放行的；写回时设备可能同样拒绝。"
+        }
+        return message
+    }
+
     /// The restore dry-run card (Alpha line): what the dry run
     /// prepared, and the two ways out — write it back (behind the
     /// danger confirmation) or throw it away. Shown only while a dry
@@ -882,6 +894,15 @@ struct DriftHomeView: View {
             }
             Text("已拉取设备清单并对账通过：将写回 \(report.packageFileCount) 个文件（共 \(ByteCountFormatter.string(fromByteCount: report.packageBytes, countStyle: .file))），其中这次新做的 \(report.payloadCount) 个。干跑指纹 \(report.fingerprintShort)，写回前会再验一次，对不上就取消。")
                 .font(.subheadline).foregroundStyle(.secondary)
+            if let refusal = report.deviceRefusal {
+                // Stated, not softened (build 6, 2026-11-21): the pull
+                // was allowed to proceed on host-side checks after the
+                // device refused to register it, and the person about
+                // to confirm a write-back must see that fact here —
+                // not discover it in a log afterwards.
+                Text("注意：这次拉取收尾时，设备拒绝把这份提取登记成备份（\(refusal)）。拉到的文件已逐项验过；设备为什么拒绝还在研究中、没有证实。写回是另一次恢复，设备会另外裁决。")
+                    .font(.subheadline).foregroundStyle(.orange)
+            }
             HStack(spacing: 10) {
                 Button {
                     confirmRestoreWriteBack = true

@@ -293,6 +293,17 @@ func mbFileBlobInode(_ data: Data) -> Int? {
     (mbFileBlobObject(data)?["InodeNumber"] as? NSNumber)?.intValue
 }
 
+/// The `Size` a row's blob declares, or nil when it carries none.
+///
+/// The pull audit's content check (build 6, 2026-11-21): a kept payload
+/// that merely *exists* at its manifest path could still be truncated,
+/// and existence-only reconciliation cannot tell. AppDomain rows carry
+/// no `Digest` (see the domain survey above), so the declared size is
+/// the strongest content evidence this format offers for them.
+func mbFileBlobSize(_ data: Data) -> Int? {
+    (mbFileBlobObject(data)?["Size"] as? NSNumber)?.intValue
+}
+
 /// How a blob's values are *encoded*, not just which keys they are under.
 ///
 /// `mbFileBlobKeys` compares key sets, and that is not enough on its own — which
