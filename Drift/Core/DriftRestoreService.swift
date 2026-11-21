@@ -464,8 +464,29 @@ final class DriftRestoreService {
         let pullAudit = await Self.logPullShortfallAudit(
             deviceDir: AppPaths.deviceDir(backupRoot: AppPaths.posterBoardFetchRoot,
                                           udid: udid))
-        guard pullAudit.keptMissing == 0 else {
-            throw DriftRestoreError("拉取对账没过：清单里应留的壁纸或设置文件有 \(pullAudit.keptMissing) 个没拉到，这次刷入停下，什么都没写。详情看日志。")
+        // A setup absence clears only on a cleanly accepted pull
+        // (build 5, 2026-11-21 — the condition both consulted models
+        // converged on, adjudicated): the exemption must separate
+        // "the device never sent this staging file" from "something
+        // in the transfer went wrong", and the session-level evidence
+        // that separates them is how the pull closed. Accepted
+        // (deviceRefusal == nil — and reaching here means the fetch's
+        // own commit accounting already verified inside the fetch):
+        // the injector creates the files, as designed. Refused at
+        // close: an absence counts exactly like any other
+        // kept-missing row and the run stops — a refused session does
+        // not get to explain away a gap.
+        let setupAbsenceBlocks = pullAudit.setupPayloadsAbsent > 0
+            && fetched.deviceRefusal != nil
+        if pullAudit.setupPayloadsAbsent > 0 && !setupAbsenceBlocks {
+            AppLog.write("restore dry run: \(pullAudit.setupPayloadsAbsent) setup payload(s) "
+                + "absent from an accepted pull; the injector creates them "
+                + "from the fixed keys")
+        }
+        guard pullAudit.keptMissing == 0, !setupAbsenceBlocks else {
+            let missing = pullAudit.keptMissing
+                + (setupAbsenceBlocks ? pullAudit.setupPayloadsAbsent : 0)
+            throw DriftRestoreError("拉取对账没过：清单里应留的壁纸或设置文件有 \(missing) 个没拉到，这次刷入停下，什么都没写。详情看日志。")
         }
         guard pullAudit.sizeMismatches.isEmpty else {
             throw DriftRestoreError("拉取对账没过：有 \(pullAudit.sizeMismatches.count) 个应留文件的大小和清单对不上，这次刷入停下，什么都没写。详情看日志。")
@@ -758,15 +779,17 @@ final class DriftRestoreService {
     struct PullAuditOutcome {
         var keptMissing = 0
         /// Setup payloads (build 3 field finding, 2026-11-21) whose
-        /// manifest row arrived without a payload — counted apart,
-        /// NOT as kept-missing: the cloud-configuration file is a
-        /// staging plist the system consumes during the setup flow,
-        /// so a later pull can legitimately carry its row with no
-        /// content behind it. The injector's setup merge already
-        /// creates these two files from their fixed keys when the
-        /// pulled payload is absent; the audit gate was the only
-        /// thing still treating that absence as fatal. Every other
-        /// kept row keeps the hard gate.
+        /// manifest row arrived without a payload — counted apart
+        /// from kept-missing, because whether an absence may pass is
+        /// a gate decision, not an audit fact: the cloud-configuration
+        /// file is a staging plist the system consumes during the
+        /// setup flow, so a later pull can legitimately carry its row
+        /// with no content behind it, and the injector's setup merge
+        /// creates these files from their fixed keys when absent.
+        /// The gate (build 5, 2026-11-21) lets an absence through
+        /// ONLY when the pull closed cleanly accepted; on a refused
+        /// pull an absence counts like any other kept-missing row.
+        /// Every other kept row keeps the hard gate unconditionally.
         var setupPayloadsAbsent = 0
         var sizeMismatches: [String] = []
         var keptChecked = 0
@@ -873,6 +896,23 @@ final class DriftRestoreService {
                 if RestoreSetupPayload.isTarget(domain: domain,
                                                 relativePath: relativePath) {
                     setupAbsent.append(relativePath)
+                    // Diagnostic detail for every absence (build 5,
+                    // 2026-11-21, the consultation's logging ask): the
+                    // declared size is evidence about WHY the payload
+                    // is missing — a consumed staging file tends to
+                    // declare little or nothing, a transfer loss would
+                    // declare the real size — recorded, never a gate.
+                    var declaredNote = "size undeclared"
+                    if let blobBytes = sqlite3_column_blob(stmt, 3) {
+                        let blob = Data(bytes: blobBytes,
+                                        count: Int(sqlite3_column_bytes(stmt, 3)))
+                        if let declared = mbFileBlobSize(blob) {
+                            declaredNote = "manifest declares \(declared) B"
+                        }
+                    }
+                    AppLog.write("pull audit: setup file payload absent — "
+                        + "\(relativePath) (fileID \(fileID), \(declaredNote)); "
+                        + "the dry-run gate decides whether it may be created")
                 } else {
                     suspects.append(relativePath)
                 }
@@ -882,10 +922,6 @@ final class DriftRestoreService {
         }
         outcome.keptMissing = suspects.count
         outcome.setupPayloadsAbsent = setupAbsent.count
-        for name in setupAbsent {
-            AppLog.write("pull audit: setup file payload absent — \(name); "
-                + "the injector creates it from the fixed keys")
-        }
         let drainedTotal = drainedByDomain.values.reduce(0, +)
         AppLog.write("pull audit: \(present) file payload(s) on disk; "
             + "\(suspects.count) PosterBoard file row(s) the pull meant to keep "
