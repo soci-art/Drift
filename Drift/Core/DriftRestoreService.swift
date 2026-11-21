@@ -15,187 +15,16 @@ struct DriftRestoreError: Error, LocalizedError {
     var errorDescription: String? { message }
 }
 
-/// The two small Setup Assistant state files carried alongside PosterBoard
-/// by the Alpha restore route. The domains are deliberately exact: this
-/// helper never searches or edits the configuration-profile database/library.
-struct RestoreFileFingerprint: Equatable {
-    let name: String
-    let domain: String
-    let relativePath: String
-    let byteCount: Int64
-    let sha256: String
-
-    var displayLine: String {
-        "\(name) · \(ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file)) · SHA-256 \(sha256)"
-    }
-}
-
-enum RestoreSetupPayload {
-    struct Definition {
-        let name: String
-        let domain: String
-        let relativePath: String
-    }
-
-    static let cloudName = "CloudConfigurationDetails.plist"
-    static let purpleBuddyName = "com.apple.purplebuddy.plist"
-
-    static let definitions: [Definition] = [
-        Definition(
-            name: cloudName,
-            domain: "SysSharedContainerDomain-systemgroup.com.apple.configurationprofiles",
-            relativePath: "Library/ConfigurationProfiles/CloudConfigurationDetails.plist"),
-        Definition(
-            name: purpleBuddyName,
-            domain: "ManagedPreferencesDomain",
-            relativePath: "mobile/com.apple.purplebuddy.plist"),
-    ]
-
-    /// iOS 27 Setup Assistant pane identifiers. Keep this list literal and
-    /// ordered so a dry run always builds the same payload from the same input.
-    static let skipSetupPanes: [String] = [
-        "Location", "Restore", "SIMSetup", "Android", "AppleID", "IntendedUser",
-        "TOS", "Siri", "ScreenTime", "Diagnostics", "SoftwareUpdate", "Passcode",
-        "Biometric", "Payment", "Zoom", "DisplayTone",
-        "MessagingActivationUsingPhoneNumber", "HomeButtonSensitivity",
-        "CloudStorage", "ScreenSaver", "TapToSetup", "Keyboard", "PreferredLanguage",
-        "SpokenLanguage", "WatchMigration", "OnBoarding", "TVProviderSignIn",
-        "TVHomeScreenSync", "Privacy", "TVRoom", "iMessageAndFaceTime", "AppStore",
-        "Safety", "Multitasking", "ActionButton", "TermsOfAddress",
-        "AccessibilityAppearance", "Welcome", "Appearance", "RestoreCompleted",
-        "UpdateCompleted", "WiFi", "Display", "Tone", "LanguageAndLocale", "TouchID",
-        "TrueToneDisplay", "FileVault", "iCloudStorage", "iCloudDiagnostics",
-        "Registration", "DeviceToDeviceMigration", "UnlockWithWatch", "Accessibility",
-        "All", "ExpressLanguage", "Language", "N/A", "Region", "Avatar",
-        "DeviceProtection", "Key", "LockdownMode", "Wallpaper", "PrivacySubtitle",
-        "SecuritySubtitle", "DataSubtitle", "AppleIDSubtitle", "AppearanceSubtitle",
-        "PreferredLang", "OnboardingSubtitle", "AppleTVSubtitle", "Intelligence",
-        "WebContentFiltering", "CameraButton", "AdditionalPrivacySettings",
-        "EnableLockdownMode", "OSShowcase", "SafetyAndHandling", "Tips",
-        "AgeBasedSafetySettings",
-    ]
-
-    static func isTarget(domain: String, relativePath: String) -> Bool {
-        definitions.contains {
-            $0.domain == domain && $0.relativePath == relativePath
-        }
-    }
-
-    /// Match the device-name form passed by mobilebackup2, allowing only
-    /// harmless leading container prefixes before the exact domain/path pair.
-    static func matchesDeviceName(_ deviceName: String) -> Bool {
-        let value = deviceName.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        return definitions.contains { definition in
-            let expected = definition.domain + "/" + definition.relativePath
-            return value == expected || value.hasSuffix("/" + expected)
-        }
-    }
-
-    static func payloadURL(domain: String, relativePath: String, deviceDir: URL) -> URL? {
-        let fileID = ManifestStore.fileID(domain: domain, relativePath: relativePath)
-        let candidates = [
-            deviceDir.appendingPathComponent(String(fileID.prefix(2)), isDirectory: true)
-                .appendingPathComponent(fileID),
-            deviceDir.appendingPathComponent(fileID),
-        ]
-        return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
-    }
-
-    /// Merge only the requested Setup Assistant values into the device's
-    /// original dictionaries. An absent file starts from an empty dictionary;
-    /// a present but unreadable/non-dictionary plist fails closed rather than
-    /// being replaced. Existing organization/supervision keys are preserved.
-    static func makePayloads(from deviceDir: URL,
-                             log: @escaping @Sendable (String) -> Void) throws -> [TweakPayload] {
-        try definitions.map { definition in
-            var values: [String: Any] = [:]
-            if let originalURL = payloadURL(domain: definition.domain,
-                                            relativePath: definition.relativePath,
-                                            deviceDir: deviceDir) {
-                let original = try Data(contentsOf: originalURL, options: .mappedIfSafe)
-                guard let dictionary = try PropertyListSerialization.propertyList(
-                    from: original, options: [], format: nil) as? [String: Any] else {
-                    throw DriftRestoreError("\(definition.name) 原文件不是字典格式，这次刷入停下，什么都没写。")
-                }
-                values = dictionary
-                log("restore setup merge: retained original \(definition.name) (\(original.count) bytes, \(values.count) keys)")
-            } else {
-                log("restore setup merge: \(definition.name) absent on device; creating the default dictionary")
-            }
-
-            if definition.name == cloudName {
-                values["SkipSetup"] = skipSetupPanes
-                values["AllowPairing"] = true
-                values["ConfigurationWasApplied"] = true
-                values["CloudConfigurationUIComplete"] = true
-                values["ConfigurationSource"] = 0
-                values["PostSetupProfileWasInstalled"] = true
-                // Do not rewrite IsSupervised, OrganizationMagic or
-                // SupervisorHostCertificates from an existing device plist.
-                log("restore setup merge: \(cloudName) set \(skipSetupPanes.count) skip panes and completion flags; supervision/organization values left unchanged")
-            } else {
-                values["SetupDone"] = true
-                values["SetupFinishedAllSteps"] = true
-                values["UserChoseLanguage"] = true
-                log("restore setup merge: \(purpleBuddyName) set the three completion flags; other keys retained")
-            }
-
-            let contents = try PropertyListSerialization.data(
-                fromPropertyList: values, format: .binary, options: 0)
-            return TweakPayload(domain: definition.domain,
-                                relativePath: definition.relativePath,
-                                contents: contents)
-        }
-    }
-
-    /// Copy the original native MBFile blobs for these exact settings files.
-    /// The injector patches only the content length/digest after merging, keeping
-    /// the device-authored owner, protection class and extended attributes.
-    static func fileMetadata(from deviceDir: URL) throws -> [String: Data] {
-        let manifestURL = deviceDir.appendingPathComponent("Manifest.db")
-        var db: OpaquePointer?
-        let openRC = sqlite3_open_v2(manifestURL.path, &db, SQLITE_OPEN_READWRITE, nil)
-        guard openRC == SQLITE_OK, let db else {
-            let detail = db.map { String(cString: sqlite3_errmsg($0)) } ?? "no SQLite handle"
-            sqlite3_close(db)
-            throw DriftRestoreError("读取设置文件原始清单失败：\(detail)")
-        }
-        defer { sqlite3_close(db) }
-
-        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-        var result: [String: Data] = [:]
-        for definition in definitions {
-            var stmt: OpaquePointer?
-            let prepareRC = sqlite3_prepare_v2(
-                db,
-                "SELECT file FROM Files WHERE domain = ? AND relativePath = ? AND flags = 1",
-                -1, &stmt, nil)
-            guard prepareRC == SQLITE_OK, let stmt else {
-                let detail = String(cString: sqlite3_errmsg(db))
-                sqlite3_finalize(stmt)
-                throw DriftRestoreError("读取 \(definition.name) 的原始清单记录失败：\(detail)")
-            }
-            definition.domain.withCString { sqlite3_bind_text(stmt, 1, $0, -1, transient) }
-            definition.relativePath.withCString { sqlite3_bind_text(stmt, 2, $0, -1, transient) }
-            let stepRC = sqlite3_step(stmt)
-            if stepRC == SQLITE_ROW {
-                guard let bytes = sqlite3_column_blob(stmt, 0) else {
-                    sqlite3_finalize(stmt)
-                    throw DriftRestoreError("\(definition.name) 的原始清单记录没有文件元数据。")
-                }
-                let count = Int(sqlite3_column_bytes(stmt, 0))
-                result[definition.domain + "/" + definition.relativePath] = Data(bytes: bytes, count: count)
-            }
-            let detail = String(cString: sqlite3_errmsg(db))
-            sqlite3_finalize(stmt)
-            guard stepRC == SQLITE_ROW || stepRC == SQLITE_DONE else {
-                throw DriftRestoreError("读取 \(definition.name) 的原始清单记录失败：\(detail)")
-            }
-        }
-        return result
-    }
-
-}
+/// The two Setup Assistant files (cloud configuration + purplebuddy)
+/// are NOT carried any more (build 6, 2026-11-22, Grace's call after
+/// two field rounds): the pull never delivers their contents, so every
+/// round created them from fixed keys — and the created files did not
+/// skip the setup flow, while the write-backs carrying them disturbed
+/// the device's trust state (the earlier write-backs without them did
+/// not). The restore scope is the PosterBoard domain alone again. The
+/// follow-up route fetches the device's real cloud configuration over
+/// the pairing channel (MCInstall) and merges into that instead of
+/// creating a file from nothing.
 
 /// SHA-256 fingerprint over one prepared restore package (plan,
 /// 2026-11-19: the dry-run hash binding).
@@ -211,10 +40,6 @@ struct RestoreFingerprint {
     /// Payload files only (the metadata files are bound separately).
     let payloadFileCount: Int
     let payloadBytes: Int64
-    /// The two Setup Assistant files, listed and hashed independently as well
-    /// as being covered by the package-wide digest.
-    let setupFileFingerprints: [RestoreFileFingerprint]
-
     var short: String { String(digest.prefix(8)) }
 
     /// Backup-level files at the device directory's root. They are
@@ -268,27 +93,11 @@ struct RestoreFingerprint {
             lines.append("file \(payload.path) \(payload.hash)")
         }
 
-        let setupFiles = try RestoreSetupPayload.definitions.map { definition -> RestoreFileFingerprint in
-            guard let url = RestoreSetupPayload.payloadURL(
-                domain: definition.domain, relativePath: definition.relativePath,
-                deviceDir: deviceDir) else {
-                throw DriftRestoreError("恢复包缺少单独核验文件：\(definition.name)，这次写回取消。请重新刷入。")
-            }
-            let bytes = ((try? fm.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.int64Value ?? 0
-            let hash = try sha256Hex(of: url)
-            lines.append("setup-file \(definition.domain)/\(definition.relativePath) \(bytes) \(hash)")
-            return RestoreFileFingerprint(name: definition.name,
-                                          domain: definition.domain,
-                                          relativePath: definition.relativePath,
-                                          byteCount: bytes,
-                                          sha256: hash)
-        }
         let digest = SHA256.hash(data: Data(lines.joined(separator: "\n").utf8))
             .map { String(format: "%02x", $0) }.joined()
         return RestoreFingerprint(digest: digest,
                                   payloadFileCount: payloads.count,
-                                  payloadBytes: payloads.reduce(0) { $0 + $1.bytes },
-                                  setupFileFingerprints: setupFiles)
+                                  payloadBytes: payloads.reduce(0) { $0 + $1.bytes })
     }
 
     /// Chunked SHA-256 of one file (payloads can be tens of MB).
@@ -319,8 +128,6 @@ struct RestoreDryRunReport {
     let fingerprintShort: String
     let packNames: [String]
     let packFiles: [String]
-    /// Separate path/size/SHA-256 evidence for the two additional setup plists.
-    let setupFileFingerprints: [RestoreFileFingerprint]
     /// The device's refusal when the pull closed with one under clean
     /// accounting (build 6, 2026-11-21), else nil. Carried on the report
     /// so it is stated wherever the dry run is summarised — never
@@ -336,8 +143,6 @@ struct RestoreDryRunReport {
         var line = "干跑完成，拉取和对账都过了：共 \(packageFileCount) 个文件"
             + "（共 \(ByteCountFormatter.string(fromByteCount: packageBytes, countStyle: .file))），"
             + "指纹 \(fingerprintShort)，随即写回。"
-        line += " 两份设置文件单独核验："
-            + setupFileFingerprints.map { $0.displayLine }.joined(separator: "；") + "。"
         if let deviceRefusal {
             line += " 另外说明：这次拉取收尾时，设备没有接受这份提取"
                 + "（\(deviceRefusal)）。拉到的文件已在本机逐项验过；设备为什么没接受"
@@ -464,29 +269,8 @@ final class DriftRestoreService {
         let pullAudit = await Self.logPullShortfallAudit(
             deviceDir: AppPaths.deviceDir(backupRoot: AppPaths.posterBoardFetchRoot,
                                           udid: udid))
-        // A setup absence clears only on a cleanly accepted pull
-        // (build 5, 2026-11-21 — the condition both consulted models
-        // converged on, adjudicated): the exemption must separate
-        // "the device never sent this staging file" from "something
-        // in the transfer went wrong", and the session-level evidence
-        // that separates them is how the pull closed. Accepted
-        // (deviceRefusal == nil — and reaching here means the fetch's
-        // own commit accounting already verified inside the fetch):
-        // the injector creates the files, as designed. Refused at
-        // close: an absence counts exactly like any other
-        // kept-missing row and the run stops — a refused session does
-        // not get to explain away a gap.
-        let setupAbsenceBlocks = pullAudit.setupPayloadsAbsent > 0
-            && fetched.deviceRefusal != nil
-        if pullAudit.setupPayloadsAbsent > 0 && !setupAbsenceBlocks {
-            AppLog.write("restore dry run: \(pullAudit.setupPayloadsAbsent) setup payload(s) "
-                + "absent from an accepted pull; the injector creates them "
-                + "from the fixed keys")
-        }
-        guard pullAudit.keptMissing == 0, !setupAbsenceBlocks else {
-            let missing = pullAudit.keptMissing
-                + (setupAbsenceBlocks ? pullAudit.setupPayloadsAbsent : 0)
-            throw DriftRestoreError("拉取对账没过：清单里应留的壁纸或设置文件有 \(missing) 个没拉到，这次刷入停下，什么都没写。详情看日志。")
+        guard pullAudit.keptMissing == 0 else {
+            throw DriftRestoreError("拉取对账没过：清单里应留的壁纸文件有 \(pullAudit.keptMissing) 个没拉到，这次刷入停下，什么都没写。详情看日志。")
         }
         guard pullAudit.sizeMismatches.isEmpty else {
             throw DriftRestoreError("拉取对账没过：有 \(pullAudit.sizeMismatches.count) 个应留文件的大小和清单对不上，这次刷入停下，什么都没写。详情看日志。")
@@ -524,15 +308,7 @@ final class DriftRestoreService {
         guard !payloads.isEmpty else {
             throw DriftRestoreError("这次没有可刷入的内容，刷入停下。")
         }
-        let fetchDeviceDir = AppPaths.deviceDir(
-            backupRoot: AppPaths.posterBoardFetchRoot, udid: udid)
-        let setupPayloads = try RestoreSetupPayload.makePayloads(from: fetchDeviceDir, log: log)
-        let restorePayloads = payloads + setupPayloads
-        guard setupPayloads.count == RestoreSetupPayload.definitions.count else {
-            throw DriftRestoreError("两份设置文件没有全部准备好，这次刷入停下。")
-        }
-        AppLog.write("restore dry run: compiled \(payloads.count) PosterBoard payload(s) "
-            + "and merged \(setupPayloads.count) setup plist(s)")
+        AppLog.write("restore dry run: compiled \(payloads.count) PosterBoard payload(s)")
 
         // Post-pull encryption verdict (see the preflight note above),
         // read off the manifest the fetch pull just brought back.
@@ -555,9 +331,6 @@ final class DriftRestoreService {
         // no PosterBoard payloads, so the domain's file rows drop at
         // prune time and are re-imported from the fetch snapshot by
         // the merge, exactly as when the base came from its own pull.
-        let setupFileMetadata = try RestoreSetupPayload.fileMetadata(from: fetchDeviceDir)
-        AppLog.write("restore setup merge: found native manifest metadata for "
-            + "(setupFileMetadata.count) existing setup file(s)")
         let backupRoot = AppPaths.fullBackupRoot(udid: udid)
         try Self.deriveRestoreBase(
             backupRoot: backupRoot, udid: udid,
@@ -565,14 +338,12 @@ final class DriftRestoreService {
                                      udid: udid))
 
         // Prune the restore base, merge the PosterBoard snapshot's native
-        // rows for its delivering set, then inject the wallpaper delta and the
-        // two exact Setup Assistant plists. No profile-library path is included.
+        // rows for its delivering set, then inject the wallpaper delta.
         try await BackupInjector.pruneAndInject(
             backupRoot: backupRoot,
             udid: udid,
-            tweakPayloads: restorePayloads,
+            tweakPayloads: payloads,
             posterBoardSnapshot: fetched.snapshotDirectory,
-            additionalFileMetadata: setupFileMetadata,
             prune: true)
 
         // The audit is a gate, not a report: an inconsistent package is
@@ -597,7 +368,6 @@ final class DriftRestoreService {
             fingerprintShort: fingerprint.short,
             packNames: selection.tendies.map(\.name),
             packFiles: selection.tendies.map { $0.url.lastPathComponent },
-            setupFileFingerprints: fingerprint.setupFileFingerprints,
             deviceRefusal: fetched.deviceRefusal)
         prepared = Prepared(report: report, fingerprint: fingerprint,
                             backupRoot: backupRoot, deviceDir: deviceDir,
@@ -778,19 +548,6 @@ final class DriftRestoreService {
     /// evidence means these numbers, not just log lines.
     struct PullAuditOutcome {
         var keptMissing = 0
-        /// Setup payloads (build 3 field finding, 2026-11-21) whose
-        /// manifest row arrived without a payload — counted apart
-        /// from kept-missing, because whether an absence may pass is
-        /// a gate decision, not an audit fact: the cloud-configuration
-        /// file is a staging plist the system consumes during the
-        /// setup flow, so a later pull can legitimately carry its row
-        /// with no content behind it, and the injector's setup merge
-        /// creates these files from their fixed keys when absent.
-        /// The gate (build 5, 2026-11-21) lets an absence through
-        /// ONLY when the pull closed cleanly accepted; on a refused
-        /// pull an absence counts like any other kept-missing row.
-        /// Every other kept row keeps the hard gate unconditionally.
-        var setupPayloadsAbsent = 0
         var sizeMismatches: [String] = []
         var keptChecked = 0
         /// Store-file size mismatches, kept apart from the generic
@@ -836,7 +593,6 @@ final class DriftRestoreService {
         let fm = FileManager.default
         var present = 0
         var suspects: [String] = []
-        var setupAbsent: [String] = []
         var drainedByDomain: [String: Int] = [:]
         // The store trio's landing spots, for the header evidence
         // below (build 7, 2026-11-21).
@@ -852,7 +608,6 @@ final class DriftRestoreService {
             let isKeptRow = (domain == PosterBoard.domain
                 && PosterBoardSnapshot.relativePath(deviceName: domain + "/" + relativePath,
                                                     container: container) != nil)
-                || RestoreSetupPayload.isTarget(domain: domain, relativePath: relativePath)
             let payloadURL = [deviceDir.appendingPathComponent("\(fileID.prefix(2))/\(fileID)"),
                               deviceDir.appendingPathComponent(fileID)]
                 .first { fm.fileExists(atPath: $0.path) }
@@ -893,35 +648,12 @@ final class DriftRestoreService {
                 continue
             }
             if isKeptRow {
-                if RestoreSetupPayload.isTarget(domain: domain,
-                                                relativePath: relativePath) {
-                    setupAbsent.append(relativePath)
-                    // Diagnostic detail for every absence (build 5,
-                    // 2026-11-21, the consultation's logging ask): the
-                    // declared size is evidence about WHY the payload
-                    // is missing — a consumed staging file tends to
-                    // declare little or nothing, a transfer loss would
-                    // declare the real size — recorded, never a gate.
-                    var declaredNote = "size undeclared"
-                    if let blobBytes = sqlite3_column_blob(stmt, 3) {
-                        let blob = Data(bytes: blobBytes,
-                                        count: Int(sqlite3_column_bytes(stmt, 3)))
-                        if let declared = mbFileBlobSize(blob) {
-                            declaredNote = "manifest declares \(declared) B"
-                        }
-                    }
-                    AppLog.write("pull audit: setup file payload absent — "
-                        + "\(relativePath) (fileID \(fileID), \(declaredNote)); "
-                        + "the dry-run gate decides whether it may be created")
-                } else {
-                    suspects.append(relativePath)
-                }
+                suspects.append(relativePath)
             } else {
                 drainedByDomain[domain, default: 0] += 1
             }
         }
         outcome.keptMissing = suspects.count
-        outcome.setupPayloadsAbsent = setupAbsent.count
         let drainedTotal = drainedByDomain.values.reduce(0, +)
         AppLog.write("pull audit: \(present) file payload(s) on disk; "
             + "\(suspects.count) PosterBoard file row(s) the pull meant to keep "
@@ -1055,14 +787,7 @@ final class DriftRestoreService {
         guard now.digest == prepared.fingerprint.digest else {
             throw DriftRestoreError("准备好之后文件变了（指纹对不上），这次写回取消。请重新刷入一次。")
         }
-        guard now.setupFileFingerprints == prepared.fingerprint.setupFileFingerprints else {
-            throw DriftRestoreError("两份设置文件的独立指纹与准备时不一致，这次写回取消。请重新刷入一次。")
-        }
         AppLog.write("restore write-back: fingerprint re-verified (\(now.short))")
-        for file in now.setupFileFingerprints {
-            AppLog.write("restore write-back: setup file re-verified — "
-                + "\(file.domain)/\(file.relativePath), \(file.byteCount) bytes, SHA-256 \(file.sha256)")
-        }
         // The restore options this package goes out with, made
         // visible (build 7, 2026-11-21): they are fixed by
         // construction in the gateway call — no reboot, no system

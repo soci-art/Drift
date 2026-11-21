@@ -160,10 +160,8 @@ enum PosterBoardBackup {
                 let path = PosterBoardSnapshot.relativePath(deviceName: deviceName, container: container)
                 let isStore = path.map { PosterBoardSnapshot.isStoreFile(relativePath: $0) } ?? false
                 let keepContainerFile = path != nil && (preserveExisting || isStore)
-                let keepSetupFile = preserveExisting
-                    && RestoreSetupPayload.matchesDeviceName(deviceName)
                 let isMetadata = ProtectiveBackup.isMetadataFile(fileName)
-                let keep = isMetadata || keepContainerFile || keepSetupFile
+                let keep = isMetadata || keepContainerFile
                 counter.note(deviceName: deviceName, fileName: fileName,
                              keep: keep, isStore: isStore,
                              relativePath: keepContainerFile ? path : nil)

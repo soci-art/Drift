@@ -532,8 +532,7 @@ final class DriftSession: ObservableObject {
                 // no parked report and no second confirmation. The
                 // machine gates are unchanged: the audit already gated
                 // the dry run, and the service re-verifies the dry-run
-                // fingerprint (the two setup files' included) inside
-                // the write-back before restoring. The outcome earns
+                // fingerprint inside the write-back before restoring. The outcome earns
                 // the run's single history entry, recorded here.
                 pendingRestoreDryRun = dryRun
                 flashStage = "正在写回，期间不要切后台或锁屏"
