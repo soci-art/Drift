@@ -223,7 +223,7 @@ struct DriftHomeView: View {
                         if AppVersion.channel == .alpha {
                             HStack(spacing: 8) {
                                 Image(systemName: "exclamationmark.triangle.fill")
-                                Text("研究包：恢复刷未验证，勿在主力机使用")
+                                Text("研究包：恢复刷已实机验证，仍有数据风险")
                                     .font(.subheadline.weight(.semibold))
                             }
                             .foregroundStyle(.white)
@@ -888,7 +888,11 @@ struct DriftHomeView: View {
     /// that fact is one of the listed outcomes — the confirmation must
     /// not present the pull as an unqualified success.
     private var writeBackSheetMessage: String {
-        var message = "写回会把干跑备好的恢复包真正恢复到这台设备上。可能出现的情况：\n· 顺利：重启后新壁纸生效，其他数据不动。\n· 设备拒绝或中途失败：壁纸不变，一般不会丢数据，但要重新干跑。\n· 最坏：恢复异常导致设备恢复出厂、数据全丢（2026-11-10 发生过一次）。\n只在已经用电脑完整备份过的备用机上写回，主力机不要写回。"
+        var message = "写回会把干跑备好的恢复包真正恢复到这台设备上。可能出现的情况：\n· 顺利：重启后新壁纸生效，只有干跑报告列出的两份设置 plist 会按说明更新，其余数据不动。\n· 设备拒绝或中途失败：壁纸不变，一般不会丢数据，但要重新干跑。\n· 最坏：恢复异常导致设备恢复出厂、数据全丢（2026-11-10 发生过一次）。\n只在已经用电脑完整备份过的备用机上写回，主力机不要写回。"
+        if let report = session.pendingRestoreDryRun {
+            message += "\n\n额外纳入的两份设置文件（写回前逐项复核）：\n"
+                + report.setupFileFingerprints.map { "· " + $0.displayLine }.joined(separator: "\n")
+        }
         if session.pendingRestoreDryRun?.deviceRefusal != nil {
             message += "\n· 补一句：这次拉取收尾时设备曾以 205 没有接受这份提取（原因还没有证实），是凭本机逐项核对放行的；写回时设备可能同样拒绝。"
         }
@@ -911,8 +915,23 @@ struct DriftHomeView: View {
                                 in: RoundedRectangle(cornerRadius: 4, style: .continuous))
                     .foregroundStyle(.red)
             }
-            Text("已拉取设备清单并对账通过：将写回 \(report.packageFileCount) 个文件（共 \(ByteCountFormatter.string(fromByteCount: report.packageBytes, countStyle: .file))），其中这次新做的 \(report.payloadCount) 个。干跑指纹 \(report.fingerprintShort)，写回前会再验一次，对不上就取消。")
+            Text("已拉取设备清单并对账通过：将写回 \(report.packageFileCount) 个文件（共 \(ByteCountFormatter.string(fromByteCount: report.packageBytes, countStyle: .file))），其中这次新做的壁纸文件 \(report.payloadCount) 个，另含两份设置文件。干跑指纹 \(report.fingerprintShort)，写回前会再验一次，对不上就取消。")
                 .font(.subheadline).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("额外设置文件 · 独立 SHA-256")
+                    .font(.caption.weight(.semibold))
+                ForEach(report.setupFileFingerprints, id: \.relativePath) { file in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(file.name) · \(ByteCountFormatter.string(fromByteCount: file.byteCount, countStyle: .file))")
+                            .font(.caption)
+                        Text(file.sha256)
+                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .textSelection(.enabled)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.top, 2)
             if let refusal = report.deviceRefusal {
                 // Stated, not softened (build 6, 2026-11-21): the pull
                 // was allowed to proceed on host-side checks after the

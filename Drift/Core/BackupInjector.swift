@@ -153,6 +153,7 @@ enum BackupInjector {
         udid: String,
         tweakPayloads: [TweakPayload],
         posterBoardSnapshot: URL? = nil,
+        additionalFileMetadata: [String: Data] = [:],
         prune: Bool = true
     ) async throws {
         let deviceDir = AppPaths.deviceDir(backupRoot: backupRoot, udid: udid)
@@ -201,7 +202,7 @@ enum BackupInjector {
         }
 
         let preservedDirectories: Set<String>
-        let preservedFileMetadata: [String: Data]
+        var preservedFileMetadata: [String: Data] = additionalFileMetadata
         if let posterBoardSnapshot {
             // Only the run's own delta is imported out of the snapshot. The rest
             // of the container stays exactly as the device holds it: those files
@@ -214,11 +215,11 @@ enum BackupInjector {
             let snapshot = try PosterBoardSnapshot.merge(from: posterBoardSnapshot, into: deviceDir,
                                                         delivering: delivering)
             preservedDirectories = snapshot.directories
-            preservedFileMetadata = snapshot.fileMetadata
+            preservedFileMetadata.merge(snapshot.fileMetadata) { _, snapshotValue in snapshotValue }
             AppLog.write("PosterBoard: native manifest restored — \(preservedDirectories.count) "
                 + "directory record(s), \(snapshot.delivered) snapshot file(s) carried; the "
                 + "container's other files are left as the device has them")
-        } else { preservedDirectories = []; preservedFileMetadata = [:] }
+        } else { preservedDirectories = [] }
 
         let tweakStage = StageTimer("inject tweaks")
         AppLog.write("Injecting \(tweakPayloads.count) tweak file(s)…")

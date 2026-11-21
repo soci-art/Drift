@@ -127,7 +127,7 @@ struct ExperimentalFeaturesView: View {
         .driftActionSheet(
             isPresented: $confirmRestoreOn,
             title: "打开恢复刷？",
-            message: "恢复刷还在研究阶段，没有在真机上验证过。打开后刷入也只会先干跑对账，真正写回前还要再确认一次。只在备用机上打开，主力机不要开。",
+            message: "恢复刷已在备用机实机验证，但仍属实验功能，恢复异常仍可能造成数据丢失。打开后先干跑对账，真正写回前还要再确认一次。只在备用机上打开，主力机不要开。",
             actions: [
                 DriftSheetAction("确定") { restoreEnabled = true },
             ])
