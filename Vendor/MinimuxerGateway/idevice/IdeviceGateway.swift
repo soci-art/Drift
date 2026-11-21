@@ -2593,6 +2593,19 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
         }
     }
 
+    private func withMobileConfig<T: Sendable>(
+        _ action: (OpaquePointer) throws -> T
+    ) throws -> T {
+        try performWithEitherService(
+            connectRP: mobile_config_client_connect_rsd,
+            connectLockdown: mobile_config_client_connect,
+            cleanup: mobile_config_client_free,
+            serviceName: "Mobile config"
+        ) { client in
+            try action(client)
+        }
+    }
+
     /// Ask the device to restart itself through the diagnostics
     /// relay. The request is the whole conversation — the device
     /// answers, then reboots — so there is no goodbye afterwards.
@@ -2607,6 +2620,34 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
                     defer { idevice_error_free(err) }
                     throw IdeviceGatewayError(.serviceError, reason: "Diagnostics relay restart failed: \(msg)")
                 }
+            }
+        }
+    }
+
+    /// Fetch the device's live cloud configuration through the
+    /// MCInstall service (Alpha restore line, 2026-11-22): the real
+    /// dictionary the Setup Assistant staging file is built from,
+    /// read over the pairing channel because a backup pull never
+    /// delivers that file's contents. Read-only by construction —
+    /// the vendored client has no setter and no profile surface.
+    ///
+    /// Returns nil when the device answers without a
+    /// CloudConfiguration dictionary (none stored). Throws when the
+    /// service cannot be reached or the exchange fails; callers
+    /// that can proceed without the configuration decide that
+    /// themselves.
+    public func fetchCloudConfiguration() async throws -> [String: Any]? {
+        try await withFFIDispatch {
+            try self.withMobileConfig { client in
+                var node: plist_t? = nil
+                if let err = mobile_config_client_get_cloud_configuration(client, &node) {
+                    let msg = self.getErrorMessage(from: err)
+                    defer { idevice_error_free(err) }
+                    throw IdeviceGatewayError(.serviceError, reason: "Mobile config fetch failed: \(msg)")
+                }
+                guard let node else { return nil }
+                defer { self.safeFreePlist(node) }
+                return self.plistNodeToDictionary(node)
             }
         }
     }

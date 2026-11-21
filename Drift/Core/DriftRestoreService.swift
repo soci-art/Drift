@@ -15,16 +15,213 @@ struct DriftRestoreError: Error, LocalizedError {
     var errorDescription: String? { message }
 }
 
-/// The two Setup Assistant files (cloud configuration + purplebuddy)
-/// are NOT carried any more (build 6, 2026-11-22, Grace's call after
-/// two field rounds): the pull never delivers their contents, so every
-/// round created them from fixed keys — and the created files did not
-/// skip the setup flow, while the write-backs carrying them disturbed
-/// the device's trust state (the earlier write-backs without them did
-/// not). The restore scope is the PosterBoard domain alone again. The
-/// follow-up route fetches the device's real cloud configuration over
-/// the pairing channel (MCInstall) and merges into that instead of
-/// creating a file from nothing.
+/// The two Setup Assistant files are carried again (build 7,
+/// 2026-11-22), but the cloud configuration's content source changed:
+/// builds 1–5 took it from the backup pull, which never delivers it
+/// (a stale manifest row at best, no row at all for purplebuddy), so
+/// every round created the file from fixed keys — and the created
+/// file neither skipped the setup flow nor left the device's trust
+/// state alone (build 6 therefore carried neither file). The cloud
+/// configuration is now fetched live from the device over the pairing
+/// channel (MCInstall — the desktop original's route) and the skip
+/// keys are merged into the device's REAL dictionary; when the fetch
+/// fails or the device stores none, no cloud payload is written at
+/// all — creating one from nothing is not coming back. PurpleBuddy
+/// has no fetch source and the device keeps no copy after setup, so
+/// it is still built from its three completion keys.
+
+/// SHA-256 evidence for one of the Setup Assistant payload files,
+/// kept apart from the package-wide fingerprint so the dry-run report
+/// and the write-back re-verification can name these files on their
+/// own (they are the payloads whose content is decided at dry-run
+/// time from a live fetch, not from anything on disk beforehand).
+struct RestoreFileFingerprint: Equatable {
+    let name: String
+    let domain: String
+    let relativePath: String
+    let byteCount: Int64
+    let sha256: String
+
+    var displayLine: String {
+        "\(name) · \(ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file)) · SHA-256 \(sha256)"
+    }
+}
+
+/// The two Setup Assistant staging files the restore carries so a
+/// flashed device does not walk the full post-restore setup flow.
+enum RestoreSetupPayload {
+    struct Definition {
+        let name: String
+        let domain: String
+        let relativePath: String
+    }
+
+    static let cloudName = "CloudConfigurationDetails.plist"
+    static let purpleBuddyName = "com.apple.purplebuddy.plist"
+
+    static let definitions: [Definition] = [
+        Definition(
+            name: cloudName,
+            domain: "SysSharedContainerDomain-systemgroup.com.apple.configurationprofiles",
+            relativePath: "Library/ConfigurationProfiles/CloudConfigurationDetails.plist"),
+        Definition(
+            name: purpleBuddyName,
+            domain: "ManagedPreferencesDomain",
+            relativePath: "mobile/com.apple.purplebuddy.plist"),
+    ]
+
+    /// iOS 27 Setup Assistant pane identifiers. Keep this list literal and
+    /// ordered so a dry run always builds the same payload from the same input.
+    static let skipSetupPanes: [String] = [
+        "Location", "Restore", "SIMSetup", "Android", "AppleID", "IntendedUser",
+        "TOS", "Siri", "ScreenTime", "Diagnostics", "SoftwareUpdate", "Passcode",
+        "Biometric", "Payment", "Zoom", "DisplayTone",
+        "MessagingActivationUsingPhoneNumber", "HomeButtonSensitivity",
+        "CloudStorage", "ScreenSaver", "TapToSetup", "Keyboard", "PreferredLanguage",
+        "SpokenLanguage", "WatchMigration", "OnBoarding", "TVProviderSignIn",
+        "TVHomeScreenSync", "Privacy", "TVRoom", "iMessageAndFaceTime", "AppStore",
+        "Safety", "Multitasking", "ActionButton", "TermsOfAddress",
+        "AccessibilityAppearance", "Welcome", "Appearance", "RestoreCompleted",
+        "UpdateCompleted", "WiFi", "Display", "Tone", "LanguageAndLocale", "TouchID",
+        "TrueToneDisplay", "FileVault", "iCloudStorage", "iCloudDiagnostics",
+        "Registration", "DeviceToDeviceMigration", "UnlockWithWatch", "Accessibility",
+        "All", "ExpressLanguage", "Language", "N/A", "Region", "Avatar",
+        "DeviceProtection", "Key", "LockdownMode", "Wallpaper", "PrivacySubtitle",
+        "SecuritySubtitle", "DataSubtitle", "AppleIDSubtitle", "AppearanceSubtitle",
+        "PreferredLang", "OnboardingSubtitle", "AppleTVSubtitle", "Intelligence",
+        "WebContentFiltering", "CameraButton", "AdditionalPrivacySettings",
+        "EnableLockdownMode", "OSShowcase", "SafetyAndHandling", "Tips",
+        "AgeBasedSafetySettings",
+    ]
+
+    static func payloadURL(domain: String, relativePath: String, deviceDir: URL) -> URL? {
+        let fileID = ManifestStore.fileID(domain: domain, relativePath: relativePath)
+        let candidates = [
+            deviceDir.appendingPathComponent(String(fileID.prefix(2)), isDirectory: true)
+                .appendingPathComponent(fileID),
+            deviceDir.appendingPathComponent(fileID),
+        ]
+        return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// Build the Setup Assistant payloads (build 7, 2026-11-22).
+    ///
+    /// The cloud configuration is merged into the dictionary fetched
+    /// live from the device over the pairing channel — never into a
+    /// pulled copy (the pull does not deliver this file) and never
+    /// created from fixed keys (builds 1–5 created it every round;
+    /// the created file did not skip setup and disturbed trust).
+    /// No fetched dictionary → no cloud payload at all. Existing
+    /// organization/supervision keys in the fetched dictionary are
+    /// preserved exactly as the device reported them.
+    ///
+    /// PurpleBuddy has no fetch source — the device keeps no copy
+    /// once setup has run — so it is merged over a pulled copy when
+    /// one somehow exists and otherwise created from its three
+    /// completion keys, as before.
+    static func makePayloads(cloudConfig: [String: Any]?,
+                             from deviceDir: URL,
+                             log: @escaping @Sendable (String) -> Void) throws -> [TweakPayload] {
+        var payloads: [TweakPayload] = []
+
+        let cloudDefinition = definitions[0]
+        if var values = cloudConfig {
+            values["SkipSetup"] = skipSetupPanes
+            values["AllowPairing"] = true
+            values["ConfigurationWasApplied"] = true
+            values["CloudConfigurationUIComplete"] = true
+            values["ConfigurationSource"] = 0
+            values["PostSetupProfileWasInstalled"] = true
+            // Do not rewrite IsSupervised, OrganizationMagic or
+            // SupervisorHostCertificates: the fetched dictionary is
+            // the device's own, and those values stay exactly as
+            // the device reported them.
+            let contents = try PropertyListSerialization.data(
+                fromPropertyList: values, format: .binary, options: 0)
+            payloads.append(TweakPayload(domain: cloudDefinition.domain,
+                                         relativePath: cloudDefinition.relativePath,
+                                         contents: contents))
+            log("restore setup merge: \(cloudName) merged into the device's own "
+                + "cloud configuration (\(values.count) keys, "
+                + "\(skipSetupPanes.count) skip panes and completion flags)")
+        } else {
+            log("restore setup merge: no cloud configuration fetched; "
+                + "\(cloudName) is not written this run")
+        }
+
+        let buddyDefinition = definitions[1]
+        var buddyValues: [String: Any] = [:]
+        if let originalURL = payloadURL(domain: buddyDefinition.domain,
+                                        relativePath: buddyDefinition.relativePath,
+                                        deviceDir: deviceDir) {
+            let original = try Data(contentsOf: originalURL, options: .mappedIfSafe)
+            guard let dictionary = try PropertyListSerialization.propertyList(
+                from: original, options: [], format: nil) as? [String: Any] else {
+                throw DriftRestoreError("\(purpleBuddyName) 原文件不是字典格式，这次刷入停下，什么都没写。")
+            }
+            buddyValues = dictionary
+            log("restore setup merge: retained original \(purpleBuddyName) (\(original.count) bytes, \(buddyValues.count) keys)")
+        }
+        buddyValues["SetupDone"] = true
+        buddyValues["SetupFinishedAllSteps"] = true
+        buddyValues["UserChoseLanguage"] = true
+        let buddyContents = try PropertyListSerialization.data(
+            fromPropertyList: buddyValues, format: .binary, options: 0)
+        payloads.append(TweakPayload(domain: buddyDefinition.domain,
+                                     relativePath: buddyDefinition.relativePath,
+                                     contents: buddyContents))
+        log("restore setup merge: \(purpleBuddyName) set the three completion flags")
+
+        return payloads
+    }
+
+    /// Copy the original native MBFile blobs for these exact settings files.
+    /// The injector patches only the content length/digest after merging, keeping
+    /// the device-authored owner, protection class and extended attributes.
+    static func fileMetadata(from deviceDir: URL) throws -> [String: Data] {
+        let manifestURL = deviceDir.appendingPathComponent("Manifest.db")
+        var db: OpaquePointer?
+        let openRC = sqlite3_open_v2(manifestURL.path, &db, SQLITE_OPEN_READWRITE, nil)
+        guard openRC == SQLITE_OK, let db else {
+            let detail = db.map { String(cString: sqlite3_errmsg($0)) } ?? "no SQLite handle"
+            sqlite3_close(db)
+            throw DriftRestoreError("读取设置文件原始清单失败：\(detail)")
+        }
+        defer { sqlite3_close(db) }
+
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        var result: [String: Data] = [:]
+        for definition in definitions {
+            var stmt: OpaquePointer?
+            let prepareRC = sqlite3_prepare_v2(
+                db,
+                "SELECT file FROM Files WHERE domain = ? AND relativePath = ? AND flags = 1",
+                -1, &stmt, nil)
+            guard prepareRC == SQLITE_OK, let stmt else {
+                let detail = String(cString: sqlite3_errmsg(db))
+                sqlite3_finalize(stmt)
+                throw DriftRestoreError("读取 \(definition.name) 的原始清单记录失败：\(detail)")
+            }
+            definition.domain.withCString { sqlite3_bind_text(stmt, 1, $0, -1, transient) }
+            definition.relativePath.withCString { sqlite3_bind_text(stmt, 2, $0, -1, transient) }
+            let stepRC = sqlite3_step(stmt)
+            if stepRC == SQLITE_ROW {
+                guard let bytes = sqlite3_column_blob(stmt, 0) else {
+                    sqlite3_finalize(stmt)
+                    throw DriftRestoreError("\(definition.name) 的原始清单记录没有文件元数据。")
+                }
+                let count = Int(sqlite3_column_bytes(stmt, 0))
+                result[definition.domain + "/" + definition.relativePath] = Data(bytes: bytes, count: count)
+            }
+            let detail = String(cString: sqlite3_errmsg(db))
+            sqlite3_finalize(stmt)
+            guard stepRC == SQLITE_ROW || stepRC == SQLITE_DONE else {
+                throw DriftRestoreError("读取 \(definition.name) 的原始清单记录失败：\(detail)")
+            }
+        }
+        return result
+    }
+}
 
 /// SHA-256 fingerprint over one prepared restore package (plan,
 /// 2026-11-19: the dry-run hash binding).
@@ -40,6 +237,10 @@ struct RestoreFingerprint {
     /// Payload files only (the metadata files are bound separately).
     let payloadFileCount: Int
     let payloadBytes: Int64
+    /// The Setup Assistant files, listed and hashed independently as well
+    /// as being covered by the package-wide digest. The cloud
+    /// configuration appears only when this run fetched and merged it.
+    let setupFileFingerprints: [RestoreFileFingerprint]
     var short: String { String(digest.prefix(8)) }
 
     /// Backup-level files at the device directory's root. They are
@@ -93,11 +294,38 @@ struct RestoreFingerprint {
             lines.append("file \(payload.path) \(payload.hash)")
         }
 
+        var setupFiles: [RestoreFileFingerprint] = []
+        for definition in RestoreSetupPayload.definitions {
+            guard let url = RestoreSetupPayload.payloadURL(
+                domain: definition.domain, relativePath: definition.relativePath,
+                deviceDir: deviceDir) else {
+                // The cloud configuration is legitimately absent when
+                // no live fetch produced a payload this run (build 7,
+                // 2026-11-22): bind the absence as a line, so a package
+                // that gains or loses the file after its dry run still
+                // fails the write-back check. PurpleBuddy is always
+                // prepared, so its absence means the package is broken.
+                if definition.name == RestoreSetupPayload.cloudName {
+                    lines.append("setup-file \(definition.domain)/\(definition.relativePath) absent")
+                    continue
+                }
+                throw DriftRestoreError("恢复包缺少单独核验文件：\(definition.name)，这次写回取消。请重新刷入。")
+            }
+            let bytes = ((try? fm.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.int64Value ?? 0
+            let hash = try sha256Hex(of: url)
+            lines.append("setup-file \(definition.domain)/\(definition.relativePath) \(bytes) \(hash)")
+            setupFiles.append(RestoreFileFingerprint(name: definition.name,
+                                                     domain: definition.domain,
+                                                     relativePath: definition.relativePath,
+                                                     byteCount: bytes,
+                                                     sha256: hash))
+        }
         let digest = SHA256.hash(data: Data(lines.joined(separator: "\n").utf8))
             .map { String(format: "%02x", $0) }.joined()
         return RestoreFingerprint(digest: digest,
                                   payloadFileCount: payloads.count,
-                                  payloadBytes: payloads.reduce(0) { $0 + $1.bytes })
+                                  payloadBytes: payloads.reduce(0) { $0 + $1.bytes },
+                                  setupFileFingerprints: setupFiles)
     }
 
     /// Chunked SHA-256 of one file (payloads can be tens of MB).
@@ -128,6 +356,13 @@ struct RestoreDryRunReport {
     let fingerprintShort: String
     let packNames: [String]
     let packFiles: [String]
+    /// Separate path/size/SHA-256 evidence for the Setup Assistant
+    /// payloads this run prepared (purplebuddy always; the cloud
+    /// configuration only when a live fetch produced one).
+    let setupFileFingerprints: [RestoreFileFingerprint]
+    /// Whether the cloud configuration payload was merged from the
+    /// dictionary fetched live off the device (build 7, 2026-11-22).
+    let cloudConfigMerged: Bool
     /// The device's refusal when the pull closed with one under clean
     /// accounting (build 6, 2026-11-21), else nil. Carried on the report
     /// so it is stated wherever the dry run is summarised — never
@@ -143,6 +378,13 @@ struct RestoreDryRunReport {
         var line = "干跑完成，拉取和对账都过了：共 \(packageFileCount) 个文件"
             + "（共 \(ByteCountFormatter.string(fromByteCount: packageBytes, countStyle: .file))），"
             + "指纹 \(fingerprintShort)，随即写回。"
+        if cloudConfigMerged {
+            line += " 设置文件单独核验："
+                + setupFileFingerprints.map { $0.displayLine }.joined(separator: "；") + "。"
+        } else {
+            line += " 这次没取到设备上的云配置，云配置没有写入；purplebuddy 单独核验："
+                + setupFileFingerprints.map { $0.displayLine }.joined(separator: "；") + "。"
+        }
         if let deviceRefusal {
             line += " 另外说明：这次拉取收尾时，设备没有接受这份提取"
                 + "（\(deviceRefusal)）。拉到的文件已在本机逐项验过；设备为什么没接受"
@@ -310,6 +552,39 @@ final class DriftRestoreService {
         }
         AppLog.write("restore dry run: compiled \(payloads.count) PosterBoard payload(s)")
 
+        // The Setup Assistant payloads (build 7, 2026-11-22 — see
+        // RestoreSetupPayload): the cloud configuration is fetched
+        // live over the pairing channel and merged; a failed fetch
+        // or a device storing none means no cloud payload this run,
+        // never a created one. The wallpaper flash proceeds either
+        // way — a missing skip-setup is a smaller flow win lost, not
+        // a reason to stop a flash that is otherwise sound.
+        let fetchDeviceDir = AppPaths.deviceDir(
+            backupRoot: AppPaths.posterBoardFetchRoot, udid: udid)
+        var fetchedCloudConfig: [String: Any]?
+        if let gateway = Minimuxer.shared().ideviceGateway {
+            do {
+                fetchedCloudConfig = try await gateway.fetchCloudConfiguration()
+                if let fetchedCloudConfig {
+                    AppLog.write("restore setup merge: cloud configuration fetched live "
+                        + "from the device (\(fetchedCloudConfig.count) keys)")
+                } else {
+                    AppLog.write("restore setup merge: the device reports no stored "
+                        + "cloud configuration; writing none this run")
+                }
+            } catch {
+                AppLog.write("restore setup merge: cloud configuration fetch failed "
+                    + "(\(error)); writing no cloud configuration this run")
+            }
+        } else {
+            AppLog.write("restore setup merge: no idevice gateway; "
+                + "writing no cloud configuration this run")
+        }
+        let setupLog: @Sendable (String) -> Void = { AppLog.write($0) }
+        let setupPayloads = try RestoreSetupPayload.makePayloads(
+            cloudConfig: fetchedCloudConfig, from: fetchDeviceDir, log: setupLog)
+        let restorePayloads = payloads + setupPayloads
+
         // Post-pull encryption verdict (see the preflight note above),
         // read off the manifest the fetch pull just brought back.
         // Nothing has been written to the device — the pull only reads —
@@ -338,12 +613,18 @@ final class DriftRestoreService {
                                      udid: udid))
 
         // Prune the restore base, merge the PosterBoard snapshot's native
-        // rows for its delivering set, then inject the wallpaper delta.
+        // rows for its delivering set, then inject the wallpaper delta
+        // and the Setup Assistant payloads (with the device-authored
+        // manifest blobs for whichever setup files already have rows).
+        let setupFileMetadata = try RestoreSetupPayload.fileMetadata(from: fetchDeviceDir)
+        AppLog.write("restore setup merge: found native manifest metadata for "
+            + "\(setupFileMetadata.count) existing setup file(s)")
         try await BackupInjector.pruneAndInject(
             backupRoot: backupRoot,
             udid: udid,
-            tweakPayloads: payloads,
+            tweakPayloads: restorePayloads,
             posterBoardSnapshot: fetched.snapshotDirectory,
+            additionalFileMetadata: setupFileMetadata,
             prune: true)
 
         // The audit is a gate, not a report: an inconsistent package is
@@ -368,6 +649,8 @@ final class DriftRestoreService {
             fingerprintShort: fingerprint.short,
             packNames: selection.tendies.map(\.name),
             packFiles: selection.tendies.map { $0.url.lastPathComponent },
+            setupFileFingerprints: fingerprint.setupFileFingerprints,
+            cloudConfigMerged: fetchedCloudConfig != nil,
             deviceRefusal: fetched.deviceRefusal)
         prepared = Prepared(report: report, fingerprint: fingerprint,
                             backupRoot: backupRoot, deviceDir: deviceDir,
@@ -787,7 +1070,14 @@ final class DriftRestoreService {
         guard now.digest == prepared.fingerprint.digest else {
             throw DriftRestoreError("准备好之后文件变了（指纹对不上），这次写回取消。请重新刷入一次。")
         }
+        guard now.setupFileFingerprints == prepared.fingerprint.setupFileFingerprints else {
+            throw DriftRestoreError("设置文件的独立指纹与准备时不一致，这次写回取消。请重新刷入一次。")
+        }
         AppLog.write("restore write-back: fingerprint re-verified (\(now.short))")
+        for file in now.setupFileFingerprints {
+            AppLog.write("restore write-back: setup file re-verified — "
+                + "\(file.domain)/\(file.relativePath), \(file.byteCount) bytes, SHA-256 \(file.sha256)")
+        }
         // The restore options this package goes out with, made
         // visible (build 7, 2026-11-21): they are fixed by
         // construction in the gateway call — no reboot, no system

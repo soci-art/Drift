@@ -37,6 +37,8 @@ pub mod lockdown;
 pub mod logging;
 #[cfg(feature = "misagent")]
 pub mod misagent;
+#[cfg(feature = "mobile_config")]
+pub mod mobile_config;
 #[cfg(feature = "mobile_image_mounter")]
 pub mod mobile_image_mounter;
 #[cfg(feature = "mobileactivationd")]
