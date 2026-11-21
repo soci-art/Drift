@@ -60,8 +60,11 @@ struct DriftHomeView: View {
         // PosterBoard's container; it requires no pairing or tunnel.
         // The button is available only when the system and model qualify.
         if manualPick == .kernel {
+            // #343: no `selection.video == nil` condition — the run
+            // clips the video out (see runApply), so a leftover on
+            // the video page must not disable this page's button.
             return kernelPremiseReady && !selection.tendies.isEmpty && !overLimit
-                && selection.video == nil && !selection.fullReset
+                && !selection.fullReset
                 && selection.resetModes.isEmpty && !session.running
         }
         // A restore pick blocked only by its switch: the tap must
@@ -671,6 +674,17 @@ struct DriftHomeView: View {
         var runSelection = selection
         runSelection.resetModes = []
         runSelection.fullReset = false
+        // #343 (Grace, 2026-11-21): a run launched from this page
+        // carries only the checked packs — whatever the video page
+        // picked stays out of it, exactly as the video page's own
+        // run already leaves the packs out. The two pages share one
+        // selection state (and one judge), but not one payload: in
+        // the field a leftover file in the video slot (a .tendies,
+        // of all things) rode into a pack run and the compile step
+        // tried to decode it as a video, burning two restore
+        // dry-runs at about nine minutes each.
+        runSelection.video = nil
+        runSelection.thumbnail = nil
         // Kernel Direct has its own on-device write flow. It verifies the
         // real PosterBoard container first, then writes the selected packs;
         // no channel mode, pairing record or tunnel is involved. Dispatch
@@ -682,7 +696,7 @@ struct DriftHomeView: View {
                 // Re-judge on the state as it is now, like every other
                 // channel's run below: the card's answer is not the run's
                 // answer if the device's compatibility premises changed.
-                let fresh = DriftJudge.judge(identity: identity, selection: selection,
+                let fresh = DriftJudge.judge(identity: identity, selection: runSelection,
                                              pick: manualPick, tunnelReady: tunnelReady)
                 if fresh.isBlocked {
                     session.errorText = fresh.blockedReason
@@ -693,7 +707,7 @@ struct DriftHomeView: View {
                     return
                 }
                 let outcome = await session.runKernelApply(identity: identity,
-                                                            selection: selection)
+                                                            selection: runSelection)
                 if outcome.ok {
                     statusLine = outcome.message
                 } else {
