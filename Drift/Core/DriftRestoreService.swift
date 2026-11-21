@@ -327,11 +327,15 @@ struct RestoreDryRunReport {
     /// converted into a silent success.
     let deviceRefusal: String?
 
-    /// The one-paragraph result the funnel returns for a dry run.
+    /// The one-paragraph summary of what a dry run prepared. Since
+    /// the one-flow change (Grace, 2026-11-21) the write-back follows
+    /// the dry run inside the same apply, so this reads as the record
+    /// of what was prepared and then written, not as an invitation to
+    /// confirm anything.
     var summaryLine: String {
-        var line = "干跑完成，还没有写回。拉取和对账都过了：将写回 \(packageFileCount) 个文件"
+        var line = "干跑完成，拉取和对账都过了：共 \(packageFileCount) 个文件"
             + "（共 \(ByteCountFormatter.string(fromByteCount: packageBytes, countStyle: .file))），"
-            + "指纹 \(fingerprintShort)。确认无误后，点主页干跑卡上的「确认写回」才会真正恢复。"
+            + "指纹 \(fingerprintShort)，随即写回。"
         line += " 两份设置文件单独核验："
             + setupFileFingerprints.map { $0.displayLine }.joined(separator: "；") + "。"
         if let deviceRefusal {

@@ -83,11 +83,12 @@ final class DriftSession: ObservableObject {
     /// route. The home page shows a manual-respring button from this.
     @Published private(set) var lastEffect: PosterBoardEffect?
 
-    /// A restore dry run waiting for its separate write-back
-    /// confirmation (Alpha line). Set by the funnel when a restore run
-    /// finishes its dry run; cleared by the write-back, by discarding
-    /// it, or by any other channel's run. The home page's dry-run card
-    /// renders from this.
+    /// The restore dry run a one-flow apply is currently writing back
+    /// (Alpha line). Set by the funnel the moment a restore dry run
+    /// passes its checks, held only for the span of the immediate
+    /// write-back inside the same run, and cleared on either outcome;
+    /// a non-restore run also clears it as a safety net. Nothing waits
+    /// on it any more — there is no parked report and no dry-run card.
     @Published private(set) var pendingRestoreDryRun: RestoreDryRunReport?
 
     private var didBootstrap = false
@@ -505,14 +506,50 @@ final class DriftSession: ObservableObject {
                 mode: mode,
                 deviceVersion: identity.version)
             if mode == .backup, let dryRun = DriftEngine.shared.lastRestoreDryRun {
-                // A restore run on this line is the dry run only:
-                // nothing was written back, so it earns no history
-                // entry and no flashed message. The report waits here
-                // for the separate, confirmed write-back
-                // (runRestoreWriteBack).
+                // One flow (Grace, 2026-11-21): a restore apply is the
+                // whole route in a single run — the dry run's checks
+                // pass, then the write-back follows immediately, with
+                // no parked report and no second confirmation. The
+                // machine gates are unchanged: the audit already gated
+                // the dry run, and the service re-verifies the dry-run
+                // fingerprint (the two setup files' included) inside
+                // the write-back before restoring. The outcome earns
+                // the run's single history entry, recorded here.
                 pendingRestoreDryRun = dryRun
-                errorText = nil
-                return (true, dryRun.summaryLine, nil)
+                flashStage = "正在写回，期间不要切后台或锁屏"
+                DriftEngine.shared.log("恢复刷：干跑通过（指纹 \(dryRun.fingerprintShort)），直接写回")
+                do {
+                    try await DriftEngine.shared.writeBackRestore()
+                    pendingRestoreDryRun = nil
+                    ApplyHistory.record(mode: "恢复刷",
+                                        success: true,
+                                        device: identity.describe,
+                                        model: identity.productType, ios: identity.version,
+                                        effect: "重启生效",
+                                        channel: nil,
+                                        packName: dryRun.packNames.joined(separator: "、"),
+                                        packFiles: dryRun.packFiles,
+                                        logSliceText: RunLog.shared.recordSnapshot())
+                    errorText = nil
+                    var message = "写回完成：共 \(dryRun.packageFileCount) 个文件（干跑指纹 \(dryRun.fingerprintShort)）。"
+                        + "请手动重启手机，重启后新壁纸生效。"
+                    if dryRun.deviceRefusal != nil {
+                        message += "（这次拉取收尾时设备没有接受这份提取；写回是设备另行裁决的，已通过。）"
+                    }
+                    return (true, message, nil)
+                } catch {
+                    pendingRestoreDryRun = nil
+                    let message = error.localizedDescription
+                    DriftEngine.shared.log("恢复刷写回失败：\(message)")
+                    ApplyHistory.record(mode: "恢复刷",
+                                        success: false, error: message,
+                                        device: identity.describe,
+                                        model: identity.productType, ios: identity.version,
+                                        packName: dryRun.packNames.joined(separator: "、"),
+                                        packFiles: dryRun.packFiles,
+                                        logSliceText: RunLog.shared.recordSnapshot())
+                    return (false, message, nil)
+                }
             }
             let effect = DriftEngine.shared.lastPosterBoardEffect
             lastEffect = effect
@@ -585,64 +622,6 @@ final class DriftSession: ObservableObject {
                                 packName: selection.tendies.map(\.name).joined(separator: "、"), packFiles: selection.tendies.map { $0.url.lastPathComponent }, logSliceText: RunLog.shared.recordSnapshot())
             return (false, message, nil)
         }
-    }
-
-    /// 恢复刷写回：把干跑备好的恢复包真正写回设备。干跑卡上的
-    /// 「确认写回」走完危险确认后才调到这里；写回前服务会先复验
-    /// 干跑指纹，对不上就取消。成败都记一条历史（模式「恢复刷」），
-    /// 干跑本身不记。
-    func runRestoreWriteBack(identity: DeviceIdentity) async -> (ok: Bool, message: String) {
-        guard !InFlightCall.shared.hasLiveRun else {
-            return (false, "已有一轮刷入正在进行")
-        }
-        guard DriftRestoreGate.isEnabled else { return (false, "暂不可用") }
-        guard RestoreFlashPremise.isEnabled else {
-            return (false, "恢复刷还没有打开：请先到「设置 → 实验性功能」里打开恢复刷。")
-        }
-        guard let dryRun = pendingRestoreDryRun else {
-            return (false, "还没有干跑结果，请先选恢复刷干跑一次。")
-        }
-        flashCover = true
-        flashStage = "正在写回，期间不要切后台或锁屏"
-        defer { flashCover = false; flashStage = nil }
-        running = true
-        RunLog.shared.clear()
-        defer { running = false }
-        DriftEngine.shared.log("恢复刷写回：开始（干跑指纹 \(dryRun.fingerprintShort)，"
-            + "设备读数 \(identity.describe)）")
-        do {
-            try await DriftEngine.shared.writeBackRestore()
-            pendingRestoreDryRun = nil
-            ApplyHistory.record(mode: "恢复刷",
-                                success: true,
-                                device: identity.describe,
-                                model: identity.productType, ios: identity.version,
-                                effect: "重启生效",
-                                channel: nil,
-                                packName: dryRun.packNames.joined(separator: "、"),
-                                packFiles: dryRun.packFiles,
-                                logSliceText: RunLog.shared.recordSnapshot())
-            return (true, "写回完成。重启一次手机，新壁纸就会生效。")
-        } catch {
-            pendingRestoreDryRun = nil
-            let message = error.localizedDescription
-            DriftEngine.shared.log("恢复刷写回失败：\(message)")
-            ApplyHistory.record(mode: "恢复刷",
-                                success: false, error: message,
-                                device: identity.describe,
-                                model: identity.productType, ios: identity.version,
-                                packName: dryRun.packNames.joined(separator: "、"),
-                                packFiles: dryRun.packFiles,
-                                logSliceText: RunLog.shared.recordSnapshot())
-            return (false, message)
-        }
-    }
-
-    /// 放弃干跑结果（主页干跑卡上的「放弃」）：备好的包作废，
-    /// 不写回、不记历史。
-    func discardRestoreDryRun() {
-        pendingRestoreDryRun = nil
-        DriftEngine.shared.discardRestoreDryRun()
     }
 
     /// How far through its five steps a probe log line says the probe

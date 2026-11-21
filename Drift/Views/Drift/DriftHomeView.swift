@@ -23,7 +23,6 @@ struct DriftHomeView: View {
     @State private var statusLine: String?
     @State private var confirmRespring = false
     /// The restore write-back's danger confirmation (Alpha line).
-    @State private var confirmRestoreWriteBack = false
     /// #337 (Grace, 2026-11-16): the signature notice's entry
     /// window state — see `openEntryWindow()`.
     @State private var signatureNotice = false
@@ -239,9 +238,6 @@ struct DriftHomeView: View {
                         }
                         judgeCard
                         actionFrame
-                        if let dryRun = session.pendingRestoreDryRun {
-                            restoreDryRunCard(dryRun)
-                        }
                         activationCard
                         // Collection #289 (Grace, 2026-11-13): no log
                         // card on this page any more — the log is still
@@ -274,10 +270,6 @@ struct DriftHomeView: View {
                               title: "本机直刷不可用",
                               message: InstallEnvironment.noUsableGroupReason,
                               actions: [DriftSheetAction("知道了") {}])
-            .driftActionSheet(isPresented: $confirmRestoreWriteBack,
-                              title: "确认写回？",
-                              message: writeBackSheetMessage,
-                              actions: [DriftSheetAction("确认写回") { runRestoreWriteBack() }])
             .onAppear {
                 AppLog.op("打开壁纸页")
                 if !didFirstAppear {
@@ -883,99 +875,6 @@ struct DriftHomeView: View {
         }
     }
 
-    /// The write-back danger sheet's wording. When the pending dry
-    /// run's pull closed with a device refusal (build 6, 2026-11-21),
-    /// that fact is one of the listed outcomes — the confirmation must
-    /// not present the pull as an unqualified success.
-    private var writeBackSheetMessage: String {
-        var message = "写回会把干跑备好的恢复包真正恢复到这台设备上。可能出现的情况：\n· 顺利：重启后新壁纸生效，只有干跑报告列出的两份设置 plist 会按说明更新，其余数据不动。\n· 设备拒绝或中途失败：壁纸不变，一般不会丢数据，但要重新干跑。\n· 最坏：恢复异常导致设备恢复出厂、数据全丢（2026-11-10 发生过一次）。\n只在已经用电脑完整备份过的备用机上写回，主力机不要写回。"
-        if let report = session.pendingRestoreDryRun {
-            message += "\n\n额外纳入的两份设置文件（写回前逐项复核）：\n"
-                + report.setupFileFingerprints.map { "· " + $0.displayLine }.joined(separator: "\n")
-        }
-        if session.pendingRestoreDryRun?.deviceRefusal != nil {
-            message += "\n· 补一句：这次拉取收尾时设备曾以 205 没有接受这份提取（原因还没有证实），是凭本机逐项核对放行的；写回时设备可能同样拒绝。"
-        }
-        return message
-    }
-
-    /// The restore dry-run card (Alpha line): what the dry run
-    /// prepared, and the two ways out — write it back (behind the
-    /// danger confirmation) or throw it away. Shown only while a dry
-    /// run is pending; the session clears it on either outcome.
-    private func restoreDryRunCard(_ report: RestoreDryRunReport) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Text("恢复刷 · 干跑完成")
-                    .font(.subheadline.weight(.semibold))
-                Text("还没写回")
-                    .font(.caption2.weight(.semibold))
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(Color.red.opacity(0.16),
-                                in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-                    .foregroundStyle(.red)
-            }
-            Text("已拉取设备清单并对账通过：将写回 \(report.packageFileCount) 个文件（共 \(ByteCountFormatter.string(fromByteCount: report.packageBytes, countStyle: .file))），其中这次新做的壁纸文件 \(report.payloadCount) 个，另含两份设置文件。干跑指纹 \(report.fingerprintShort)，写回前会再验一次，对不上就取消。")
-                .font(.subheadline).foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 5) {
-                Text("额外设置文件 · 独立 SHA-256")
-                    .font(.caption.weight(.semibold))
-                ForEach(report.setupFileFingerprints, id: \.relativePath) { file in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(file.name) · \(ByteCountFormatter.string(fromByteCount: file.byteCount, countStyle: .file))")
-                            .font(.caption)
-                        Text(file.sha256)
-                            .font(.system(size: 10, weight: .regular, design: .monospaced))
-                            .textSelection(.enabled)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .padding(.top, 2)
-            if let refusal = report.deviceRefusal {
-                // Stated, not softened (build 6, 2026-11-21): the pull
-                // was allowed to proceed on host-side checks after the
-                // device refused to register it, and the person about
-                // to confirm a write-back must see that fact here —
-                // not discover it in a log afterwards.
-                Text("注意：这次拉取收尾时，设备没有接受这份提取（\(refusal)）。拉到的文件已逐项验过；设备为什么没接受还在研究中、没有证实。写回是另一次恢复，设备会另外裁决。")
-                    .font(.subheadline).foregroundStyle(.orange)
-            }
-            HStack(spacing: 10) {
-                Button {
-                    confirmRestoreWriteBack = true
-                } label: {
-                    Label("确认写回", systemImage: "arrow.up.doc")
-                }
-                .driftGlassButton()
-                .disabled(session.running)
-                Button("放弃") {
-                    session.discardRestoreDryRun()
-                    statusLine = "已放弃这次干跑，什么都没有写回。"
-                }
-                .driftGlassButton()
-                .disabled(session.running)
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .driftGlassSlab()
-    }
-
-    /// The dry-run card's confirmed write-back: same outcome
-    /// presentation as a flash run (status line on success, error
-    /// notice on failure).
-    private func runRestoreWriteBack() {
-        Task {
-            let outcome = await session.runRestoreWriteBack(identity: identity)
-            if outcome.ok {
-                statusLine = outcome.message
-            } else {
-                statusLine = nil
-                session.errorText = outcome.message
-            }
-        }
-    }
 
     private func handlePairingPick(_ urls: [URL]) {
         guard let url = urls.first else {

@@ -65,13 +65,33 @@ struct PosterBoardManagerView: View {
         return "不可用"
     }
 
+    /// On iOS 27.3 beta 2 and later this page is unavailable outright
+    /// (Grace, 2026-11-21): the channels it reads through are fixed,
+    /// only the restore route still writes, and the restore route
+    /// carries no management surface. The one way left to delete a
+    /// wallpaper there is switching the system language, which resets
+    /// the whole store — the message says exactly that.
+    private var restoreOnlyBlock: String? {
+        guard PosterBoardManagement.restoreOnlySystem(
+            version: identity.version, build: identity.buildVersion)
+        else { return nil }
+        return "这台设备是 \(SystemVersionName.display(version: identity.version, build: identity.buildVersion))："
+            + "能读壁纸商店的通道都已被系统修复，只剩恢复刷能刷入，而恢复刷不带管理功能，所以本机壁纸管理不可用。"
+            + "如需删除壁纸，请切换系统语言——切换语言会重置整个壁纸库，所有壁纸（包括原有的）都会被清除。"
+    }
+
     var body: some View {
         List {
             // Collection #276 (Grace, 2026-11-13): no explainer section
             // at the top any more — the page opens straight onto the
             // list. (The deletion route is still computed exactly as
             // before; it just isn't announced in a paragraph.)
-            if loading {
+            if let restoreOnlyBlock {
+                Section {
+                    Text(restoreOnlyBlock)
+                        .foregroundStyle(.secondary)
+                }
+            } else if loading {
                 Section { ProgressView() }
             } else if entries.isEmpty && loadError == nil {
                 Section {
@@ -84,6 +104,7 @@ struct PosterBoardManagerView: View {
                 }
             }
 
+            if restoreOnlyBlock == nil {
             Section {
                 Button {
                     Task { await load() }
@@ -100,6 +121,7 @@ struct PosterBoardManagerView: View {
                 .disabled(selected.isEmpty || deleting || routeLabel == "不可用")
                 Text("允许勾选多条，但确认时会逐条列出。没有「全选清空」入口。删了当前正在使用的壁纸时，生效后系统会换回默认壁纸。")
                     .font(.caption).foregroundStyle(.secondary)
+            }
             }
         }
         // #280 (Grace, 2026-11-13): renamed — the page is 本机壁纸管理
@@ -242,6 +264,13 @@ struct PosterBoardManagerView: View {
     }
 
     private func load() async {
+        // Blocked outright on restore-only systems: no enumeration
+        // is even attempted (the page shows the reason instead).
+        if restoreOnlyBlock != nil {
+            entries = []
+            loadError = nil
+            return
+        }
         loading = true
         defer { loading = false }
         let result = await PosterBoardManagement.loadManagedEntries(

@@ -351,6 +351,23 @@ enum PosterBoardManagement {
 
     /// Load the descriptors currently in the store, choosing the source by
     /// premise: tunnel first, then local. Returns entries plus a source label
+    /// iOS 27.3 beta 2 (build 24C5049d, verified against Apple's
+    /// developer release listing) and everything after it: the
+    /// channels this page enumerates and deletes through are fixed
+    /// there, only the restore route still writes, and the restore
+    /// route deliberately carries no management surface (Grace,
+    /// 2026-11-21). Judged by version AND build, the same discipline
+    /// as the restore segment; an unreadable build does not block —
+    /// the page then falls through to its normal channel attempts.
+    static func restoreOnlySystem(version: String, build: String) -> Bool {
+        let parts = version.split(separator: ".").map { Int($0) ?? 0 }
+        guard let major = parts.first else { return false }
+        if major != 27 { return major > 27 }
+        let minor = parts.count > 1 ? parts[1] : 0
+        if minor != 3 { return minor > 3 }
+        return !build.isEmpty && build >= "24C5049d"
+    }
+
     /// and an optional reason when nothing could be enumerated.
     static func loadManagedEntries(
         tunnelReady: Bool,
