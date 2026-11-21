@@ -19,7 +19,7 @@ permissions:
 jobs:
   build:
     name: Build unsigned IPA
-    runs-on: macos-latest
+    runs-on: xcode-27
 
     steps:
       - name: Checkout
@@ -27,6 +27,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Select latest Xcode 27
+        run: |
+          ls /Applications | grep -i Xcode || true
+          XCODE_APP="$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -z "$XCODE_APP" ]; then XCODE_APP="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"; fi
+          echo "Using $XCODE_APP"
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          xcodebuild -version
       - name: Resolve version and build from project.yml
         id: version
         shell: bash
