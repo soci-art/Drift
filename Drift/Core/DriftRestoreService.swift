@@ -757,6 +757,17 @@ final class DriftRestoreService {
     /// evidence means these numbers, not just log lines.
     struct PullAuditOutcome {
         var keptMissing = 0
+        /// Setup payloads (build 3 field finding, 2026-11-21) whose
+        /// manifest row arrived without a payload — counted apart,
+        /// NOT as kept-missing: the cloud-configuration file is a
+        /// staging plist the system consumes during the setup flow,
+        /// so a later pull can legitimately carry its row with no
+        /// content behind it. The injector's setup merge already
+        /// creates these two files from their fixed keys when the
+        /// pulled payload is absent; the audit gate was the only
+        /// thing still treating that absence as fatal. Every other
+        /// kept row keeps the hard gate.
+        var setupPayloadsAbsent = 0
         var sizeMismatches: [String] = []
         var keptChecked = 0
         /// Store-file size mismatches, kept apart from the generic
@@ -802,6 +813,7 @@ final class DriftRestoreService {
         let fm = FileManager.default
         var present = 0
         var suspects: [String] = []
+        var setupAbsent: [String] = []
         var drainedByDomain: [String: Int] = [:]
         // The store trio's landing spots, for the header evidence
         // below (build 7, 2026-11-21).
@@ -858,12 +870,22 @@ final class DriftRestoreService {
                 continue
             }
             if isKeptRow {
-                suspects.append(relativePath)
+                if RestoreSetupPayload.isTarget(domain: domain,
+                                                relativePath: relativePath) {
+                    setupAbsent.append(relativePath)
+                } else {
+                    suspects.append(relativePath)
+                }
             } else {
                 drainedByDomain[domain, default: 0] += 1
             }
         }
         outcome.keptMissing = suspects.count
+        outcome.setupPayloadsAbsent = setupAbsent.count
+        for name in setupAbsent {
+            AppLog.write("pull audit: setup file payload absent — \(name); "
+                + "the injector creates it from the fixed keys")
+        }
         let drainedTotal = drainedByDomain.values.reduce(0, +)
         AppLog.write("pull audit: \(present) file payload(s) on disk; "
             + "\(suspects.count) PosterBoard file row(s) the pull meant to keep "

@@ -144,12 +144,20 @@ struct DriftRootView: View {
                         // `coverProgress` as the engine reports it. It
                         // holds still on the stream's slow stretches
                         // rather than creeping: real, not smoothed.
+                        // `coverProgress` is a 0…1 fraction everywhere
+                        // in the app (the session's wiring divides the
+                        // engine's percent by 100); this branch once
+                        // read it as 0…100, which pinned the bar at
+                        // ~1 % and the caption at 0 % for the whole
+                        // run — the field report "the bar never moves"
+                        // (fixed 2026-11-21, Grace). Read it as the
+                        // fraction it is.
                         if session.flashCover, session.coverShowsProgress,
                            let progress = session.coverProgress {
-                            ProgressView(value: progress, total: 100)
+                            ProgressView(value: progress)
                                 .progressViewStyle(.linear)
                                 .frame(width: 220)
-                            Text("\(Int(progress))%")
+                            Text("\(Int(progress * 100))%")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
