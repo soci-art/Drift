@@ -50,8 +50,27 @@ struct DriftHomeView: View {
         WorseQueryEscape.isAvailable(deviceVersion: localVersion, buildVersion: localBuild)
     }
     private var tunnelReady: Bool { tunnelMonitor.status == .ready }
+    /// This page's apply scope (Grace, 2026-11-21): the wallpaper page's
+    /// flash carries the checked packs and nothing else — a video left
+    /// selected on the video page is NOT this run's business, exactly as
+    /// the video page's own apply already carries the video alone. The
+    /// two pages share one selection value (and one method pick — the
+    /// judgement below still reads the same `manualPick` the video page
+    /// reads), so the scoping happens here, at the apply funnel, by
+    /// clearing the other page's half out of the copy a run is judged
+    /// and executed on. The field evidence: a `.tendies` file sitting in
+    /// the video slot (restored into the shared selection at launch)
+    /// rode two restore dry runs on 2026-11-21 and killed both at the
+    /// compile's video step, nine minutes into each pull, before the
+    /// packs the run was actually for were ever reached.
+    private var packsSelection: PosterBoardSelection {
+        var scoped = selection
+        scoped.video = nil
+        scoped.thumbnail = nil
+        return scoped
+    }
     private var judgement: DriftModeJudgement {
-        DriftJudge.judge(identity: identity, selection: selection, pick: manualPick,
+        DriftJudge.judge(identity: identity, selection: packsSelection, pick: manualPick,
                          tunnelReady: tunnelReady)
     }
     /// The method rows to draw: every pick, always — 内核直刷
@@ -764,7 +783,7 @@ struct DriftHomeView: View {
             }
             return
         }
-        var runSelection = selection
+        var runSelection = packsSelection
         runSelection.resetModes = []
         runSelection.fullReset = false
         // Kernel Direct has its own on-device write flow. It verifies the
@@ -779,7 +798,7 @@ struct DriftHomeView: View {
                 // Re-judge on the state as it is now, like every other
                 // channel's run below: the card's answer is not the run's
                 // answer if the switch or the premises moved in between.
-                let fresh = DriftJudge.judge(identity: identity, selection: selection,
+                let fresh = DriftJudge.judge(identity: identity, selection: packsSelection,
                                              pick: manualPick, tunnelReady: tunnelReady)
                 if fresh.isBlocked {
                     session.errorText = fresh.blockedReason
@@ -790,7 +809,7 @@ struct DriftHomeView: View {
                     return
                 }
                 let outcome = await session.runKernelApply(identity: identity,
-                                                            selection: selection)
+                                                            selection: packsSelection)
                 if outcome.ok {
                     statusLine = outcome.message
                 } else {
