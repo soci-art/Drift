@@ -78,51 +78,62 @@ struct UnlockPreviewView: View {
     private func homeLayer(_ size: CGSize) -> some View {
         ZStack {
             wallpaper(image: payload.homeImage, video: nil, size: size)
-                .scaleEffect(1.09 - 0.09 * progress)
-            iconGrid
-                .opacity(Double(smooth(0.45, 0.95, progress)))
-                .offset(y: (1 - progress) * 24)
+                .scaleEffect(1.10 - 0.10 * progress)
+            homeScreen(size)
         }
         .frame(width: size.width, height: size.height)
         .clipped()
     }
 
     private func lockLayer(_ size: CGSize) -> some View {
+        // Laid out the way the real lock screen is (Grace,
+        // 2026-11-23): padlock over a centred date over a big
+        // digital clock, the two round buttons in the bottom
+        // corners, everything measured off this phone's screen.
+        // The motion follows the real unlock too: the whole sheet
+        // rides up under the finger, the clock runs ahead of the
+        // wallpaper (parallax), swells a touch and blurs out
+        // early; the wallpaper itself only fades at the very end.
         ZStack {
             wallpaper(image: payload.lockImage, video: payload.lockVideo, size: size)
-                .scaleEffect(1 + 0.06 * progress)
-            // The clock and the bottom furniture leave early, the
-            // wallpaper itself fades last — the order the real
-            // unlock reads in.
-            VStack {
-                TimelineView(.everyMinute) { _ in
-                    VStack(spacing: 2) {
-                        Text(Self.dateLine)
-                            .font(.system(size: 17, weight: .medium))
-                        Text(Self.timeLine)
-                            .font(.system(size: 76, weight: .bold, design: .rounded))
+                .scaleEffect(1 + 0.05 * progress)
+            VStack(spacing: 0) {
+                VStack(spacing: 3) {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 19, weight: .semibold))
+                        .padding(.bottom, 10)
+                    TimelineView(.everyMinute) { _ in
+                        VStack(spacing: 1) {
+                            Text(Self.dateLine)
+                                .font(.system(size: size.width * 0.049, weight: .medium))
+                            Text(Self.timeLine)
+                                .font(.system(size: size.width * 0.235, weight: .bold, design: .rounded))
+                        }
                     }
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
                 }
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
+                .scaleEffect(1 + 0.10 * progress)
+                .blur(radius: 7 * smooth(0.08, 0.55, progress))
+                .opacity(Double(1 - smooth(0.04, 0.48, progress)))
+                .offset(y: -0.16 * size.height * progress)
                 Spacer()
                 HStack {
                     lockCircle("flashlight.on.fill")
                     Spacer()
                     lockCircle("camera.fill")
                 }
-                .padding(.horizontal, 46)
-                .padding(.bottom, 30)
+                .padding(.horizontal, size.width * 0.107)
+                .padding(.bottom, size.height * 0.052)
+                .opacity(Double(1 - smooth(0.0, 0.32, progress)))
             }
-            .padding(.top, 64)
+            .padding(.top, size.height * 0.105)
             .frame(width: size.width, height: size.height)
-            .opacity(Double(max(0, 1 - progress * 2.2)))
-            .offset(y: -52 * progress)
         }
         .frame(width: size.width, height: size.height)
         .clipped()
-        .opacity(Double(1 - smooth(0.55, 1.0, progress)))
-        .offset(y: -0.10 * size.height * progress)
+        .opacity(Double(1 - smooth(0.70, 1.0, progress)))
+        .offset(y: -0.38 * size.height * progress)
         .allowsHitTesting(false)
     }
 
@@ -130,7 +141,7 @@ struct UnlockPreviewView: View {
         Image(systemName: symbol)
             .font(.system(size: 20))
             .foregroundStyle(.white)
-            .frame(width: 48, height: 48)
+            .frame(width: 50, height: 50)
             .background(Color.black.opacity(0.35), in: Circle())
     }
 
@@ -210,6 +221,156 @@ struct UnlockPreviewView: View {
         .clipped()
     }
 
+    // MARK: - Gesture
+
+    /// The finger drives `progress` directly — the real unlock
+    /// tracks 1:1 too. On release the predicted throw decides the
+    /// end, and a spring with the system's heavy, quick settle
+    /// carries it there.
+    private var unlockGesture: some Gesture {
+        DragGesture(minimumDistance: 4)
+            .onChanged { value in
+                if dragStart == nil { dragStart = progress }
+                let start = dragStart ?? 0
+                progress = min(1, max(0, start - value.translation.height / 300))
+            }
+            .onEnded { value in
+                let predicted = (dragStart ?? progress)
+                    - value.predictedEndTranslation.height / 300
+                let target: CGFloat = predicted > 0.45 ? 1 : 0
+                dragStart = nil
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.83)) {
+                    progress = target
+                }
+            }
+    }
+
+    // MARK: - Home screen furniture
+
+    /// The home screen, measured off the real one: 60pt icons,
+    /// four across, labels under, a frosted dock with four more.
+    /// Icons cascade in the way the real unlock reads — each one
+    /// a beat after the last, swelling from small as it lands.
+    private func homeScreen(_ size: CGSize) -> some View {
+        let icon: CGFloat = 60
+        let gap = size.width * 0.077
+        let edge = (size.width - 4 * icon - 3 * gap) / 2
+        return VStack(spacing: 0) {
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(icon), spacing: gap), count: 4),
+                      spacing: 26) {
+                ForEach(Array(Self.apps.enumerated()), id: \.offset) { index, app in
+                    let row = index / 4, col = index % 4
+                    let local = smooth(0.30 + 0.055 * CGFloat(row) + 0.018 * CGFloat(col),
+                                       0.86 + 0.055 * CGFloat(row) + 0.018 * CGFloat(col),
+                                       progress)
+                    VStack(spacing: 4) {
+                        appIcon(app, size: icon)
+                        Text(app.name)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white)
+                            .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
+                    }
+                    .scaleEffect(0.55 + 0.45 * local)
+                    .opacity(Double(local))
+                    .offset(y: (1 - local) * 30)
+                }
+            }
+            .padding(.horizontal, edge)
+            Spacer()
+            HStack(spacing: gap) {
+                ForEach(Array(Self.dockApps.enumerated()), id: \.offset) { index, app in
+                    let local = smooth(0.42 + 0.02 * CGFloat(index),
+                                       0.97 + 0.02 * CGFloat(index), progress)
+                    appIcon(app, size: icon)
+                        .scaleEffect(0.55 + 0.45 * local)
+                        .opacity(Double(local))
+                        .offset(y: (1 - local) * 30)
+                }
+            }
+            .padding(.horizontal, gap)
+            .padding(.vertical, 16)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 30))
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
+        }
+        .padding(.top, size.height * 0.068)
+        .frame(width: size.width, height: size.height)
+    }
+
+    /// One icon, drawn the way the real app looks at a glance:
+    /// its own colours and glyph. The calendar carries today's
+    /// real date; the rest are symbols on the right ground. Not
+    /// the apps' own artwork — close enough that the screen
+    /// reads as the phone's home screen.
+    private func appIcon(_ app: PreviewApp, size: CGFloat) -> some View {
+        Group {
+            if app.name == "日历" {
+                ZStack {
+                    RoundedRectangle(cornerRadius: size * 0.225)
+                        .fill(Color.white)
+                    VStack(spacing: 0) {
+                        Text(Self.weekdayLine)
+                            .font(.system(size: size * 0.19, weight: .medium))
+                            .foregroundStyle(.red)
+                        Text(Self.dayLine)
+                            .font(.system(size: size * 0.52, weight: .light))
+                            .foregroundStyle(.black)
+                    }
+                }
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: size * 0.225)
+                        .fill(LinearGradient(colors: [app.top, app.bottom],
+                                             startPoint: .top, endPoint: .bottom))
+                    Image(systemName: app.symbol)
+                        .font(.system(size: size * 0.52, weight: .regular))
+                        .foregroundStyle(app.glyph)
+                }
+            }
+        }
+        .frame(width: size, height: size)
+    }
+
+    private struct PreviewApp {
+        let name: String
+        let symbol: String
+        let top: Color
+        let bottom: Color
+        let glyph: Color
+
+        init(_ name: String, _ symbol: String, _ top: Color, _ bottom: Color,
+             glyph: Color = .white) {
+            self.name = name; self.symbol = symbol
+            self.top = top; self.bottom = bottom; self.glyph = glyph
+        }
+    }
+
+    private static let apps: [PreviewApp] = [
+        .init("电话", "phone.fill", .init(red: 0.35, green: 0.85, blue: 0.38), .init(red: 0.16, green: 0.72, blue: 0.24)),
+        .init("信息", "message.fill", .init(red: 0.35, green: 0.85, blue: 0.38), .init(red: 0.16, green: 0.72, blue: 0.24)),
+        .init("Safari", "compass.drawing", .white, .white, glyph: .init(red: 0.05, green: 0.45, blue: 0.95)),
+        .init("照片", "photo.on.rectangle.angled", .white, .white, glyph: .init(red: 0.95, green: 0.65, blue: 0.10)),
+        .init("相机", "camera.fill", .init(red: 0.92, green: 0.92, blue: 0.94), .init(red: 0.80, green: 0.80, blue: 0.84), glyph: .init(red: 0.25, green: 0.25, blue: 0.28)),
+        .init("地图", "map.fill", .init(red: 0.30, green: 0.85, blue: 0.40), .init(red: 0.10, green: 0.70, blue: 0.30)),
+        .init("天气", "cloud.sun.fill", .init(red: 0.20, green: 0.55, blue: 0.95), .init(red: 0.10, green: 0.35, blue: 0.85)),
+        .init("设置", "gearshape.fill", .init(red: 0.75, green: 0.75, blue: 0.78), .init(red: 0.55, green: 0.55, blue: 0.60), glyph: .init(red: 0.30, green: 0.30, blue: 0.33)),
+        .init("日历", "", .white, .white),
+        .init("音乐", "music.note", .init(red: 0.98, green: 0.35, blue: 0.45), .init(red: 0.90, green: 0.15, blue: 0.30)),
+        .init("钱包", "wallet.pass.fill", .init(red: 0.13, green: 0.13, blue: 0.15), .init(red: 0.05, green: 0.05, blue: 0.07)),
+        .init("计算器", "plus.forwardslash.minus", .init(red: 0.30, green: 0.30, blue: 0.32), .init(red: 0.16, green: 0.16, blue: 0.18)),
+        .init("文件", "folder.fill", .white, .white, glyph: .init(red: 0.10, green: 0.50, blue: 0.95)),
+        .init("提醒事项", "checklist", .white, .white, glyph: .init(red: 0.95, green: 0.55, blue: 0.10)),
+        .init("指南针", "location.north.fill", .init(red: 0.13, green: 0.13, blue: 0.15), .init(red: 0.05, green: 0.05, blue: 0.07), glyph: .init(red: 0.95, green: 0.25, blue: 0.25)),
+        .init("时钟", "clock.fill", .init(red: 0.10, green: 0.10, blue: 0.12), .init(red: 0.03, green: 0.03, blue: 0.05)),
+    ]
+
+    private static let dockApps: [PreviewApp] = [
+        .init("电话", "phone.fill", .init(red: 0.35, green: 0.85, blue: 0.38), .init(red: 0.16, green: 0.72, blue: 0.24)),
+        .init("Safari", "compass.drawing", .white, .white, glyph: .init(red: 0.05, green: 0.45, blue: 0.95)),
+        .init("信息", "message.fill", .init(red: 0.35, green: 0.85, blue: 0.38), .init(red: 0.16, green: 0.72, blue: 0.24)),
+        .init("音乐", "music.note", .init(red: 0.98, green: 0.35, blue: 0.45), .init(red: 0.90, green: 0.15, blue: 0.30)),
+    ]
+
     private func smooth(_ edge0: CGFloat, _ edge1: CGFloat, _ x: CGFloat) -> CGFloat {
         let t = min(1, max(0, (x - edge0) / (edge1 - edge0)))
         return t * t * (3 - 2 * t)
@@ -222,6 +383,17 @@ struct UnlockPreviewView: View {
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "M月d日 EEEE"
         return formatter.string(from: Date())
+    }
+
+    private static var weekdayLine: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "EEEE"
+        return formatter.string(from: Date())
+    }
+
+    private static var dayLine: String {
+        String(Calendar.current.component(.day, from: Date()))
     }
 
     private static var timeLine: String {
