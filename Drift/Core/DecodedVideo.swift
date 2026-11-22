@@ -1,0 +1,245 @@
+import Foundation
+import ImageIO
+import UIKit
+
+/// One decoded video wallpaper, kept on the phone ready to flash.
+///
+/// The decode (video page, Grace, 2026-11-22) runs the very same
+/// `PosterBoardVideo.generate` an apply would run, but ahead of time
+/// and into the library below, so flashing a heavy video no longer
+/// pays the decode minutes into a run — the failure that killed
+/// restore dry runs after their long pulls. What is stored is the
+/// generated descriptor tree itself (the `product` directory), plus
+/// a small `meta.json` describing it and a preview image. An apply
+/// stages the tree back out of the library (see
+/// `PosterBoardVideo.generate(selection:)`); the library copy is
+/// never written by an apply, so one decode serves any number of
+/// flashes until the user deletes it.
+struct DecodedVideoItem: Identifiable, Equatable {
+    let id: String
+    /// The source video's file name — display only; the source is
+    /// not kept.
+    let name: String
+    /// The playback options the decode was made with. Changing the
+    /// options means decoding again: the product embodies them.
+    let loop: Bool
+    let reverse: Bool
+    let foreground: Bool
+    let calculationMode: PosterBoardCalculationMode
+    /// Decoded frame count for a loop; nil for the live-photo shape.
+    let frameCount: Int?
+    /// Frame size in pixels (0 when it could not be read back).
+    let width: Int
+    let height: Int
+    /// The product tree's total size on disk.
+    let byteCount: Int64
+    let decodedAt: Date
+
+    /// The item's own directory inside the library root.
+    var directory: URL { DecodedVideoLibrary.root.appendingPathComponent(id, isDirectory: true) }
+    /// The generated descriptor tree an apply stages.
+    var productDirectory: URL { directory.appendingPathComponent("product", isDirectory: true) }
+    var previewURL: URL { directory.appendingPathComponent("preview.jpg") }
+    var hasPreview: Bool { FileManager.default.fileExists(atPath: previewURL.path) }
+
+    var sizeText: String { ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file) }
+
+    /// The one-line option summary the lists show, e.g.
+    /// 「循环 · 400 帧 · 倒放」.
+    var optionsSummary: String {
+        var parts: [String] = []
+        if loop {
+            parts.append("循环")
+            if let frameCount { parts.append("\(frameCount) 帧") }
+        } else {
+            parts.append("非循环（实况照片式）")
+        }
+        if reverse { parts.append("倒放") }
+        if foreground { parts.append("前景层") }
+        return parts.joined(separator: " · ")
+    }
+
+    var resolutionText: String? {
+        guard width > 0, height > 0 else { return nil }
+        return "\(width)×\(height)"
+    }
+
+    /// The selection a flash of this item runs: no source video, the
+    /// stored product instead, with the decode's options riding
+    /// along for the log and the judgement text.
+    func makeSelection() -> PosterBoardSelection {
+        var selection = PosterBoardSelection()
+        selection.preGeneratedVideoDirectory = productDirectory
+        selection.preGeneratedVideoName = name
+        selection.loop = loop
+        selection.reverse = reverse
+        selection.foreground = foreground
+        selection.calculationMode = calculationMode
+        return selection
+    }
+}
+
+/// The decoded-video library: a directory of items under
+/// Documents/PosterBoard/DecodedVideos, one folder per item.
+///
+/// An item only exists once its decode has finished and its
+/// `meta.json` is written; a decode interrupted by the app being
+/// killed leaves a folder without one, and the launch scan removes
+/// such orphans rather than letting a forever-「解码中」 ghost stand
+/// (Grace's cleanup ruling, 2026-11-22). The in-flight decode itself
+/// is memory-only state for the same reason.
+final class DecodedVideoLibrary: ObservableObject {
+    static let shared = DecodedVideoLibrary()
+
+    static var root: URL {
+        URL.documents.appendingPathComponent("PosterBoard/DecodedVideos", conformingTo: .data)
+    }
+
+    @Published private(set) var items: [DecodedVideoItem] = []
+    /// The source name of the decode currently running, if any.
+    @Published private(set) var decodingName: String?
+
+    private struct Meta: Codable {
+        var name: String
+        var loop: Bool
+        var reverse: Bool
+        var foreground: Bool
+        var calculationMode: String
+        var frameCount: Int?
+        var width: Int
+        var height: Int
+        var byteCount: Int64
+        var decodedAt: Date
+    }
+
+    init() { reload() }
+
+    var totalBytes: Int64 { items.reduce(0) { $0 + $1.byteCount } }
+    var isDecoding: Bool { decodingName != nil }
+
+    /// Re-read the library from disk, dropping folders that carry no
+    /// readable meta (interrupted decodes, partial copies).
+    func reload() {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: Self.root, withIntermediateDirectories: true)
+        var loaded: [DecodedVideoItem] = []
+        let dirs = (try? fm.contentsOfDirectory(at: Self.root, includingPropertiesForKeys: nil)) ?? []
+        for dir in dirs {
+            let metaURL = dir.appendingPathComponent("meta.json")
+            guard let data = try? Data(contentsOf: metaURL),
+                  let meta = try? JSONDecoder().decode(Meta.self, from: data) else {
+                try? fm.removeItem(at: dir)
+                continue
+            }
+            loaded.append(DecodedVideoItem(
+                id: dir.lastPathComponent,
+                name: meta.name,
+                loop: meta.loop,
+                reverse: meta.reverse,
+                foreground: meta.foreground,
+                calculationMode: PosterBoardCalculationMode(rawValue: meta.calculationMode) ?? .linear,
+                frameCount: meta.frameCount,
+                width: meta.width,
+                height: meta.height,
+                byteCount: meta.byteCount,
+                decodedAt: meta.decodedAt))
+        }
+        items = loaded.sorted { $0.decodedAt > $1.decodedAt }
+    }
+
+    /// Decode the page's current pick with its current options and
+    /// keep the product. Throws with the decode's own error; a failed
+    /// decode leaves nothing behind.
+    @MainActor
+    func decode(selection: PosterBoardSelection, preview: UIImage?) async throws {
+        guard let plan = selection.plan else { throw DriftError("还没选视频。") }
+        guard decodingName == nil else { throw DriftError("已经有一个视频在解码了，等它解完再来。") }
+        let name = selection.videoDisplayName ?? "Video"
+        decodingName = name
+        defer { decodingName = nil }
+
+        let fm = FileManager.default
+        let id = "\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString.prefix(8))"
+        let directory = Self.root.appendingPathComponent(id, isDirectory: true)
+        let product = directory.appendingPathComponent("product", isDirectory: true)
+        try fm.createDirectory(at: product, withIntermediateDirectories: true)
+        do {
+            try await PosterBoardVideo.generate(plan: plan, outputDirectory: product) {
+                DriftEngine.shared.log($0)
+            }
+        } catch {
+            try? fm.removeItem(at: directory)
+            throw error
+        }
+
+        // Read the product back for the list: frame count and frame
+        // size come from the frames themselves, never from a guess.
+        var frameCount: Int?
+        var width = 0
+        var height = 0
+        let frames = Self.jpegFiles(under: product)
+        if selection.loop {
+            frameCount = frames.count
+            if let first = frames.first, let size = Self.pixelSize(of: first) {
+                width = size.width
+                height = size.height
+            }
+        } else if let thumbnail = selection.thumbnail, let size = Self.pixelSize(of: thumbnail) {
+            width = size.width
+            height = size.height
+        }
+        let meta = Meta(name: name,
+                        loop: selection.loop,
+                        reverse: selection.reverse,
+                        foreground: selection.foreground,
+                        calculationMode: selection.calculationMode.rawValue,
+                        frameCount: frameCount,
+                        width: width,
+                        height: height,
+                        byteCount: Self.treeSize(of: product),
+                        decodedAt: Date())
+        let data = try JSONEncoder().encode(meta)
+        try data.write(to: directory.appendingPathComponent("meta.json"), options: .atomic)
+        if let preview, let jpeg = preview.jpegData(compressionQuality: 0.8) {
+            try? jpeg.write(to: directory.appendingPathComponent("preview.jpg"), options: .atomic)
+        }
+        reload()
+        DriftEngine.shared.log("Decoded video kept: \(name) (\(meta.byteCount) bytes, "
+            + "\(frameCount.map { "\($0) frame(s)" } ?? "live photo"))")
+    }
+
+    /// Delete the chosen items and their products.
+    func delete(ids: Set<String>) {
+        let fm = FileManager.default
+        for item in items where ids.contains(item.id) {
+            try? fm.removeItem(at: item.directory)
+        }
+        reload()
+    }
+
+    private static func jpegFiles(under root: URL) -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: nil) else { return [] }
+        return enumerator.compactMap { $0 as? URL }
+            .filter { $0.pathExtension.lowercased() == "jpg" }
+            .sorted { $0.path < $1.path }
+    }
+
+    private static func pixelSize(of image: URL) -> (width: Int, height: Int)? {
+        guard let source = CGImageSourceCreateWithURL(image as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+              let width = properties[kCGImagePropertyPixelWidth as String] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight as String] as? Int else { return nil }
+        return (width, height)
+    }
+
+    private static func treeSize(of root: URL) -> Int64 {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        var total: Int64 = 0
+        for case let url as URL in enumerator {
+            total += Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        }
+        return total
+    }
+}

@@ -18,7 +18,10 @@ struct DriftHomeView: View {
     @State private var importingPairing = false
     @State private var statusLine: String?
     @State private var confirmRespring = false
-    /// The restore write-back's danger confirmation (Alpha line).
+    /// The restore flash's pre-start confirmation (Grace,
+    /// 2026-11-22): shown at the flash tap whenever the judged
+    /// mode is the restore route, before anything is pulled.
+    @State private var confirmRestoreFlash = false
     /// #337 (Grace, 2026-11-16): the signature notice's entry
     /// window state — see `openEntryWindow()`.
     @State private var signatureNotice = false
@@ -695,6 +698,12 @@ struct DriftHomeView: View {
                               actions: [
                                 DriftSheetAction("立即注销", destructive: true) { respringNow() },
                               ])
+            .driftActionSheet(isPresented: $confirmRestoreFlash,
+                              title: DriftRestoreGate.confirmationTitle,
+                              message: DriftRestoreGate.confirmationMessage,
+                              actions: [
+                                DriftSheetAction("确定刷入", destructive: true) { performApply() },
+                              ])
             if session.running {
                 Text("正在刷入，刷完再注销。")
                     .font(.caption).foregroundStyle(.secondary)
@@ -742,6 +751,24 @@ struct DriftHomeView: View {
             session.errorText = judgement.blockedReason
             return
         }
+        // A restore flash asks first (Grace, 2026-11-22): the
+        // confirmation pops at the tap, before anything is pulled,
+        // and only its 「确定刷入」 continues into the run below.
+        // The one-flow inside the run is untouched — this gate sits
+        // before the run, not between its dry run and write-back.
+        if judgement.mode == .backup {
+            session.flashCover = false
+            confirmRestoreFlash = true
+            return
+        }
+        performApply()
+    }
+
+    /// The flash run itself, entered either straight from the tap
+    /// (every other route) or from the restore confirmation's
+    /// 「确定刷入」.
+    private func performApply() {
+        session.flashCover = true
         var runSelection = packsSelection
         runSelection.resetModes = []
         runSelection.fullReset = false

@@ -102,14 +102,14 @@ enum PosterBoardAirlift {
                 try? FileManager.default.removeItem(at: generatedVideoDirectory)
             }
         }
-        if let plan = selection.plan {
+        if selection.plan != nil || selection.preGeneratedVideoDirectory != nil {
             let directory = PosterBoard.workDirectory.appendingPathComponent(
                 "airlift-video-\(UUID().uuidString)", isDirectory: true)
             generatedVideoDirectory = directory
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try await PosterBoardVideo.generate(plan: plan, outputDirectory: directory, log: log)
+            try await PosterBoardVideo.generate(selection: selection, outputDirectory: directory, log: log)
             sources.append(Source(
-                name: "视频：\(selection.video?.lastPathComponent ?? "Video")",
+                name: "视频：\(selection.videoDisplayName ?? "Video")",
                 url: directory,
                 defaultExtension: PosterBoardPosterType.collections.extensionBundleID,
                 plannedDescriptors: 1

@@ -670,15 +670,11 @@ final class DriftSession: ObservableObject {
         guard !selection.tendies.isEmpty || selection.video != nil else {
             return (false, "先选择要写入的壁纸包或视频。")
         }
-        guard !selection.fullReset, selection.resetModes.isEmpty else {
-            return (false, "内核直刷不处理壁纸商店重置任务。")
-        }
-        // The channel's own gates, checked here as well as in the
-        // judge (Grace, 2026-11-15: 判定层面要做好): no caller may
-        // start a kernel write with the switch off or off-premise,
-        // whatever any earlier judgement said.
-        guard KernelDirectPremise.isEnabled else {
-            return (false, "内核直刷还没有打开：请先到「设置 → 实验性功能」里打开内核直刷，再回来刷入。")
+        guard selection.video == nil,
+              selection.preGeneratedVideoDirectory == nil,
+              !selection.fullReset,
+              selection.resetModes.isEmpty else {
+            return (false, "内核直刷当前只支持已选的 .tendies 描述文件，不处理视频或重置任务。")
         }
         let premise = KernelDirectPremise.evaluate(version: WorseQueryEscape.processVersion)
         guard premise.ready else {

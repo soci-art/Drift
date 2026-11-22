@@ -1,0 +1,286 @@
+import SwiftUI
+
+/// The two pages behind the video page's decoded-video entry
+/// (Grace, 2026-11-22): the library manager and the flash picker.
+///
+/// Decoding happens on the video page, where the video and its
+/// options are; these pages only keep the products and flash them.
+/// A decoded item is a finished descriptor tree, so flashing one
+/// never decodes again — the whole point of the library.
+
+/// One row's preview: the item's saved preview image, or a film
+/// placeholder when the decode kept none.
+private struct DecodedVideoThumb: View {
+    let item: DecodedVideoItem
+
+    var body: some View {
+        Group {
+            if item.hasPreview,
+               let data = try? Data(contentsOf: item.previewURL),
+               let image = UIImage(data: data) {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                LinearGradient(colors: [.indigo.opacity(0.35), .teal.opacity(0.3)],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .overlay(Image(systemName: "film").foregroundStyle(.secondary))
+            }
+        }
+        .frame(width: 46, height: 64)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct DecodedVideoRowText: View {
+    let item: DecodedVideoItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(item.name).font(.subheadline.weight(.medium)).lineLimit(1)
+            Text([item.optionsSummary, item.resolutionText]
+                    .compactMap { $0 }.joined(separator: " · "))
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Text("\(item.sizeText) · \(Self.dateText(item.decodedAt)) 解码")
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        }
+    }
+
+    private static func dateText(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "M月d日 HH:mm"
+        return formatter.string(from: date)
+    }
+}
+
+/// The library manager: what has been decoded, how much room it
+/// takes, and batch deletion. A decode in flight rides at the top
+/// as a row of its own — not selectable, since there is nothing to
+/// select yet — and a deleted item has to be decoded again before
+/// it can be flashed, which the footer says out loud.
+struct DecodedVideoListView: View {
+    @ObservedObject private var library = DecodedVideoLibrary.shared
+    @State private var selectedIDs: Set<String> = []
+    @State private var confirmingDelete = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            List {
+                if let decodingName = library.decodingName {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(decodingName).font(.subheadline.weight(.medium)).lineLimit(1)
+                            Text("解码中…").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                }
+                if library.items.isEmpty && !library.isDecoding {
+                    Text("还没有已解码的视频。回视频页选个视频，点「开始解码」，解好的会存到这里，刷的时候直接选，不用再等解码。")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                ForEach(library.items) { item in
+                    HStack(spacing: 12) {
+                        Button {
+                            if selectedIDs.contains(item.id) {
+                                selectedIDs.remove(item.id)
+                            } else {
+                                selectedIDs.insert(item.id)
+                            }
+                        } label: {
+                            Image(systemName: selectedIDs.contains(item.id)
+                                  ? "checkmark.circle.fill" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(selectedIDs.contains(item.id) ? Color.accentColor : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        DecodedVideoThumb(item: item)
+                        DecodedVideoRowText(item: item)
+                        Spacer()
+                        Text("就绪")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color.green.opacity(0.14),
+                                        in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                            .foregroundStyle(.green)
+                    }
+                }
+                if !library.items.isEmpty {
+                    Text("删掉的视频要重新解码后才能再刷。共 \(library.items.count) 个，占用 \(ByteCountFormatter.string(fromByteCount: library.totalBytes, countStyle: .file))。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .listStyle(.plain)
+            HStack(spacing: 12) {
+                Button(selectedIDs.count == library.items.count && !library.items.isEmpty
+                       ? "取消全选" : "全选") {
+                    if selectedIDs.count == library.items.count {
+                        selectedIDs = []
+                    } else {
+                        selectedIDs = Set(library.items.map(\.id))
+                    }
+                }
+                .driftGlassButton()
+                Spacer()
+                Text("已选 \(selectedIDs.count) 个").font(.subheadline).foregroundStyle(.secondary)
+                Button("删除所选") { confirmingDelete = true }
+                    .driftGlassButton()
+                    .disabled(selectedIDs.isEmpty)
+            }
+            .padding(12)
+        }
+        .navigationTitle("已解码的视频")
+        .navigationBarTitleDisplayMode(.inline)
+        .driftActionSheet(isPresented: $confirmingDelete,
+                          title: "删除所选视频？",
+                          message: "删掉后要重新解码才能再刷。确定删除选中的 \(selectedIDs.count) 个？",
+                          actions: [
+                            DriftSheetAction("删除", destructive: true) {
+                                library.delete(ids: selectedIDs)
+                                selectedIDs = []
+                            },
+                          ])
+    }
+}
+
+/// The flash picker: one decoded video, chosen with a radio, and
+/// the flash button at the very bottom under a line naming what
+/// will go in. The run itself is the video page's run with the
+/// item's selection — same judgement, same dispatch — except that
+/// nothing decodes on the way. A restore flash asks first, with the
+/// shared confirmation, like the wallpaper page.
+struct DecodedVideoPickerView: View {
+    @EnvironmentObject private var session: DriftSession
+    @EnvironmentObject private var identityMonitor: DeviceIdentityMonitor
+    @ObservedObject private var tunnelMonitor = TunnelMonitor.shared
+    @ObservedObject private var library = DecodedVideoLibrary.shared
+    @AppStorage(DriftJudge.manualKey) private var manualPickRaw: String?
+
+    @State private var pickedID: String?
+    @State private var statusLine: String?
+    @State private var confirmRestore = false
+
+    private var identity: DeviceIdentity { identityMonitor.current }
+    private var manualPick: DriftMethodPick { DriftMethodPick.fromStored(manualPickRaw) }
+    private var pickedItem: DecodedVideoItem? {
+        library.items.first { $0.id == pickedID }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            List {
+                if let decodingName = library.decodingName {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(decodingName).font(.subheadline.weight(.medium)).lineLimit(1)
+                            Text("解码中，解完才能选").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                }
+                if library.items.isEmpty && !library.isDecoding {
+                    Text("还没有已解码的视频，先回视频页选个视频点「开始解码」。")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                ForEach(library.items) { item in
+                    Button {
+                        pickedID = item.id
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: pickedID == item.id
+                                  ? "largecircle.fill.circle" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(pickedID == item.id ? Color.accentColor : .secondary)
+                            DecodedVideoThumb(item: item)
+                            DecodedVideoRowText(item: item)
+                            Spacer()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .listStyle(.plain)
+            VStack(spacing: 10) {
+                if let statusLine {
+                    Text(statusLine).font(.subheadline).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if let pickedItem {
+                    Text("将刷入：\(pickedItem.name)（\(pickedItem.optionsSummary)）")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                NativePrimaryButton(title: session.running ? "刷入中…" : "刷入",
+                                    systemImage: "film",
+                                    running: session.running,
+                                    disabled: pickedItem == nil || session.running) {
+                    tapFlash()
+                }
+                if session.running {
+                    Button("取消") { session.cancelRun() }.driftGlassButton()
+                }
+            }
+            .padding(12)
+        }
+        .navigationTitle("选择已解码的视频")
+        .navigationBarTitleDisplayMode(.inline)
+        .driftActionSheet(isPresented: $confirmRestore,
+                          title: DriftRestoreGate.confirmationTitle,
+                          message: DriftRestoreGate.confirmationMessage,
+                          actions: [
+                            DriftSheetAction("确定刷入", destructive: true) { performRun() },
+                          ])
+    }
+
+    /// The tap: judge first, and a restore answer asks before
+    /// anything runs — the same confirmation the wallpaper page
+    /// shows, at the same moment (before the pull starts).
+    private func tapFlash() {
+        guard let pickedItem else { return }
+        let judged = DriftJudge.judge(identity: identity, selection: pickedItem.makeSelection(),
+                                      pick: manualPick,
+                                      tunnelReady: tunnelMonitor.status == .ready)
+        if judged.isBlocked {
+            session.errorText = judged.blockedReason
+            return
+        }
+        if judged.mode == .backup {
+            confirmRestore = true
+            return
+        }
+        performRun()
+    }
+
+    /// The video page's run, carried on the item's selection
+    /// (re-judged on the current state, kernel dispatched directly,
+    /// everything else through the session funnel).
+    private func performRun() {
+        guard let pickedItem else { return }
+        let videoSelection = pickedItem.makeSelection()
+        Task {
+            var checked = DriftJudge.judge(
+                identity: identity, selection: videoSelection, pick: manualPick,
+                tunnelReady: tunnelMonitor.status == .ready)
+            if checked.isBlocked || checked.mode != .worseQuery {
+                if session.paired { await session.refreshIdentity() }
+                checked = DriftJudge.judge(
+                    identity: identity, selection: videoSelection, pick: manualPick,
+                    tunnelReady: tunnelMonitor.status == .ready)
+            }
+            guard !checked.isBlocked else {
+                session.errorText = checked.blockedReason
+                return
+            }
+            if checked.useKernel {
+                let outcome = await session.runKernelApply(identity: identity, selection: videoSelection)
+                if outcome.ok { statusLine = outcome.message }
+                else { statusLine = nil; session.errorText = outcome.message }
+            } else {
+                let outcome = await session.run(selection: videoSelection, mode: checked.mode,
+                                                pick: manualPick, identity: identity)
+                if outcome.ok { statusLine = outcome.message }
+                else { statusLine = nil; session.errorText = outcome.message }
+            }
+        }
+    }
+}

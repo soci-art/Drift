@@ -75,8 +75,11 @@ enum KernelDirectWriter {
         guard !selection.tendies.isEmpty || generatedVideoDirectory != nil else {
             throw DriftError("内核直刷需要先选择壁纸包或视频。")
         }
-        guard !selection.fullReset, selection.resetModes.isEmpty else {
-            throw DriftError("内核直刷不处理壁纸商店重置任务。")
+        guard selection.video == nil,
+              selection.preGeneratedVideoDirectory == nil,
+              !selection.fullReset,
+              selection.resetModes.isEmpty else {
+            throw DriftError("内核直刷当前只处理已选的 .tendies 描述文件，不处理视频或重置任务。")
         }
         guard selection.tendies.allSatisfy({ !$0.isContainer && !$0.isUnsafeContainer }) else {
             throw DriftError("内核直刷当前只写入描述文件，不接受包含整个商店容器或数据库的包。")

@@ -259,6 +259,7 @@ final class DriftEngine {
         // name both halves. (Preserved from the old engine.)
         if selection.fullReset || !selection.resetModes.isEmpty {
             let carriesWallpapers = !selection.tendies.isEmpty || selection.video != nil
+                || selection.preGeneratedVideoDirectory != nil
             if carriesWallpapers {
                 throw DriftError("PosterBoard 页已有一个待执行的重置："
                     + "（\(selection.describe)），同时还选中了壁纸。重置运行"
