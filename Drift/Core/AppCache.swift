@@ -12,10 +12,24 @@ import Foundation
 /// the management page's flash-channel identification.
 ///
 /// Logs are truncated, not deleted: the sinks keep writing to the
-/// same path, and truncation frees the space immediately. The file
-/// sink notices the size change on its next flush and reopens at
-/// the new end (#323), so a clear never leaves a hole behind the
+/// same path, and truncation frees the space immediately. The app
+/// log's sink notices the size change on its next flush and reopens
+/// at the new end (#323), so a clear never leaves a hole behind the
 /// lines written after it.
+///
+/// The Rust log (`minimuxer.log`) is the exception: it is NOT
+/// truncated here. Its writer is a plain cursor-based file handle
+/// inside the Rust FFI (`File::create` — no append mode, and no
+/// resync hook; #323's fix exists only on the Swift side), so
+/// truncating the file under it leaves the writer's cursor pointing
+/// past the new end, the next write lands there, and the file
+/// reopens as a sparse NUL hole that reads back as garbage and
+/// un-frees the space the clear just reported. Nothing is lost by
+/// sparing it: the Rust logger re-creates the file on every launch
+/// and the boot hygiene pass drops stale generations, so its size
+/// is bounded by one session plus a launch. It still counts in
+/// `measure()` — it is cache, just cache this pass cannot safely
+/// take mid-session.
 enum AppCache {
     struct Breakdown {
         var previews = 0
@@ -77,6 +91,11 @@ enum AppCache {
         for file in logFiles {
             if file == AppPaths.diagnostics {
                 try? fm.removeItem(at: file)
+            } else if file == AppPaths.rustLog {
+                // Live Rust sink — see the header note. Truncating it
+                // mid-session corrupts it; the next launch re-creates
+                // it anyway.
+                continue
             } else {
                 truncate(file)
             }

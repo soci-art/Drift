@@ -41,8 +41,8 @@ enum Diagnostics {
         let localBackend = WorseQueryEscape.backend(
             deviceVersion: WorseQueryEscape.processVersion,
             buildVersion: WorseQueryEscape.processBuildVersion).rawValue
-        lines.append("  本机直刷后端: \(localBackend)"
-            + "；发现的组: \(WorseQueryEscape.discoveredGroupIdentifier ?? "未发现可用组")")
+        let discoveredGroup = WorseQueryEscape.discoveredGroupIdentifier ?? "未发现可用组"
+        lines.append("  本机直刷后端: \(localBackend)；发现的组: \(discoveredGroup)")
         let tunnelReady = await TunnelMonitor.shared.status == .ready
         let judged = DriftJudge.judge(identity: identity,
                                       selection: PosterBoardSelection(),
@@ -119,7 +119,7 @@ enum Diagnostics {
         }
         lines.append("  backup encryption (com.apple.mobile.backup/WillEncrypt): "
             + (encrypt.map { $0 ? "ON — premise broken (encrypted Manifest.db)" : "off" }
-                ?? "unknown (no readable value — the device may never have made a computer backup, or the probe timed out)"))
+                ?? "unknown (probe timed out or the device could not be asked)"))
         // Keyword slice first (the actual evidence), raw tail last (proves the
         // sink is live and shows an unclassified failure).  Both were captured
         // before the probes above wrote a single line.

@@ -210,7 +210,7 @@ final class DriftEngine {
     /// thousand lines, and the lines that mattered scrolled away in
     /// it (field log, 2026-11-20). The bar still receives every
     /// callback; only the log is stepped, to one line per whole
-    /// percent per stream (build 4, 2026-11-21).
+    /// percent per stream (2026-11-21, same change as the Alpha line).
     private var lastLoggedPercents: [String: Int] = [:]
 
     /// Clamp and throttle a Rust progress callback down to whole percent.

@@ -222,7 +222,11 @@ struct PosterBoardTendie: Identifiable, Hashable {
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if let number = Int(text) {
                 switch number {
-                case 7000...7999:
+                // Grace (2026-11-16): the Collections band is the
+                // 74xx line only — the wider 7000...7999 reading
+                // this shipped with could call a non-74 7xxx pack a
+                // collection pack by mistake.
+                case 7400...7499:
                     if detected != .container { detected = .collections }
                 case 3000...3999, 9000...9999:
                     detected = .mercury
@@ -612,11 +616,8 @@ enum PosterBoardImports {
         let version = DeviceIdentityMonitor.shared.current.version.isEmpty
             ? WorseQueryEscape.processVersion
             : DeviceIdentityMonitor.shared.current.version
-        // iOS 17 only (Grace, 2026-11-17): complete the descriptor
-        // instance configurations a pack may not ship — on that
-        // system a missing rendering configuration leaves a flashed
-        // layered wallpaper static. Best-effort and in place, like
-        // the steps around it; other systems are not touched.
+        // iOS 17 only: fill missing per-descriptor instance plists at import.
+        // Existing pack files are preserved; failures leave the original pack.
         if let completed = PackInstanceConfigs.completeIfNeeded(clean, deviceVersion: version) {
             clean = completed
         }

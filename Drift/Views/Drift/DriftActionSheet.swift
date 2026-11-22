@@ -39,6 +39,12 @@ struct DriftActionSheetView: View {
     let title: String
     var message: String?
     let actions: [DriftSheetAction]
+    /// The bottom dismiss button's words — 「取消」 everywhere,
+    /// except a pure notice whose only way out reads as a plain
+    /// acknowledgement (Grace, 2026-11-16, #341: the kernel
+    /// suspension notice's button says 「确定」, and it is the
+    /// sheet's only button).
+    var cancelTitle: String = "取消"
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -85,7 +91,7 @@ struct DriftActionSheetView: View {
             Button {
                 dismiss()
             } label: {
-                Text("取消")
+                Text(cancelTitle)
                     .font(.body.weight(.semibold))
                     .frame(maxWidth: .infinity)
                     .frame(height: 50)
@@ -106,13 +112,15 @@ extension View {
     /// device, so this sheet shape is the settled one).
     func driftActionSheet(isPresented: Binding<Bool>, title: String,
                           message: String? = nil,
-                          actions: [DriftSheetAction]) -> some View {
+                          actions: [DriftSheetAction],
+                          cancelTitle: String = "取消") -> some View {
         // One fixed height for every dialog (option A): uniformity
         // over hugging the content. 400 fits the tallest case (a
         // capped long message, or three actions) with room to spare.
         let height: CGFloat = 400
         return sheet(isPresented: isPresented) {
-            DriftActionSheetView(title: title, message: message, actions: actions)
+            DriftActionSheetView(title: title, message: message, actions: actions,
+                                 cancelTitle: cancelTitle)
                 .presentationDetents([.height(height)])
                 // Grace (2026-11-12, on build 33): no drag-indicator
                 // bar at the top of these sheets — remove it everywhere.

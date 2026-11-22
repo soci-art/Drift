@@ -47,8 +47,8 @@ struct PosterBoardManagerView: View {
     }
 
     /// The kernel route, judged exactly as the store listing judges
-    /// it: premise ready. This gate was missing when
-    /// the kernel source was added to the page (#334) — on a 17/18
+    /// it: premise ready. This gate was missing when the kernel source
+    /// was added to the page (#334) — on a 17/18
     /// device the label fell through to 不可用 and the delete button
     /// stayed disabled no matter what was selected (user report,
     /// 2026-11-15).
@@ -172,8 +172,8 @@ struct PosterBoardManagerView: View {
             notice = ManagerNotice(
                 title: opened ? "已打开 PosterBoard" : "请手动打开",
                 message: opened
-                    ? "请从应用切换器中关闭 PosterBoard，然后检查锁定屏幕壁纸选择器，删掉的壁纸就没了。"
-                    : "请打开锁定屏幕壁纸选择器来刷新 PosterBoard；如果删掉的壁纸还在，请从应用切换器关闭 PosterBoard 后再看。",
+                    ? "请在应用切换器里上滑结束 PosterBoard，然后检查锁定屏幕壁纸选择器，删掉的壁纸就没了。"
+                    : "请打开锁定屏幕壁纸选择器来刷新 PosterBoard；如果删掉的壁纸还在，请在应用切换器里上滑结束 PosterBoard 后再看。",
                 offersRefresh: false)
         case .restartPosterBoard:
             Task {

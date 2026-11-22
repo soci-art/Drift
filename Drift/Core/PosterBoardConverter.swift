@@ -660,6 +660,57 @@ enum PosterBoardConverter {
         return written
     }
 
+    /// The `<contents … src="assets/…">` references of a plane document,
+    /// in document order — for a frame-stack plane that order IS the
+    /// frame sequence.
+    private static let contentsSrcRE = regex(#"src="assets/([^"]+)""#)
+
+    /// CAPlayground "video" packs (user report, 2026-11-20): the floating
+    /// plane stacks every frame as a sublayer and orders them only
+    /// through `caplay*` attributes the system does not know — no timed
+    /// animation exists in the document at all, so the system shows at
+    /// most one arbitrary frame. Flatten the floating plane to the one
+    /// frame the pack itself says the locked screen settles on:
+    /// `caplaySyncStateFrameMode` maps Locked to "end" (the last frame)
+    /// or "beginning" (the first); anything else defaults to the last
+    /// frame. The animation is NOT restored — the pack becomes a still.
+    ///
+    /// Returns true when a caplay video plane was found and rewritten.
+    @discardableResult
+    static func flattenCaplayVideoPlane(_ descriptorDir: URL) -> Bool {
+        guard let wallpaperDir = findWallpaperDir(descriptorDir) else { return false }
+        let parsed = parseLogicalScreenClass(
+            readPlist(wallpaperDir.appendingPathComponent("Wallpaper.plist"))["logicalScreenClass"] as? String)
+        let screen = parsed ?? (393, 852, 3)
+        for planeDir in planeDirs(wallpaperDir) {
+            guard planeRole(planeDir.path) == "Floating" else { continue }
+            let mainCAML = planeDir.appendingPathComponent("main.caml")
+            guard let text = readText(mainCAML),
+                  text.contains("caplayKind=\"video\"") else { continue }
+            let full = NSRange(text.startIndex..., in: text)
+            let frames = contentsSrcRE.matches(in: text, range: full).compactMap { match -> String? in
+                guard let range = Range(match.range(at: 1), in: text) else { return nil }
+                return String(text[range])
+            }
+            guard let first = frames.first, let last = frames.last else { return false }
+            var lockedFrame = last
+            if let mode = xmlAttribute(text, "caplaySyncStateFrameMode") {
+                let decoded = mode.replacingOccurrences(of: "&quot;", with: "\"")
+                if let locked = regex(#""Locked"\s*:\s*"([^"]+)""#)
+                    .firstMatch(in: decoded, range: NSRange(decoded.startIndex..., in: decoded)),
+                   let range = Range(locked.range(at: 1), in: decoded),
+                   String(decoded[range]) == "beginning" {
+                    lockedFrame = first
+                }
+            }
+            return writeText(flatPlaneCAML(role: "Floating", image: lockedFrame,
+                                           width: Double(screen.width),
+                                           height: Double(screen.height)),
+                             to: mainCAML)
+        }
+        return false
+    }
+
     // MARK: - Modernising
 
     /// The plane document as the reference writes it after conversion.
