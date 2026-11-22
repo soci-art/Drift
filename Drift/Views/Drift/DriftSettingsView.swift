@@ -273,32 +273,32 @@ struct DriftSettingsView: View {
                 Text("刷完上滑关闭 PosterBoard")
                     .foregroundStyle(.secondary)
             }
+            HStack {
+                Label("写入后端", systemImage: "arrow.triangle.branch")
+                Spacer()
+                let backend = WorseQueryEscape.backend(deviceVersion: WorseQueryEscape.processVersion,
+                                                       buildVersion: WorseQueryEscape.processBuildVersion)
+                Text(backend == .badQuery ? "bad_query（无需 App Group）" : (backend == .worseQuery ? "worse_query（需要 App Group）" : "不支持"))
+                    .foregroundStyle(.secondary)
+            }
             HStack(alignment: .top) {
                 Label("App Group", systemImage: "person.2")
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
                     if let group = WorseQueryEscape.discoveredGroupIdentifier {
                         Text(group).font(.caption.monospaced())
-                        Text("进程实际带着，容器可打开")
+                        Text("签名授予，容器可打开")
                             .font(.caption2).foregroundStyle(.secondary)
-                    } else if WorseQueryEscape.backend(
-                        deviceVersion: WorseQueryEscape.processVersion,
-                        buildVersion: WorseQueryEscape.processBuildVersion) == .badQuery {
-                        Text("bad_query 不需要 App Group")
-                            .foregroundStyle(.secondary)
-                        Text("iOS 26.0–26.6.1 走 bad_query，直接按路径授权")
-                            .font(.caption2).foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
                     } else {
                         Text("没有可用的组")
                             .foregroundStyle(.orange)
-                        Text("进程没有带着 App Group，或带着的组都打不开")
+                        Text("签名没有授予 App Group，或授予的组都打不开")
                             .font(.caption2).foregroundStyle(.secondary)
                             .multilineTextAlignment(.trailing)
                     }
                 }
             }
-            Text("组名在运行时向系统查询（SecTask，问的是本进程实际带着的组），逐个试开，第一个能打开的才用；不再读安装包里的描述文件。")
+            Text("iOS 26.0–26.6.1 使用 bad_query，不需要 App Group；其余支持版本使用 worse_query，需要当前进程实际带有可打开的组。组名通过 SecTask 从当前进程的签名权限中读取。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

@@ -465,14 +465,6 @@ struct DriftHomeView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(pick.label).font(.subheadline.weight(.medium))
-                        if pick.isExperimental {
-                            Text("实验")
-                                .font(.caption2.weight(.semibold))
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(Color.orange.opacity(0.16),
-                                            in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-                                .foregroundStyle(.orange)
-                        }
                     }
                     Text(pick.subtitle)
                         .font(.caption).foregroundStyle(.secondary)

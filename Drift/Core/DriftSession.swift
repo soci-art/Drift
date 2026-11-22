@@ -1048,15 +1048,6 @@ enum DriftMethodPick: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 本机直刷 carried the 实验 badge until Grace graduated it
-    /// (#330, 2026-11-14); 内核直刷 carried it until it graduated
-    /// on 2026-11-20; the badge belongs to 恢复刷 now, since it
-    /// joined the list (Grace, 2026-11-19).
-    /// Neither graduated route wears the experimental badge any
-    /// more: 内核直刷 graduated on the formal line first, and 恢复刷
-    /// followed with its formal opening (Grace, 2026-11-22).
-    var isExperimental: Bool { false }
-
     /// Read a stored pick. Every value written by 2.0.0 or 1.x means the same
     /// thing now: let Drift choose. Only the three new raw values are picks.
     static func fromStored(_ raw: String?) -> DriftMethodPick {
