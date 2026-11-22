@@ -26,7 +26,6 @@ struct DriftHomeView: View {
     /// window state — see `openEntryWindow()`.
     @State private var signatureNotice = false
     @State private var signatureNoticeDone = false
-    @State private var unlockPayload: UnlockPreviewPayload?
     @State private var entryWindowOpen = false
     @State private var entryWindowGeneration = 0
     @State private var didFirstAppear = false
@@ -225,9 +224,6 @@ struct DriftHomeView: View {
                 } onCancel: {
                     importingPairing = false
                 }
-            }
-            .fullScreenCover(item: $unlockPayload) { payload in
-                UnlockPreviewView(payload: payload)
             }
             .driftActionSheet(isPresented: $signatureNotice,
                               title: "本机直刷不可用",
@@ -577,19 +573,6 @@ struct DriftHomeView: View {
                 Button("取消") { session.cancelRun() }
                     .driftGlassButton()
             }
-            // The unlock preview (Grace, 2026-11-23): before the
-            // flash, walk the lock-to-home swipe once with the very
-            // material about to be written. One pack, or the picked
-            // video — a multi-pack selection has no single answer.
-            if let unlockPreviewSource {
-                Button {
-                    prepareUnlockPreview(unlockPreviewSource)
-                } label: {
-                    Label("先看效果", systemImage: "chevron.up.circle")
-                }
-                .driftGlassButton()
-                .disabled(session.running)
-            }
             if let statusLine {
                 Text(statusLine).font(.subheadline).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -705,34 +688,6 @@ struct DriftHomeView: View {
         }
         .padding(12)
         .driftCard()
-    }
-
-    /// What 「先看效果」 can preview right now: exactly one pack, or
-    /// the video page's pick when no pack is selected.
-    private enum UnlockPreviewSource {
-        case pack(PosterBoardTendie)
-        case video(URL, URL?)
-    }
-
-    private var unlockPreviewSource: UnlockPreviewSource? {
-        if selection.tendies.count == 1, let pack = selection.tendies.first {
-            return .pack(pack)
-        }
-        if selection.tendies.isEmpty, let video = selection.video {
-            return .video(video, selection.thumbnail)
-        }
-        return nil
-    }
-
-    private func prepareUnlockPreview(_ source: UnlockPreviewSource) {
-        switch source {
-        case .pack(let pack):
-            AppLog.op("主页：先看效果（\(pack.name)）")
-            Task { unlockPayload = await UnlockPreviewPayload.load(pack: pack) }
-        case .video(let url, let thumbnail):
-            AppLog.op("主页：先看效果（视频 \(url.lastPathComponent)）")
-            unlockPayload = UnlockPreviewPayload.load(video: url, thumbnail: thumbnail)
-        }
     }
 
     private func runApply() {

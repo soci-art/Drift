@@ -78,31 +78,34 @@ struct DecodedVideoListView: View {
                     Text("还没有已解码的视频。回视频页选个视频，点「开始解码」，解好的会存到这里，刷的时候直接选，不用再等解码。")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
+                // Grace (2026-11-23): the whole row is the tap
+                // target — before, only the little circle at the
+                // front answered, and the rest of the row was dead.
                 ForEach(library.items) { item in
-                    HStack(spacing: 12) {
-                        Button {
-                            if selectedIDs.contains(item.id) {
-                                selectedIDs.remove(item.id)
-                            } else {
-                                selectedIDs.insert(item.id)
-                            }
-                        } label: {
+                    Button {
+                        if selectedIDs.contains(item.id) {
+                            selectedIDs.remove(item.id)
+                        } else {
+                            selectedIDs.insert(item.id)
+                        }
+                    } label: {
+                        HStack(spacing: 12) {
                             Image(systemName: selectedIDs.contains(item.id)
                                   ? "checkmark.circle.fill" : "circle")
                                 .font(.title3)
                                 .foregroundStyle(selectedIDs.contains(item.id) ? Color.accentColor : .secondary)
+                            DecodedVideoThumb(item: item)
+                            DecodedVideoRowText(item: item)
+                            Spacer()
+                            Text("就绪")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.green.opacity(0.14),
+                                            in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                                .foregroundStyle(.green)
                         }
-                        .buttonStyle(.plain)
-                        DecodedVideoThumb(item: item)
-                        DecodedVideoRowText(item: item)
-                        Spacer()
-                        Text("就绪")
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(Color.green.opacity(0.14),
-                                        in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                            .foregroundStyle(.green)
                     }
+                    .buttonStyle(.plain)
                 }
                 if !library.items.isEmpty {
                     Text("删掉的视频要重新解码后才能再刷。共 \(library.items.count) 个，占用 \(ByteCountFormatter.string(fromByteCount: library.totalBytes, countStyle: .file))。")
