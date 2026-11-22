@@ -200,14 +200,10 @@ struct DriftSettingsView: View {
             } label: {
                 Label("关于此 App", systemImage: "info.circle")
             }
-            // Collection #329 (Grace, 2026-11-14): the experimental
-            // features page sits with About — 内核直刷 and 恢复刷
-            // live there behind their switches, nowhere else.
-            NavigationLink {
-                ExperimentalFeaturesView()
-            } label: {
-                Label("实验性功能", systemImage: "flask")
-            }
+            // The 实验性功能 page that sat here (#329) was deleted
+            // whole (Grace, 2026-11-22): once 内核直刷 and 恢复刷
+            // graduated and their switches went, the page held only
+            // two explanation cards under an "experimental" name.
         }
     }
 
