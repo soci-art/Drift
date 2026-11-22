@@ -948,11 +948,10 @@ struct DriftModeAvailability: Identifiable, Equatable {
 /// 2026-11-15); its channel is not a `PosterBoardApplyMode` — the judge
 /// handles the pick directly. The restore pick joined the list on
 /// 2026-11-19 (Grace): selectable, badged 实验， mirroring the kernel
-/// pick — while its 实验性功能 switch is off (and the route itself
-/// stays sealed behind `DriftRestoreGate`), the judge answers a
-/// restore pick with the go-turn-it-on reminder and never runs it.
-/// When the restore research lands, the switch becomes real and the
-/// route opens through this same pick.
+/// pick — and the route opened as a regular feature on 2026-11-22:
+/// no switch and no badge; the judge answers from the device
+/// premises (iOS 27 segment by build number, the tunnel trio), and
+/// `DriftRestoreGate` remains only as an emergency stop.
 enum DriftMethodPick: String, CaseIterable, Identifiable {
     case auto
     case noRespring
@@ -998,15 +997,6 @@ enum DriftMethodPick: String, CaseIterable, Identifiable {
         case .local: return .worseQuery
         }
     }
-
-    /// 本机直刷 carried the 实验 badge until Grace graduated it
-    /// (#330, 2026-11-14); 内核直刷 carried it until it graduated
-    /// on 2026-11-20; the badge belongs to 恢复刷 now, since it
-    /// joined the list (Grace, 2026-11-19).
-    /// Neither graduated route wears the experimental badge any
-    /// more: 内核直刷 graduated on the formal line first, and 恢复刷
-    /// followed with its formal opening (Grace, 2026-11-22).
-    var isExperimental: Bool { false }
 
     /// Read a stored pick. Every value written by 2.0.0 or 1.x means the same
     /// thing now: let Drift choose. Only the three new raw values are picks.
