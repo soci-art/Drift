@@ -467,6 +467,23 @@ enum KernelDirectProbe {
             log("[容器定位] 缓存快照为空：没有可复用的容器路径")
         }
 
+        // Level 1.5 — LaunchServices CSStore is an independent cold-start
+        // source. The kernel route still validates the actual store directory
+        // and performs its existing write/read/delete self-test afterwards.
+        if !pastDeadline(deadline) {
+            log("[容器定位] 尝试 LaunchServices CSStore 解析 PosterBoard 容器")
+            if let container = WorseQueryEscape.launchServicesContainerPath(bundleID: posterBoardBundleID),
+               isApplicationContainerPath(container),
+               let store = storeIn(container: container) {
+                log("[内核探针] CSStore 命中 PosterBoard 容器：\(container)")
+                PosterBoardLocal.cachedContainer = container
+                return (LocatedStore(container: container, store: store,
+                                     structureVersions: structureVersions(in: store)), false)
+            }
+            if pastDeadline(deadline) { return (nil, true) }
+            log("[容器定位] CSStore 未命中或商店目录核验失败，继续现有 pathleak 流程")
+        }
+
         // Match 本机直刷's cold-start locator: segmented pathleak discovery
         // finds direct child container paths without first enumerating the
         // entire Applications directory. The kernel backend validates each

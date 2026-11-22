@@ -857,6 +857,43 @@ enum PosterBoardLocal {
             log("已知容器路径核对失败：商店目录不存在或不是目录（已知路径本应正确，此行诊断价值最高）")
         }
 
+        // 1.5 LaunchServices CSStore. It is a bounded cold-start source
+        // between exact known paths and the inode scan. Keep main's consume /
+        // content-identity validation and retain pathleak as the fallback.
+        if Date() < deadline {
+            log("尝试通过 LaunchServices CSStore 定位 PosterBoard 容器")
+            if let container = WorseQueryEscape.launchServicesContainerPath(bundleID: "com.apple.PosterBoard"),
+               isApplicationContainerPath(container) {
+                log("CSStore 返回候选容器：\(container)，开始授权和商店目录身份核验")
+                do {
+                    let probeHandle = try WorseQueryEscape.consume(path: container, createDirectory: false)
+                    let identified = isPosterBoardContainer(atPath: container)
+                    WorseQueryEscape.release(probeHandle)
+                    if identified {
+                        do {
+                            let handle = try WorseQueryEscape.consume(path: container, createDirectory: true)
+                            cachedContainer = container
+                            log(String(format: "CSStore 命中 PosterBoard 容器：%@（handle %lld，总定位 %.0f ms）",
+                                       container, handle, millis(since: locateStart)))
+                            return (container, handle)
+                        } catch {
+                            log("CSStore 候选身份核验通过，但正式授权失败：\(error.localizedDescription)；回退 pathleak")
+                        }
+                    } else {
+                        log("CSStore 候选未通过 PosterBoard 商店目录身份核验，回退 pathleak")
+                    }
+                } catch {
+                    log("CSStore 候选授权失败：\(error.localizedDescription)，回退 pathleak")
+                }
+            } else {
+                log("CSStore 未返回可用的 PosterBoard 应用容器，回退 pathleak")
+            }
+            if Date() >= deadline {
+                log("CSStore 检查耗尽本轮定位时限，停止本轮扫描")
+                throw DriftError("这次没找到壁纸商店。")
+            }
+        }
+
         // 2. Shared pathleak scan. Only candidates whose first consume succeeded
         // but whose content identity check failed are eligible for a later ask.
         var recheckCandidates: [String] = []
