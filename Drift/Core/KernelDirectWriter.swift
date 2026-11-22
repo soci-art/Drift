@@ -24,6 +24,7 @@ enum KernelDirectWriter {
         let name: String
         let url: URL
         let defaultExtension: String
+        let plannedDescriptors: Int
         let extract: (URL) throws -> Void
     }
 
@@ -67,11 +68,12 @@ enum KernelDirectWriter {
         storePath: String,
         structureVersions: [Int],
         deviceVersion: String,
+        generatedVideoDirectory: URL? = nil,
         log: @escaping @Sendable (String) -> Void,
         progress: @escaping (Double) -> Void
     ) throws -> Outcome {
-        guard !selection.tendies.isEmpty else {
-            throw DriftError("内核直刷需要先选择至少一个 .tendies 壁纸包。")
+        guard !selection.tendies.isEmpty || generatedVideoDirectory != nil else {
+            throw DriftError("内核直刷需要先选择至少一个 .tendies 壁纸包或提供已生成的视频目录。")
         }
         guard selection.video == nil,
               selection.preGeneratedVideoDirectory == nil,
@@ -117,9 +119,10 @@ enum KernelDirectWriter {
             )
         }
 
-        let sources = selection.tendies.map { pack in
+        var sources = selection.tendies.map { pack in
             Source(name: pack.name, url: pack.url,
-                   defaultExtension: pack.posterType.extensionBundleID) { stage in
+                   defaultExtension: pack.posterType.extensionBundleID,
+                   plannedDescriptors: PosterBoardAirlift.countDescriptors(inArchiveAt: pack.url)) { stage in
                 try pack.extract(to: stage)
                 if PosterBoard.shouldConvertLegacy(pack: pack,
                                                     deviceVersion: deviceVersion,
@@ -127,6 +130,34 @@ enum KernelDirectWriter {
                     PosterBoard.convertLegacyPack(pack.name, at: stage, log: log)
                 }
             }
+        }
+
+        if let generatedVideoDirectory {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(
+                atPath: generatedVideoDirectory.path, isDirectory: &isDirectory
+            ), isDirectory.boolValue else {
+                throw DriftError("生成的视频目录不存在或不是目录：\(generatedVideoDirectory.path)")
+            }
+            let children = try FileManager.default.contentsOfDirectory(
+                at: generatedVideoDirectory, includingPropertiesForKeys: nil
+            )
+            guard !children.isEmpty else {
+                throw DriftError("生成的视频目录为空，未找到可导入的描述符。")
+            }
+            sources.append(Source(
+                name: "视频：\(selection.videoDisplayName ?? "Video")",
+                url: generatedVideoDirectory,
+                defaultExtension: PosterBoardPosterType.collections.extensionBundleID,
+                plannedDescriptors: 1
+            ) { stage in
+                for child in children {
+                    try FileManager.default.copyItem(
+                        at: child,
+                        to: stage.appendingPathComponent(child.lastPathComponent, isDirectory: true)
+                    )
+                }
+            })
         }
 
         let manager = FileManager.default
@@ -137,9 +168,7 @@ enum KernelDirectWriter {
 
         // Unpack first, then select a generation from the providers actually
         // declared by the descriptor trees, not from the pack's default type.
-        let planned = max(1, sources.reduce(0) {
-            $0 + PosterBoardAirlift.countDescriptors(inArchiveAt: $1.url)
-        })
+        let planned = max(1, sources.reduce(0) { $0 + $1.plannedDescriptors })
         log("[内核写入] 计划统计：\(sources.count) 个包，预计 \(planned) 个描述符")
         var prepared: [PreparedDescriptor] = []
 
@@ -170,6 +199,10 @@ enum KernelDirectWriter {
 
             for (index, descriptor) in descriptors.enumerated() {
                 guard PosterBoard.managedProviders.contains(descriptor.extensionID) else {
+                    if descriptor.extensionID == PosterBoardPosterType.container.extensionBundleID {
+                        throw DriftError("「\(source.name)」是『容器』类型的包，这类包内核直刷写不了。"
+                            + "请到壁纸包页把它的出现位置改回『自动』，再刷一次。")
+                    }
                     throw DriftError("不支持的 PosterBoard provider：\(descriptor.extensionID)")
                 }
                 let numericID = Int.random(in: PosterBoard.identifierRange)
