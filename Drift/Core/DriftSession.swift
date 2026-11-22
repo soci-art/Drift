@@ -1365,6 +1365,13 @@ enum DriftJudge {
             // not; manual picks never reroute to another channel.
             let premise = KernelDirectPremise.evaluate(version: p.appVersion)
             if !premise.inBand {
+                // Finer split (Grace, 2026-11-16): a 17/18 system
+                // past the top of the band hears where the top is,
+                // not just which generations the method belongs to.
+                if premise.pastBandTop {
+                    return blocked("你手动选了内核直刷：它只支持到 iOS 18.7.1，这台的系统是 iOS \(p.appVersion)，已经超过这个范围。手动选定后不会自动改走别的通道。",
+                                   notice: "内核直刷只支持到 iOS 18.7.1。")
+                }
                 return blocked("你手动选了内核直刷：它只支持 iOS 17 / 18，这台的系统是 iOS \(p.appVersion)，不在这个范围。手动选定后不会自动改走别的通道。",
                                notice: "内核直刷只支持 iOS 17 / 18。")
             }
