@@ -550,8 +550,8 @@ enum PosterBoardImports {
         let entries = archive.filter {
             $0.type == .file && $0.path.lowercased().hasSuffix(".tendies")
         }
-        let totalBytes = entries.reduce(Int64(0)) { $0 + $1.uncompressedSize }
-        var doneBytes: Int64 = 0
+        let totalBytes = entries.reduce(UInt64(0)) { $0 + $1.uncompressedSize }
+        var doneBytes: UInt64 = 0
         for entry in entries {
             let entryName = (entry.path as NSString).lastPathComponent
             let scratch = fm.temporaryDirectory
@@ -562,7 +562,8 @@ enum PosterBoardImports {
             guard (try? archive.extract(entry, to: scratch)) != nil,
                   isZIPFile(scratch) else { continue }
             if let progress, totalBytes > 0 {
-                progress(Double(entryBase + entry.uncompressedSize / 2) / Double(totalBytes))
+                let halfway = entryBase + entry.uncompressedSize / 2
+                progress(Double(halfway) / Double(totalBytes))
             }
             do {
                 let tendie = try storePackCopying(from: scratch,
