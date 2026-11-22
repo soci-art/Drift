@@ -461,6 +461,15 @@ enum PosterBoardImports {
     ///     way tapping 「壁纸修复」 would — nobody has to know there was
     ///     anything to fix.
     static func importPicked(from source: URL) throws -> [PosterBoardTendie] {
+        try importPicked(from: source, progress: nil)
+    }
+
+    /// The same import, reporting real progress (Grace,
+    /// 2026-11-23): the fraction follows bytes actually copied
+    /// or extracted plus the repair stages — never a timer, never
+    /// a guess. `progress` fires on the caller's thread.
+    static func importPicked(from source: URL,
+                             progress: ((Double) -> Void)?) throws -> [PosterBoardTendie] {
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
 
@@ -482,7 +491,7 @@ enum PosterBoardImports {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         let first = attemptImport(from: source, sourceName: source.lastPathComponent,
-                                  since: started)
+                                  since: started, progress: progress)
         if let packs = first.packs { return packs }
 
         // A pack circulating as base64 text: decode it to a scratch
@@ -490,7 +499,7 @@ enum PosterBoardImports {
         if let decoded = base64UnwrappedFile(from: source) {
             defer { try? FileManager.default.removeItem(at: decoded) }
             let second = attemptImport(from: decoded, sourceName: source.lastPathComponent,
-                                       since: started)
+                                       since: started, progress: progress)
             if let packs = second.packs { return packs }
             throw second.packError ?? first.packError ?? DriftError("这个文件不是能用的壁纸包。")
         }
@@ -504,16 +513,22 @@ enum PosterBoardImports {
     /// returns the pack attempt's error, which is the message the
     /// validator would have given the user.
     private static func attemptImport(from file: URL, sourceName: String,
-                                      since started: Date) -> (packs: [PosterBoardTendie]?, packError: Error?) {
+                                      since started: Date,
+                                      progress: ((Double) -> Void)?) -> (packs: [PosterBoardTendie]?, packError: Error?) {
         let packName = normalizedName(for: sourceName)
         do {
-            let tendie = try storePackCopying(from: file, named: packName)
-            let result = finishImport(tendie)
+            let tendie = try storePackCopying(from: file, named: packName,
+                                              progress: progress.map { report in
+                                                  { report(0.75 * $0) }
+                                              })
+            let result = finishImport(tendie, progress: progress.map { report in
+                { report(0.75 + 0.25 * $0) }
+            })
             AppLog.timing("导入 \(packName)", since: started)
             return (result, nil)
         } catch {
             let packError = error
-            let bagged = importBag(from: file)
+            let bagged = importBag(from: file, progress: progress)
             if !bagged.isEmpty {
                 AppLog.op("导入：从 \(sourceName) 里取出 \(bagged.count) 个壁纸包")
                 AppLog.timing("导入压缩包 \(sourceName)", since: started)
@@ -527,24 +542,37 @@ enum PosterBoardImports {
     /// entry is extracted to a scratch file and stored from there, so
     /// a bag of large packs never holds more than one on disk outside
     /// the library itself — and none of them in memory.
-    private static func importBag(from file: URL) -> [PosterBoardTendie] {
+    private static func importBag(from file: URL,
+                                  progress: ((Double) -> Void)?) -> [PosterBoardTendie] {
         guard let archive = try? Archive(url: file, accessMode: .read) else { return [] }
         let fm = FileManager.default
         var result: [PosterBoardTendie] = []
-        for entry in archive where entry.type == .file
-            && entry.path.lowercased().hasSuffix(".tendies") {
+        let entries = archive.filter {
+            $0.type == .file && $0.path.lowercased().hasSuffix(".tendies")
+        }
+        let totalBytes = entries.reduce(Int64(0)) { $0 + $1.uncompressedSize }
+        var doneBytes: Int64 = 0
+        for entry in entries {
             let entryName = (entry.path as NSString).lastPathComponent
             let scratch = fm.temporaryDirectory
                 .appendingPathComponent("drift-inner-\(UUID().uuidString).tendies")
             defer { try? fm.removeItem(at: scratch) }
+            let entryBase = doneBytes
+            doneBytes += entry.uncompressedSize
             guard (try? archive.extract(entry, to: scratch)) != nil,
                   isZIPFile(scratch) else { continue }
+            if let progress, totalBytes > 0 {
+                progress(Double(entryBase + entry.uncompressedSize / 2) / Double(totalBytes))
+            }
             do {
                 let tendie = try storePackCopying(from: scratch,
                                                   named: normalizedName(for: entryName))
                 result.append(contentsOf: finishImport(tendie))
             } catch {
                 AppLog.warn("导入：压缩包里的 \(entryName) 不是能用的壁纸包，跳过")
+            }
+            if let progress, totalBytes > 0 {
+                progress(min(1, Double(doneBytes) / Double(totalBytes)))
             }
         }
         return result
@@ -589,11 +617,17 @@ enum PosterBoardImports {
     /// Copy one pack file in under `name` and validate it. A failed
     /// validation removes the file again — nothing half-imported is
     /// left behind for the next launch to trip over.
-    private static func storePackCopying(from file: URL, named name: String) throws -> PosterBoardTendie {
+    private static func storePackCopying(from file: URL, named name: String,
+                                         progress: ((Double) -> Void)? = nil) throws -> PosterBoardTendie {
         let destination = uniqueDestination(for: name)
         do {
-            try FileManager.default.copyItem(at: file, to: destination)
+            if let progress {
+                try copyChunked(from: file, to: destination, progress: progress)
+            } else {
+                try FileManager.default.copyItem(at: file, to: destination)
+            }
         } catch {
+            try? FileManager.default.removeItem(at: destination)
             throw DriftError("无法把 \(name) 拷贝进应用：" + error.localizedDescription)
         }
         do {
@@ -604,9 +638,32 @@ enum PosterBoardImports {
         }
     }
 
+    /// Copy in 1 MiB chunks, reporting the fraction of real
+    /// bytes moved — the import progress bar's measuring tape.
+    private static func copyChunked(from source: URL, to destination: URL,
+                                    progress: (Double) -> Void) throws {
+        let total = ((try? FileManager.default.attributesOfItem(atPath: source.path))?[.size]
+            as? NSNumber)?.int64Value ?? 0
+        let reader = try FileHandle(forReadingFrom: source)
+        defer { try? reader.close() }
+        FileManager.default.createFile(atPath: destination.path, contents: nil)
+        let writer = try FileHandle(forWritingTo: destination)
+        var copied: Int64 = 0
+        while true {
+            let chunk = reader.readData(ofLength: 1 << 20)
+            if chunk.isEmpty { break }
+            writer.write(chunk)
+            copied += Int64(chunk.count)
+            if total > 0 { progress(min(1, Double(copied) / Double(total))) }
+        }
+        try writer.close()
+        progress(1)
+    }
+
     /// The steps every stored pack goes through before it joins the
     /// list, returning the pack plus anything the steps produced.
-    private static func finishImport(_ tendie: PosterBoardTendie) -> [PosterBoardTendie] {
+    private static func finishImport(_ tendie: PosterBoardTendie,
+                                     progress: ((Double) -> Void)? = nil) -> [PosterBoardTendie] {
         // #259 (Grace, 2026-11-12): a shared placeholder descriptor id
         // is swapped for a fresh one right here, at import — the pack
         // that joins the list is already clean. Best-effort: any
@@ -630,7 +687,7 @@ enum PosterBoardImports {
         if !importIssues.isEmpty {
             if let repaired = try? PackRepair.repair(clean, issues: importIssues,
                                                      deviceVersion: version,
-                                                     progress: { _ in }) {
+                                                     progress: progress ?? { _ in }) {
                 // #291 (Grace, 2026-11-13): an import-time repair is
                 // invisible in the list — the repaired pack REPLACES
                 // the imported one under its own file name, so the
