@@ -105,6 +105,18 @@ struct DriftRootView: View {
         } message: {
             Text(session.noticeText ?? "")
         }
+        // The restore line's completion (Grace, 2026-11-21): after a
+        // successful one-flow write-back the app offers the restart
+        // instead of just naming it — 确定 asks the device to restart
+        // through the diagnostics relay, 取消 leaves it to a manual
+        // restart. Both apply pages funnel into this one alert.
+        .alert("刷入成功，需要重启生效，是否重启？", isPresented: Binding(
+            get: { session.restoreRestartOffer },
+            set: { if !$0 { session.restoreRestartOffer = false } }
+        )) {
+            Button("确定") { Task { await session.restartDeviceAfterRestore() } }
+            Button("取消", role: .cancel) { session.restoreRestartOffer = false }
+        }
         // Collection #150/#151 (Grace, 2026-11-11): while a flash run is
         // going, cover the whole app with a blocking card — nothing can be
         // tapped until the run finishes. The 2026-11-12 round adds the
@@ -121,6 +133,31 @@ struct DriftRootView: View {
                             .controlSize(.large)
                         Text(session.flashCover ? "正在刷入" : (session.cover?.title ?? ""))
                             .font(.headline)
+                        // The one exception to the bare flash cover
+                        // below (build 4, 2026-11-21, Grace): a restore
+                        // dry run's pull can hold this cover for
+                        // minutes, so it shows a real progress bar —
+                        // the pull stream's own percent, fed through
+                        // `coverProgress` as the engine reports it. It
+                        // holds still on the stream's slow stretches
+                        // rather than creeping: real, not smoothed.
+                        // `coverProgress` is a 0…1 fraction everywhere
+                        // in the app (the session's wiring divides the
+                        // engine's percent by 100); this branch once
+                        // read it as 0…100, which pinned the bar at
+                        // ~1 % and the caption at 0 % for the whole
+                        // run — the field report "the bar never moves"
+                        // (fixed 2026-11-21, Grace). Read it as the
+                        // fraction it is.
+                        if session.flashCover, session.coverShowsProgress,
+                           let progress = session.coverProgress {
+                            ProgressView(value: progress)
+                                .progressViewStyle(.linear)
+                                .frame(width: 220)
+                            Text("\(Int(progress * 100))%")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                         // Grace (2026-11-15): while a flash runs, the
                         // cover shows 「正在刷入」 and nothing else —
                         // no caution line, no stage text, no progress

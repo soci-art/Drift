@@ -14,11 +14,15 @@ struct DriftHomeView: View {
     /// change the judgement card re-renders from immediately. The same key
     /// backs `DriftJudge.manualPick`, which stays for non-view readers.
     @AppStorage(DriftJudge.manualKey) private var manualPickRaw: String?
+    /// The 内核直刷 switch from 实验性功能 (#329): while it is off the
+    /// method does not exist on this page at all.
+    @AppStorage(KernelDirectPremise.enabledKey) private var kernelEnabled = false
 
     @State private var imports: [PosterBoardTendie] = PosterBoardImports.load()
     @State private var importingPairing = false
     @State private var statusLine: String?
     @State private var confirmRespring = false
+    /// The restore write-back's danger confirmation (Alpha line).
     /// #337 (Grace, 2026-11-16): the signature notice's entry
     /// window state — see `openEntryWindow()`.
     @State private var signatureNotice = false
@@ -43,8 +47,27 @@ struct DriftHomeView: View {
         WorseQueryEscape.isAvailable(deviceVersion: localVersion, buildVersion: localBuild)
     }
     private var tunnelReady: Bool { tunnelMonitor.status == .ready }
+    /// This page's apply scope (Grace, 2026-11-21): the wallpaper page's
+    /// flash carries the checked packs and nothing else — a video left
+    /// selected on the video page is NOT this run's business, exactly as
+    /// the video page's own apply already carries the video alone. The
+    /// two pages share one selection value (and one method pick — the
+    /// judgement below still reads the same `manualPick` the video page
+    /// reads), so the scoping happens here, at the apply funnel, by
+    /// clearing the other page's half out of the copy a run is judged
+    /// and executed on. The field evidence: a `.tendies` file sitting in
+    /// the video slot (restored into the shared selection at launch)
+    /// rode two restore dry runs on 2026-11-21 and killed both at the
+    /// compile's video step, nine minutes into each pull, before the
+    /// packs the run was actually for were ever reached.
+    private var packsSelection: PosterBoardSelection {
+        var scoped = selection
+        scoped.video = nil
+        scoped.thumbnail = nil
+        return scoped
+    }
     private var judgement: DriftModeJudgement {
-        DriftJudge.judge(identity: identity, selection: selection, pick: manualPick,
+        DriftJudge.judge(identity: identity, selection: packsSelection, pick: manualPick,
                          tunnelReady: tunnelReady)
     }
     /// The method rows to draw: every pick, always — 内核直刷
@@ -155,6 +178,46 @@ struct DriftHomeView: View {
                 DriftBackground()
                 ScrollView {
                     VStack(spacing: 14) {
+                        // #340 (Grace, 2026-11-16): a nightly package says
+                        // so beside the app name. The name stays in the
+                        // large title's place at the same size — this row
+                        // is drawn where the system large title sits, with
+                        // an orange 「预发行版」 to its right; the name
+                        // itself never moves. Release builds keep the
+                        // system large title and never show this row.
+                        // The Alpha research line (Grace, 2026-11-19)
+                        // wears a red "Alpha-test" in the same place, and
+                        // a red warning banner under it: the restore
+                        // route inside is unverified research.
+                        if AppVersion.channel != .release {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text("Drift")
+                                    .font(.largeTitle)
+                                    .fontWeight(.bold)
+                                if AppVersion.channel == .alpha {
+                                    Text("Alpha-test")
+                                        .font(.headline)
+                                        .foregroundStyle(.red)
+                                } else {
+                                    Text("预发行版")
+                                        .font(.headline)
+                                        .foregroundStyle(.orange)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        if AppVersion.channel == .alpha {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                Text("研究包：恢复刷已实机验证，仍有数据风险")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(Color.red,
+                                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
                         headerCard
                         tutorialEntryCard
                         if updateChecker.updateAvailable, let latest = updateChecker.latest {
@@ -172,8 +235,8 @@ struct DriftHomeView: View {
                     .driftPageWidth()
                 }
             }
-            .navigationTitle("Drift")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationTitle(AppVersion.channel == .release ? "Drift" : "")
+            .navigationBarTitleDisplayMode(AppVersion.channel == .release ? .large : .inline)
             // Collection #223 (Grace, 2026-11-12): no toolbar pairing
             // shortcut — it duplicated the status card's full-width
             // 「导入配对文件」button directly below it.
@@ -328,7 +391,7 @@ struct DriftHomeView: View {
         .driftCard()
     }
 
-    /// One of the four method rows: a radio, the fixed name and its one-line
+    /// One of the method rows: a radio, the fixed name and its one-line
     /// description, and the channel's live status on the right.
     private func methodRow(_ pick: DriftMethodPick, _ judged: DriftModeJudgement) -> some View {
         let selected = manualPick == pick
@@ -364,6 +427,13 @@ struct DriftHomeView: View {
         } else {
             status = available ? "可用" : "不可用"
         }
+        // The status text and its colour must come from the same
+        // judgement (Grace, build 4 field report 2026-11-21: the
+        // restore row read 可用 in the secondary grey). The restore
+        // pick has no row in `judged.options`, so the generic
+        // `available` is permanently false for it; its colour follows
+        // `judged.restoreAvailable`, the same value its text follows.
+        let statusAvailable = pick == .restore ? judged.restoreAvailable : available
         return Button {
             if sealed {
                 session.noticeTitle = "本机直刷不可选"
@@ -408,7 +478,7 @@ struct DriftHomeView: View {
                 Spacer(minLength: 6)
                 Text(status)
                     .font(.caption2.weight(.medium))
-                    .foregroundStyle(available ? Color.green : Color.secondary)
+                    .foregroundStyle(statusAvailable ? Color.green : Color.secondary)
                     .lineLimit(2)
                     .multilineTextAlignment(.trailing)
             }
@@ -671,7 +741,7 @@ struct DriftHomeView: View {
             }
             return
         }
-        var runSelection = selection
+        var runSelection = packsSelection
         runSelection.resetModes = []
         runSelection.fullReset = false
         // #343 (Grace, 2026-11-21): a run launched from this page
@@ -780,6 +850,7 @@ struct DriftHomeView: View {
                 : "现在没有可用的窗口触发注销，请手动从系统里注销一次。"
         }
     }
+
 
     private func handlePairingPick(_ urls: [URL]) {
         guard let url = urls.first else {

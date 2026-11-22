@@ -72,13 +72,34 @@ public final class MobileBackup2BackupContext: @unchecked Sendable {
     // rejected payload while the exchange is live, then deleting them in
     // `cleanup_discarded_files()` once `dl_loop()` returns — i.e. *after* the
     // device has finished looking at the tree.  That is what this state does:
-    // placeholder paths are recorded here, re-keyed when the device commits them
-    // (Snapshot/… → shard path), and removed by `cleanupPlaceholders()`.
+    // placeholders the delegate created are recorded here (with the
+    // identity they were created with), re-keyed when the device commits
+    // them (Snapshot/… → shard path), and removed by
+    // `cleanupPlaceholders()`.  A filtered path whose file already
+    // existed is recorded separately and is never removed.
     private let placeholderLock = NSLock()
-    private var placeholders: Set<String> = []
+    /// A stand-in this delegate materialised itself, with the identity
+    /// (inode + size) it had at creation. Only these files may ever be
+    /// deleted by `cleanupPlaceholders`, and only after re-verifying
+    /// the identity — the path alone is not proof the file is still
+    /// the 0-byte stand-in that was created (build 5, 2026-11-21: the
+    /// registry used to record every filtered path, created or not).
+    private struct PlaceholderIdentity { let inode: UInt64; let size: Int64 }
+    private var createdPlaceholders: [String: PlaceholderIdentity] = [:]
+    /// Filtered paths where a file already existed when the filter was
+    /// consulted. The delegate did not create that file and must never
+    /// delete it; it is registered — with the size it had — only so the
+    /// run can say it was there.
+    private var preexistingFiltered: [String: Int64] = [:]
     private var placeholderCount = 0
     private var placeholderFailures = 0
     private var placeholderSamples: [String] = []
+    private var preexistingCount = 0
+    /// Commit moves the host skipped because the staged source was not
+    /// there (see `mb2_rename`), kept with both paths so the
+    /// pre-cleanup report can name them instead of letting them vanish
+    /// into a bare count.
+    private var forgottenMoves: [(from: String, to: String)] = []
 
     // Commit (DLMessageMoveItems) accounting. The device ends every backup with
     // one move batch that renames each staged file from `Snapshot/...` to its
@@ -210,6 +231,10 @@ public final class MobileBackup2BackupContext: @unchecked Sendable {
     ///
     /// Never truncates: if something already lives at that path the device (or a
     /// previous attempt) put it there, and clobbering it would lose real data.
+    /// Creation is atomic (O_CREAT | O_EXCL): "the file was not there" and
+    /// "this delegate created it" are the same event, so a pre-existing file
+    /// is registered as pre-existing — with its size — and never enters the
+    /// set cleanup may delete (build 5, 2026-11-21).
     /// Returns the absolute path when the placeholder is (now) on disk.
     @discardableResult
     func noteRejectedPayload(fileName: String) -> String? {
@@ -230,52 +255,117 @@ public final class MobileBackup2BackupContext: @unchecked Sendable {
                 return nil
             }
         }
-        if !fm.fileExists(atPath: path), !fm.createFile(atPath: path, contents: nil) {
+        let fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+        if fd >= 0 {
+            close(fd)
+            var st = stat()
+            let identity = lstat(path, &st) == 0
+                ? PlaceholderIdentity(inode: UInt64(st.st_ino), size: Int64(st.st_size))
+                : PlaceholderIdentity(inode: 0, size: 0)
             placeholderLock.lock()
-            placeholderFailures += 1
+            let isNew = createdPlaceholders[path] == nil && preexistingFiltered[path] == nil
+            if createdPlaceholders[path] == nil { createdPlaceholders[path] = identity }
+            if isNew { placeholderCount += 1 }
+            let count = placeholderCount
+            let firstFive = placeholderSamples.count < 5
+            if isNew, firstFive {
+                placeholderSamples.append((path as NSString).lastPathComponent)
+            }
             placeholderLock.unlock()
-            reportEvent("placeholder: cannot create \(path) for \(fileName)")
-            return nil
-        }
 
+            if isNew, firstFive || count % 200 == 0 {
+                reportEvent("placeholder: #\(count) \((path as NSString).lastPathComponent) — 0-byte stand-in "
+                    + "for a payload the filter drained (removed once the device finishes its tree check)")
+            }
+            return path
+        }
+        let createErrno = errno
+        if createErrno == EEXIST {
+            var st = stat()
+            let size = lstat(path, &st) == 0 ? Int64(st.st_size) : -1
+            placeholderLock.lock()
+            let isNew = createdPlaceholders[path] == nil && preexistingFiltered[path] == nil
+            if isNew {
+                preexistingFiltered[path] = size
+                preexistingCount += 1
+            }
+            let count = preexistingCount
+            placeholderLock.unlock()
+            if isNew, count <= 5 || count % 200 == 0 {
+                reportEvent("placeholder: \((path as NSString).lastPathComponent) already on disk "
+                    + "(\(size) byte(s)) — a filtered path with a file of its own; registered as "
+                    + "pre-existing, never deleted by cleanup")
+            }
+            return path
+        }
         placeholderLock.lock()
-        let isNew = placeholders.insert(path).inserted
-        if isNew { placeholderCount += 1 }
-        let count = placeholderCount
-        let firstFive = placeholderSamples.count < 5
-        if firstFive {
-            placeholderSamples.append((path as NSString).lastPathComponent)
-        }
+        placeholderFailures += 1
         placeholderLock.unlock()
-
-        if isNew, firstFive || count % 200 == 0 {
-            reportEvent("placeholder: #\(count) \((path as NSString).lastPathComponent) — 0-byte stand-in "
-                + "for a payload the filter drained (removed once the device finishes its tree check)")
-        }
-        return path
+        reportEvent("placeholder: cannot create \(path) for \(fileName) (errno \(createErrno))")
+        return nil
     }
 
     /// The device's commit renamed a staged file; keep the placeholder's identity
     /// aligned with it (Snapshot/… → shard path), exactly like
-    /// pymobiledevice3's `_move_discarded_files`.
+    /// pymobiledevice3's `_move_discarded_files`. The recorded identity
+    /// (inode + size) travels with the entry. If the destination was
+    /// itself a registered filtered file, the move overwrote it — that
+    /// is said out loud, because it is the one place a pre-existing
+    /// file can be lost to the placeholder machinery.
     func renamePlaceholder(from source: String, to destination: String) {
         placeholderLock.lock()
-        let matched = placeholders.remove(source) != nil
-        if matched { placeholders.insert(destination) }
+        var overwrote = false
+        if let identity = createdPlaceholders.removeValue(forKey: source) {
+            overwrote = createdPlaceholders[destination] != nil
+                || preexistingFiltered[destination] != nil
+            createdPlaceholders[destination] = identity
+            preexistingFiltered.removeValue(forKey: destination)
+        } else if let size = preexistingFiltered.removeValue(forKey: source) {
+            overwrote = createdPlaceholders[destination] != nil
+                || preexistingFiltered[destination] != nil
+            preexistingFiltered[destination] = size
+            createdPlaceholders.removeValue(forKey: destination)
+        }
         placeholderLock.unlock()
+        if overwrote {
+            reportEvent("commit: the move into \(destination) overwrote a registered "
+                + "filtered file; its registry entry was replaced by the moved one")
+        }
     }
 
+    /// The device copied a staged file; if the source was a registered
+    /// filtered file, the copy is a stand-in of ours too — registered
+    /// under its own identity (a copy is a different file).
     func copyPlaceholder(from source: String, to destination: String) {
+        var st = stat()
+        guard lstat(destination, &st) == 0 else { return }
+        let identity = PlaceholderIdentity(inode: UInt64(st.st_ino), size: Int64(st.st_size))
         placeholderLock.lock()
-        if placeholders.contains(source) { placeholders.insert(destination) }
+        let known = createdPlaceholders[source] != nil || preexistingFiltered[source] != nil
+        if known { createdPlaceholders[destination] = identity }
         placeholderLock.unlock()
     }
 
-    /// The device asked for the path to be removed — it is nobody's business
-    /// any more.
-    func forgetPlaceholder(_ path: String) {
+    /// A commit move the host skipped because the staged source was not
+    /// there (see `mb2_rename`). The registration, if any, is dropped —
+    /// but the move itself is remembered with both paths, so the
+    /// pre-cleanup report can name it instead of the skip vanishing
+    /// into a count (build 5, 2026-11-21).
+    func forgetPlaceholder(from source: String, to destination: String) {
         placeholderLock.lock()
-        placeholders.remove(path)
+        forgottenMoves.append((from: source, to: destination))
+        createdPlaceholders.removeValue(forKey: source)
+        preexistingFiltered.removeValue(forKey: source)
+        placeholderLock.unlock()
+    }
+
+    /// The device asked for the path itself to be removed — it is
+    /// nobody's placeholder any more, and nothing about the removal is
+    /// a shortfall worth naming.
+    func dropPlaceholderRegistration(_ path: String) {
+        placeholderLock.lock()
+        createdPlaceholders.removeValue(forKey: path)
+        preexistingFiltered.removeValue(forKey: path)
         placeholderLock.unlock()
     }
 
@@ -289,20 +379,30 @@ public final class MobileBackup2BackupContext: @unchecked Sendable {
     @discardableResult
     func cleanupPlaceholders() -> Int {
         placeholderLock.lock()
-        let paths = placeholders
-        placeholders.removeAll()
+        let entries = createdPlaceholders
+        createdPlaceholders.removeAll()
         placeholderLock.unlock()
-        guard let root = backupRoot, !paths.isEmpty else { return 0 }
+        guard let root = backupRoot, !entries.isEmpty else { return 0 }
 
         var base = root
         while base.hasSuffix("/"), base.count > 1 { base.removeLast() }
         let fm = FileManager.default
         var removed = 0
         // Deepest first: a parent can only become empty after its children went.
-        for path in paths.sorted(by: { $0.split(separator: "/").count > $1.split(separator: "/").count }) {
-            if fm.fileExists(atPath: path) {
-                do { try fm.removeItem(atPath: path); removed += 1 } catch { /* left for the next run */ }
+        for path in entries.keys.sorted(by: { $0.split(separator: "/").count > $1.split(separator: "/").count }) {
+            // Delete only what is still provably the stand-in that was
+            // created: same inode as registered, still 0 bytes. A file
+            // that grew or was replaced is not ours to remove.
+            guard let identity = entries[path] else { continue }
+            var st = stat()
+            guard lstat(path, &st) == 0 else { continue }  // already gone
+            guard Int64(st.st_size) == 0,
+                  identity.inode == 0 || UInt64(st.st_ino) == identity.inode else {
+                reportEvent("cleanup: \(path) is registered as a placeholder but no longer "
+                    + "matches it (size \(st.st_size)) — left in place")
+                continue
             }
+            do { try fm.removeItem(atPath: path); removed += 1 } catch { continue }
             var parent = (path as NSString).deletingLastPathComponent
             while parent.count > base.count, parent.hasPrefix(base) {
                 let contents = (try? fm.contentsOfDirectory(atPath: parent)) ?? []
@@ -314,19 +414,151 @@ public final class MobileBackup2BackupContext: @unchecked Sendable {
         return removed
     }
 
+    /// Name everything the commit did not carry away, BEFORE
+    /// `cleanupPlaceholders` runs (build 5, 2026-11-21).
+    ///
+    /// The 2026-11-20/21 field runs ended with the device refusing the
+    /// backup (MBErrorDomain/205) over a commit shortfall of exactly
+    /// four files — a count with no names, because the only records
+    /// were totals. This report is the naming pass, in four parts:
+    /// placeholders still keyed under their `Snapshot/` staging path
+    /// (created, but no rename ever re-keyed them), the moves the host
+    /// skipped for a missing source (kept by `forgetPlaceholder`), any
+    /// file still sitting in staging that the registry does not know
+    /// about (a kept payload the commit never moved, say), and one
+    /// reconciliation line. It changes nothing on disk.
+    ///
+    /// The counts are also returned (build 6, 2026-11-21): the gateway's
+    /// close classification needs them as values, not just as log lines —
+    /// a device refusal at close may only be reclassified when every one
+    /// of them is zero.
+    struct UnmovedPlaceholders {
+        var stillStaged = 0
+        var forgotten = 0
+        var unknown = 0
+    }
+
+    @discardableResult
+    func reportUnmovedPlaceholders() -> UnmovedPlaceholders {
+        var outcome = UnmovedPlaceholders()
+        guard let root = backupRoot else { return outcome }
+        var base = root
+        while base.hasSuffix("/"), base.count > 1 { base.removeLast() }
+        placeholderLock.lock()
+        let created = createdPlaceholders
+        let preexisting = preexistingFiltered
+        let forgotten = forgottenMoves
+        let createdTotal = placeholderCount
+        let preexistingTotal = preexistingCount
+        placeholderLock.unlock()
+
+        // "Still staged" is judged on path components relative to the
+        // backup root, never on a substring: a payload whose own name
+        // contains "Snapshot" must not be mistaken for a staging path.
+        func staged(_ path: String) -> Bool {
+            guard path.hasPrefix(base + "/") else { return false }
+            return path.dropFirst(base.count + 1).split(separator: "/").first == "Snapshot"
+        }
+        let fm = FileManager.default
+        var leftover = 0
+        var leftoverListed = 0
+        for path in created.keys.sorted() where staged(path) {
+            leftover += 1
+            guard leftoverListed < 60 else { continue }
+            leftoverListed += 1
+            var st = stat()
+            if lstat(path, &st) == 0 {
+                reportEvent("unmoved placeholder: \(path) — created by the delegate, "
+                    + "\(st.st_size) byte(s) on disk, never renamed by the commit")
+            } else {
+                let code = errno
+                reportEvent("unmoved placeholder: \(path) — created by the delegate, "
+                    + "lstat failed (errno \(code))")
+            }
+        }
+        if leftover > leftoverListed {
+            reportEvent("unmoved placeholder: … and \(leftover - leftoverListed) more")
+        }
+        var preexistingLeftover = 0
+        for (path, size) in preexisting.sorted(by: { $0.key < $1.key }) where staged(path) {
+            preexistingLeftover += 1
+            if preexistingLeftover <= 60 {
+                reportEvent("unmoved placeholder: \(path) — pre-existing file "
+                    + "(\(size) byte(s) when the filter saw it), never renamed by the commit")
+            }
+        }
+        for (index, move) in forgotten.enumerated() {
+            if index < 60 {
+                reportEvent("forgotten move: \(move.from) -> \(move.to) — the device asked "
+                    + "for the move but the staged source was not there (counted as skipped)")
+            } else if index == 60 {
+                reportEvent("forgotten move: … (further entries counted, not listed)")
+            }
+        }
+        // Staging walk: whatever still sits under Snapshot/ that the
+        // registry does not know about at all.
+        let snapshotDir = base + "/Snapshot"
+        var unknown: [String] = []
+        if let walker = fm.enumerator(atPath: snapshotDir) {
+            let registered = Set(created.keys).union(preexisting.keys)
+            for case let rel as String in walker {
+                var isDir: ObjCBool = false
+                let full = snapshotDir + "/" + rel
+                if fm.fileExists(atPath: full, isDirectory: &isDir), !isDir.boolValue,
+                   !registered.contains(full) {
+                    unknown.append(full)
+                }
+            }
+        }
+        for path in unknown.prefix(60) {
+            reportEvent("staging leftover: \(path) — still under Snapshot/ and not a "
+                + "registered placeholder")
+        }
+        if unknown.count > 60 {
+            reportEvent("staging leftover: … and \(unknown.count - 60) more")
+        }
+        reportEvent("placeholder reconciliation: \(createdTotal) created, "
+            + "\(preexistingTotal) pre-existing, \(leftover + preexistingLeftover) still "
+            + "staged, \(forgotten.count) forgotten move(s), \(unknown.count) unknown "
+            + "file(s) left in staging")
+        outcome.stillStaged = leftover + preexistingLeftover
+        outcome.forgotten = forgotten.count
+        outcome.unknown = unknown.count
+        return outcome
+    }
+
+    /// The close-of-session accounting as values (build 6, 2026-11-21):
+    /// the numbers `commitSummary()` prints, for the gateway's refusal
+    /// classification. A refusal at close is only ever reclassified when
+    /// all three are zero — a session that skipped, failed or errored on
+    /// anything earlier may owe its refusal to that, and stays a failure.
+    func closeAccounting() -> (skipped: Int, failed: Int, delegateErrors: Int) {
+        commitLock.lock()
+        let skipped = skippedCount, failed = failedCount
+        commitLock.unlock()
+        errorLock.lock()
+        let errors = delegateErrors
+        errorLock.unlock()
+        return (skipped, failed, errors)
+    }
+
     /// One line for the app log: what the filter did to the device's view of the
     /// backup, and whether the stand-ins were cleaned up again.
     func placeholderSummary(removed: Int) -> String {
         placeholderLock.lock()
         let created = placeholderCount
+        let preexisting = preexistingCount
         let failures = placeholderFailures
         let samples = placeholderSamples
         placeholderLock.unlock()
-        guard created > 0 || failures > 0 else {
+        guard created > 0 || preexisting > 0 || failures > 0 else {
             return "filtered payloads: none — the device's manifest has nothing to dangle"
         }
         var line = "filtered payloads: \(created) kept visible as 0-byte placeholders, "
             + "\(removed) removed after the device finished"
+        if preexisting > 0 {
+            line += ", \(preexisting) filtered path(s) already had a file of their own (left untouched)"
+        }
         if !samples.isEmpty { line += " e.g. \(samples.joined(separator: ", "))" }
         if failures > 0 { line += ", \(failures) could NOT be materialised" }
         return line
@@ -637,7 +869,7 @@ private func mb2_remove(
     let fm = FileManager.default
     // Whatever happens, this path is no longer a placeholder the cleanup has to
     // remember (pymobiledevice3's `_forget_discarded_files`).
-    c.forgetPlaceholder(pathStr)
+    c.dropPlaceholderRegistration(pathStr)
     // "already gone" *is* the postcondition of remove, so that stays a success.
     guard fm.fileExists(atPath: pathStr) else { return nil }
     do {
@@ -687,7 +919,7 @@ private func mb2_rename(
         // rows are then dropped by PoCEngine.pruneManifestDb(), which deletes
         // every row whose payload is absent from disk.
         if c.shouldPreserve != nil {
-            c.forgetPlaceholder(fromStr)
+            c.forgetPlaceholder(from: fromStr, to: toStr)
             c.noteSkippedMove(from: fromStr, to: toStr)
             return nil
         }

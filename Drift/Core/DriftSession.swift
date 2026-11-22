@@ -52,6 +52,14 @@ final class DriftSession: ObservableObject {
     /// reported. Fed by the engine's real run progress while flashing,
     /// and by phase marks for restart / repair.
     @Published var coverProgress: Double?
+    /// Whether the flash cover may show that progress as a bar. The
+    /// flash cover is bare by Grace's 2026-11-15 call — spinner and
+    /// 「正在刷入」only, every channel — with one exception (build 4,
+    /// 2026-11-21): a restore dry run can hold the cover for minutes
+    /// on its pull, so its run raises this and the cover shows the
+    /// pull's own percent as a real bar. Set by the funnel for the
+    /// `.backup` mode only, cleared with the cover.
+    @Published var coverShowsProgress = false
 
     enum CoverKind {
         case restartingPosterBoard, respringing, repairing
@@ -74,6 +82,21 @@ final class DriftSession: ObservableObject {
     /// How the last finished run took effect, when it used the in-process
     /// route. The home page shows a manual-respring button from this.
     @Published private(set) var lastEffect: PosterBoardEffect?
+
+    /// The restore dry run a one-flow apply is currently writing back
+    /// (Alpha line). Set by the funnel the moment a restore dry run
+    /// passes its checks, held only for the span of the immediate
+    /// write-back inside the same run, and cleared on either outcome;
+    /// a non-restore run also clears it as a safety net. Nothing waits
+    /// on it any more — there is no parked report and no dry-run card.
+    @Published private(set) var pendingRestoreDryRun: RestoreDryRunReport?
+
+    /// A finished restore write-back is waiting on the user's answer
+    /// to the restart offer (Alpha line, Grace, 2026-11-21): the root
+    /// view shows「刷入成功，需要重启生效，是否重启？」while this is
+    /// set; 确定 sends the diagnostics-relay restart, 取消 leaves the
+    /// device as it is (a manual restart does the same job).
+    @Published var restoreRestartOffer = false
 
     private var didBootstrap = false
     private static let startLock = NSLock()
@@ -101,6 +124,19 @@ final class DriftSession: ObservableObject {
     func dismissError() {
         errorText = nil
         errorRetryAction = nil
+    }
+
+    /// The 确定 half of the post-restore restart offer: ask the
+    /// device to restart itself through the diagnostics relay. A
+    /// refusal lands as an ordinary error — the flash already
+    /// succeeded, and a manual restart does the same job.
+    func restartDeviceAfterRestore() async {
+        restoreRestartOffer = false
+        do {
+            try await DriftEngine.shared.restartDevice()
+        } catch {
+            presentError("重启命令没发出去：\(error.localizedDescription) 壁纸已经刷入，手动重启一次也能生效。")
+        }
     }
 
     // MARK: - Launch
@@ -445,7 +481,8 @@ final class DriftSession: ObservableObject {
         }
         flashCover = true
         flashStage = (mode == .worseQuery) ? "正在定位壁纸商店，第一次会慢一些" : nil
-        defer { flashCover = false; flashStage = nil }
+        coverShowsProgress = (mode == .backup)
+        defer { flashCover = false; flashStage = nil; coverShowsProgress = false }
         lastEffect = nil
         // Feedback #30: the funnel refuses a restore run while the gate
         // is closed, even if a caller forgot to consult it — judgement,
@@ -453,10 +490,14 @@ final class DriftSession: ObservableObject {
         // restore run cannot slip past.
         if mode == .backup && !DriftRestoreGate.isEnabled {
             DriftEngine.shared.log("run refused: restore route is suspended (feedback #30)")
-            return (false, DriftRestoreGate.notice, nil)
+            return (false, "暂不可用", nil)
+        }
+        if mode != .backup, pendingRestoreDryRun != nil {
+            pendingRestoreDryRun = nil
+            DriftEngine.shared.discardRestoreDryRun()
         }
         let isResetSelection = selection.fullReset || !selection.resetModes.isEmpty
-        let selectedLabel = isResetSelection ? "恢复刷 · 重置" : pick.label
+        let selectedLabel = isResetSelection ? "重置" : pick.label
         // Collection #143: flashing the same pack twice stacked copies in
         // the store that nobody could tell apart. If a receipt for one of
         // the selected packs still verifies as in-store, refuse and say
@@ -484,6 +525,53 @@ final class DriftSession: ObservableObject {
                 selection: selection,
                 mode: mode,
                 deviceVersion: identity.version)
+            if mode == .backup, let dryRun = DriftEngine.shared.lastRestoreDryRun {
+                // One flow (Grace, 2026-11-21): a restore apply is the
+                // whole route in a single run — the dry run's checks
+                // pass, then the write-back follows immediately, with
+                // no parked report and no second confirmation. The
+                // machine gates are unchanged: the audit already gated
+                // the dry run, and the service re-verifies the dry-run
+                // fingerprint inside the write-back before restoring. The outcome earns
+                // the run's single history entry, recorded here.
+                pendingRestoreDryRun = dryRun
+                flashStage = "正在写回，期间不要切后台或锁屏"
+                DriftEngine.shared.log("恢复刷：干跑通过（指纹 \(dryRun.fingerprintShort)），直接写回")
+                do {
+                    try await DriftEngine.shared.writeBackRestore()
+                    pendingRestoreDryRun = nil
+                    ApplyHistory.record(mode: "恢复刷",
+                                        success: true,
+                                        device: identity.describe,
+                                        model: identity.productType, ios: identity.version,
+                                        effect: "重启生效",
+                                        channel: nil,
+                                        packName: dryRun.packNames.joined(separator: "、"),
+                                        packFiles: dryRun.packFiles,
+                                        logSliceText: RunLog.shared.recordSnapshot())
+                    errorText = nil
+                    // The completion itself is the restart offer
+                    // (Grace, 2026-11-21): the root view asks「刷入
+                    // 成功，需要重启生效，是否重启？」while the page's
+                    // status line just says it succeeded. Counts and
+                    // the fingerprint live in the log and the history
+                    // entry, not in the user's face.
+                    restoreRestartOffer = true
+                    return (true, "刷入成功", nil)
+                } catch {
+                    pendingRestoreDryRun = nil
+                    let message = error.localizedDescription
+                    DriftEngine.shared.log("恢复刷写回失败：\(message)")
+                    ApplyHistory.record(mode: "恢复刷",
+                                        success: false, error: message,
+                                        device: identity.describe,
+                                        model: identity.productType, ios: identity.version,
+                                        packName: dryRun.packNames.joined(separator: "、"),
+                                        packFiles: dryRun.packFiles,
+                                        logSliceText: RunLog.shared.recordSnapshot())
+                    return (false, message, nil)
+                }
+            }
             let effect = DriftEngine.shared.lastPosterBoardEffect
             lastEffect = effect
             let verification = DriftEngine.shared.lastVerification
@@ -1083,6 +1171,34 @@ enum DriftJudge {
         let respringWhy = tunnelMissing
             ?? (respringReady ? "" : "这个系统版本不支持。")
 
+        // Restore (Alpha research line): while the gate is closed the
+        // shipped answer stands — not ready, 「暂不可用」. On Alpha the
+        // route additionally needs its own switch, the tunnel trio the
+        // tunnel channels need (the restore rides the same tunnel),
+        // and the iOS 27 segment judged by version AND build number;
+        // a build that cannot be read is a stop, not a guess.
+        let restoreReady: Bool
+        let restoreWhy: String
+        if !DriftRestoreGate.isEnabled {
+            restoreReady = false
+            restoreWhy = "暂不可用"
+        } else if !RestoreFlashPremise.isEnabled {
+            restoreReady = false
+            restoreWhy = "还没打开：先到「设置 → 实验性功能」里打开恢复刷"
+        } else if let missing = tunnelMissing {
+            restoreReady = false
+            restoreWhy = missing
+        } else if identity.buildVersion.isEmpty {
+            restoreReady = false
+            restoreWhy = "还没有读到设备构建号（恢复刷按构建号判断系统段位）"
+        } else if !Self.isRestoreSegment(version: identity.version) {
+            restoreReady = false
+            restoreWhy = "恢复刷这一版只开 iOS 27 这一段"
+        } else {
+            restoreReady = true
+            restoreWhy = "可用：先干跑对账，确认后才写回，刷完重启生效"
+        }
+
         return Premises(
             appVersion: appVersion,
             appBuild: appBuild,
@@ -1093,8 +1209,15 @@ enum DriftJudge {
             directWhy: directWhy,
             respringReady: respringReady,
             respringWhy: respringWhy,
-            restoreReady: DriftRestoreGate.isEnabled,
-            restoreWhy: DriftRestoreGate.isEnabled ? "可用：刷完重启" : "已封存：暂时不可用")
+            restoreReady: restoreReady,
+            restoreWhy: restoreWhy)
+    }
+
+    /// The restore line's open segment: iOS 27.x, judged on the
+    /// version's major component (the build-number presence is the
+    /// caller's own check — see premises and DriftRestoreService).
+    static func isRestoreSegment(version: String) -> Bool {
+        (Int(version.split(separator: ".").first ?? "") ?? 0) == 27
     }
 
     /// How a channel makes the wallpaper visible, in the user's terms.
@@ -1162,7 +1285,7 @@ enum DriftJudge {
         case .airlift:
             return "自动选择：走注销直刷——隧道写入后注销生效"
         case .backup:
-            return "恢复刷，刷完会重启"
+            return "暂不可用"
         }
     }
 
@@ -1175,7 +1298,7 @@ enum DriftJudge {
         case .airlift:
             return "已手动选择注销直刷：隧道写入后注销生效"
         case .backup:
-            return "恢复刷，刷完会重启"
+            return "暂不可用"
         }
     }
 
@@ -1201,16 +1324,34 @@ enum DriftJudge {
 
         func judged(_ mode: PosterBoardApplyMode, _ reason: String) -> DriftModeJudgement {
             DriftModeJudgement(pick: pick, mode: mode, reason: reason,
-                               options: rows, expectedEffect: expectedEffect(for: mode))
+                               options: rows, expectedEffect: expectedEffect(for: mode),
+                               restoreAvailable: p.restoreReady)
         }
         func blocked(_ reason: String, notice: String) -> DriftModeJudgement {
             DriftModeJudgement(pick: pick, mode: .backup, reason: reason,
                                blockedReason: notice, options: rows,
-                               expectedEffect: expectedEffect(for: .backup))
+                               expectedEffect: expectedEffect(for: .backup),
+                               restoreAvailable: p.restoreReady)
         }
         /// Blocked because the selection can only travel the sealed method.
         func sealedBlocked(_ reason: String) -> DriftModeJudgement {
-            blocked(reason, notice: DriftRestoreGate.notice)
+            blocked(reason, notice: "暂不可用")
+        }
+        /// Blocked only because the kernel switch is off: flagged so
+        /// the flash tap can answer with a reminder instead of an
+        /// error (Grace, 2026-11-15).
+        func kernelSwitchBlocked(_ reason: String, notice: String) -> DriftModeJudgement {
+            var judgement = blocked(reason, notice: notice)
+            judgement.kernelNeedsSwitch = true
+            return judgement
+        }
+        /// Blocked only because the restore switch is off: the
+        /// restore pick's twin of the kernel helper (Grace,
+        /// 2026-11-19).
+        func restoreSwitchBlocked(_ reason: String, notice: String) -> DriftModeJudgement {
+            var judgement = blocked(reason, notice: notice)
+            judgement.restoreNeedsSwitch = true
+            return judgement
         }
         /// Blocked only because the restore switch is off
         /// (Grace, 2026-11-19).
@@ -1222,14 +1363,88 @@ enum DriftJudge {
         // Hard limits: these leave only the restore method, and while it is
         // sealed the answer is "cannot flash now".
         if selection.fullReset || !selection.resetModes.isEmpty {
+            if DriftRestoreGate.isEnabled {
+                return blocked("恢复刷这一版还不支持重置壁纸商店，这次刷不了。换个普通壁纸包，或者用别的方式重置。",
+                               notice: "恢复刷还不支持重置壁纸商店。")
+            }
             return p.restoreReady
-                ? judged(.backup, "重置壁纸商店只能用恢复刷，刷完会重启")
-                : sealedBlocked("重置壁纸商店只能用恢复刷，但恢复刷已封存，现在做不了")
+                ? judged(.backup, "暂不可用")
+                : sealedBlocked("暂不可用")
         }
         if selection.tendies.contains(where: \.isUnsafeContainer) {
+            if DriftRestoreGate.isEnabled {
+                return blocked("这个包是『容器』类型的，恢复刷这一版还写不了。先用别的方式刷，或者把出现位置改回『自动』再试。",
+                               notice: "容器类型的包，恢复刷这一版还写不了。")
+            }
             return p.restoreReady
-                ? judged(.backup, "包含商店数据库的壁纸包只能用恢复刷，刷完会重启")
-                : sealedBlocked("包含商店数据库的壁纸包只能用恢复刷，但恢复刷已封存，现在刷不了")
+                ? judged(.backup, "暂不可用")
+                : sealedBlocked("暂不可用")
+        }
+
+        if pick == .kernel {
+            // A manual kernel pick is used as-is when its premise
+            // passes and blocked with the honest reason when it does
+            // not; manual picks never reroute to another channel.
+            // The switch comes first: off is not "unavailable", it is
+            // "not turned on yet" — the answer points at the switch.
+            guard KernelDirectPremise.isEnabled else {
+                return kernelSwitchBlocked("你手动选了内核直刷：它还没有打开。先到「设置 → 实验性功能」里打开内核直刷，再回来刷入。手动选定后不会自动改走别的通道。",
+                               notice: "请先到「设置 → 实验性功能」里打开内核直刷。")
+            }
+            let premise = KernelDirectPremise.evaluate(version: p.appVersion)
+            if !premise.inBand {
+                return blocked("你手动选了内核直刷：它只支持 iOS 17 / 18，这台的系统是 iOS \(p.appVersion)，不在这个范围。手动选定后不会自动改走别的通道。",
+                               notice: "内核直刷只支持 iOS 17 / 18。")
+            }
+            if !premise.chipCovered {
+                return blocked("你手动选了内核直刷：这台机型不在它的支持表里。手动选定后不会自动改走别的通道。",
+                               notice: "这台机型不在内核直刷的支持表里。")
+            }
+            // Kernel Direct is a separate on-device writer, not a
+            // PosterBoardApplyMode channel. Home dispatches it directly.
+            return DriftModeJudgement(
+                pick: pick,
+                mode: .worseQuery,
+                reason: "已手动选择内核直刷：会先验证 PosterBoard 容器读写，再写入已选描述文件；不用配对、不用隧道，对签名没要求。",
+                blockedReason: nil,
+                options: rows,
+                expectedEffect: "写完提示：打开应用切换器，上滑关闭 PosterBoard，系统重新拉起后生效",
+                useKernel: true,
+                restoreAvailable: p.restoreReady)
+        }
+
+        if pick == .restore {
+            // A manual restore pick mirrors the kernel pick (Grace,
+            // 2026-11-19): selectable, never rerouted. While the
+            // route is sealed the answer is the go-turn-it-on
+            // reminder — the 实验性功能 switch it points at is
+            // itself still a placeholder that answers 暂不可用，
+            // and the session funnel refuses a restore run
+            // regardless.
+            //
+            // On the Alpha line the gate is open and this branch
+            // judges for real, premise by premise: the switch first
+            // (off is "not turned on yet", not "unavailable"), then
+            // the premises restoreReady/restoreWhy already folded
+            // (tunnel trio, iOS 27 segment by build number). A judged
+            // run is the dry run; the write-back is confirmed
+            // separately on the home page's dry-run card.
+            if DriftRestoreGate.isEnabled {
+                guard RestoreFlashPremise.isEnabled else {
+                    return restoreSwitchBlocked("你手动选了恢复刷：它还没有打开。先到「设置 → 实验性功能」里打开恢复刷，再回来刷入。手动选定后不会自动改走别的通道。",
+                                   notice: "请先到「设置 → 实验性功能」里打开恢复刷。")
+                }
+                if p.restoreReady {
+                    return judged(.backup, "已手动选择恢复刷：先干跑对账（只拉取和裁剪，不写回），确认后才真正恢复，刷完重启生效。")
+                }
+                return blocked("你手动选了恢复刷：\(p.restoreWhy)。手动选定后不会自动改走别的通道。",
+                               notice: "恢复刷现在用不了：\(p.restoreWhy)。")
+            }
+            if p.restoreReady {
+                return judged(.backup, "已手动选择恢复刷：通过恢复方式刷入壁纸，刷完重启生效。")
+            }
+            return restoreSwitchBlocked("你手动选了恢复刷：它还没有打开。先到「设置 → 实验性功能」里打开恢复刷，再回来刷入。手动选定后不会自动改走别的通道。",
+                           notice: "请先到「设置 → 实验性功能」里打开恢复刷。")
         }
 
         if pick == .kernel {

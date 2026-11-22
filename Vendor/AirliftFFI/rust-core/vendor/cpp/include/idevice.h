@@ -163,6 +163,8 @@ typedef struct DeviceInfoHandle DeviceInfoHandle;
 
 typedef struct DiagnosticsRelayClientHandle DiagnosticsRelayClientHandle;
 
+typedef struct MobileConfigClientHandle MobileConfigClientHandle;
+
 /**
  * Opaque handle to an AppServiceClient
  */
@@ -2809,6 +2811,90 @@ struct IdeviceFfiError *diagnostics_relay_client_goodbye(struct DiagnosticsRelay
  * or NULL (in which case this function does nothing)
  */
 void diagnostics_relay_client_free(struct DiagnosticsRelayClientHandle *handle);
+
+/**
+ * Automatically creates and connects to Mobile Config (MCInstall), returning a client handle
+ *
+ * # Arguments
+ * * [`provider`] - An IdeviceProvider
+ * * [`client`] - On success, will be set to point to a newly allocated MobileConfigClient handle
+ *
+ * # Returns
+ * An IdeviceFfiError on error, null on success
+ *
+ * # Safety
+ * `provider` must be a valid pointer to a handle allocated by this library
+ * `client` must be a valid, non-null pointer to a location where the handle will be stored
+ */
+struct IdeviceFfiError *mobile_config_client_connect(struct IdeviceProviderHandle *provider,
+                                                     struct MobileConfigClientHandle **client);
+
+/**
+ * Creates a new MobileConfigClient via RSD
+ *
+ * # Arguments
+ * * [`provider`] - An adapter created by this library
+ * * [`handshake`] - An RSD handshake from the same provider
+ * * [`client`] - On success, will be set to point to a newly allocated MobileConfigClient handle
+ *
+ * # Returns
+ * An IdeviceFfiError on error, null on success
+ *
+ * # Safety
+ * `provider` must be a valid pointer to a handle allocated by this library
+ * `handshake` must be a valid pointer to a handle allocated by this library
+ * `client` must be a valid, non-null pointer to a location where the handle will be stored
+ */
+struct IdeviceFfiError *mobile_config_client_connect_rsd(struct AdapterHandle *provider,
+                                                         struct RsdHandshakeHandle *handshake,
+                                                         struct MobileConfigClientHandle **client);
+
+/**
+ * Automatically creates and connects to Mobile Config, returning a client handle
+ *
+ * # Arguments
+ * * [`socket`] - An IdeviceSocket handle
+ * * [`client`] - On success, will be set to point to a newly allocated MobileConfigClient handle
+ *
+ * # Returns
+ * An IdeviceFfiError on error, null on success
+ *
+ * # Safety
+ * `socket` must be a valid pointer to a handle allocated by this library. The socket is consumed,
+ * and may not be used again.
+ * `client` must be a valid, non-null pointer to a location where the handle will be stored
+ */
+struct IdeviceFfiError *mobile_config_client_new(struct IdeviceHandle *socket,
+                                                 struct MobileConfigClientHandle **client);
+
+/**
+ * Fetches the device's cloud configuration
+ *
+ * # Arguments
+ * * `client` - A valid MobileConfigClient handle
+ * * `res` - Will be set to a pointer of a plist dictionary node on success
+ *
+ * # Returns
+ * An IdeviceFfiError on error, null on success. Note that res can be null on success
+ * if the device has no cloud configuration stored.
+ *
+ * # Safety
+ * `client` must be a valid pointer to a handle allocated by this library
+ */
+struct IdeviceFfiError *mobile_config_client_get_cloud_configuration(struct MobileConfigClientHandle *client,
+                                                                     plist_t *res);
+
+/**
+ * Frees a handle
+ *
+ * # Arguments
+ * * [`handle`] - The handle to free
+ *
+ * # Safety
+ * `handle` must be a valid pointer to the handle that was allocated by this library,
+ * or NULL (in which case this function does nothing)
+ */
+void mobile_config_client_free(struct MobileConfigClientHandle *handle);
 
 /**
  * Creates a new ProcessControlClient from a RemoteServerClient

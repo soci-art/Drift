@@ -441,17 +441,34 @@ extension PosterBoard {
         //    reference's order, and it matters: a live-photo pack's descriptor
         //    is written by the video step, and all three are then found by the
         //    single walk below.
+        //
+        //    Step errors name the step and the file (Grace, 2026-11-21):
+        //    AVFoundation's bare "无法打开" cost a restore dry run its
+        //    diagnosis — the log showed a failure with no step and no
+        //    culprit, and the cause (a `.tendies` sitting in the video
+        //    slot) had to be reconstructed by hand. A wrapped error
+        //    carries both, in the status line and in the log alike.
         if let plan = selection.plan {
-            try await PosterBoardVideo.generate(plan: plan,
-                                                outputDirectory: workingDirectory,
-                                                log: log)
+            do {
+                try await PosterBoardVideo.generate(plan: plan,
+                                                    outputDirectory: workingDirectory,
+                                                    log: log)
+            } catch {
+                throw DriftError("视频处理失败（文件 \(plan.video.lastPathComponent)）："
+                    + error.localizedDescription)
+            }
         }
         for (index, tendie) in selection.tendies.enumerated() {
             // Deterministic, not `uuid4()`: see this type's divergence note.
             let destination = workingDirectory.appendingPathComponent(
                 String(format: "%03d-%@", index, sanitised(tendie.name)), conformingTo: .data)
             log("  → unpacking \(tendie.name) (\(tendie.summary))")
-            try tendie.extract(to: destination)
+            do {
+                try tendie.extract(to: destination)
+            } catch {
+                throw DriftError("解开壁纸包失败（\(tendie.name)）："
+                    + error.localizedDescription)
+            }
             // Each pack is converted in its own folder so the per-pack
             // "convert / install as is" answer is honoured
             // (`PosterboardTweak.apply_tweak`'s `extracted: list[tuple[str, bool]]`).
@@ -507,9 +524,15 @@ extension PosterBoard {
                 + "壁纸是否出现在选择器中。请把日志发给维护者定位。")
         }
         if let database {
-            let staged = try PosterBoardStore.stitch(database: database,
+            let staged: URL
+            do {
+                staged = try PosterBoardStore.stitch(database: database,
                                                      items: stagedItems,
                                                      workingDirectory: workingDirectory)
+            } catch {
+                throw DriftError("把新壁纸并入壁纸库失败："
+                    + error.localizedDescription)
+            }
             log("PosterBoard: the staged store carries \(PosterBoardStore.summary(staged))")
             payloads.append(TweakPayload(domain: domain,
                                          relativePath: storePath(version) + "/" + databaseFileName,

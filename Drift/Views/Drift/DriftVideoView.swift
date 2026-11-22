@@ -122,7 +122,7 @@ struct DriftVideoView: View {
         case .worseQuery: return "关闭 PosterBoard 后生效"
         case .direct: return "刷完即生效"
         case .airlift: return "注销后生效"
-        case .backup: return "暂不可用"
+        case .backup: return "重启后生效"
         }
     }
 

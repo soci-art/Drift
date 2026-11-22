@@ -172,6 +172,7 @@ springboardservices = []
 misagent = []
 mobile_image_mounter = ["dep:sha2"]
 mobileactivationd = ["_reqwest"]
+mobile_config = []
 mobilebackup2 = []
 wda = ["_serde_json", "tokio/time", "tokio/net"]
 notification_proxy = [
@@ -266,6 +267,7 @@ full = [
   "misagent",
   "mobile_image_mounter",
   "mobileactivationd",
+  "mobile_config",
   "mobilebackup2",
   "wda",
   "notification_proxy",

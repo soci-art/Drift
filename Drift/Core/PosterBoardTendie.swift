@@ -628,9 +628,6 @@ enum PosterBoardImports {
         // caller still checks for blocking issues afterwards.
         let importIssues = PackRepair.inspect(clean)
         if !importIssues.isEmpty {
-            let version = DeviceIdentityMonitor.shared.current.version.isEmpty
-                ? WorseQueryEscape.processVersion
-                : DeviceIdentityMonitor.shared.current.version
             if let repaired = try? PackRepair.repair(clean, issues: importIssues,
                                                      deviceVersion: version,
                                                      progress: { _ in }) {

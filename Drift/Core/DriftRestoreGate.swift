@@ -9,26 +9,24 @@ import Foundation
 /// the whole route is closed: mode judgement, the wallpaper page, the
 /// video page, the store reset and Settings' restore-backup all consult
 /// this gate, and the session's run funnel refuses a restore run even if
-/// a caller forgets to ask. The restore machinery underneath is NOT
-/// touched — the audit still needs it, and reopening the route is meant
-/// to be this one flag flipping back, plus the copy that describes the
-/// route as available being restored with it.
+/// a caller forgets to ask.
 ///
-/// Feedback #31's research build does NOT open this gate either — that
-/// was considered and explicitly rejected for the first diagnosis round:
-/// the round runs on Grace's main device (the original pull-silence
-/// scene, iOS 27.2 beta 2) because the list-dir hypothesis is most
-/// falsifiable there, and the write-back path must never reach that
-/// device. The research flag (see `DriftResearchBuild`) opens only the
-/// diagnostic-pull entry and the banner; this literal stays `false` in
-/// every build this stage produces. A gate-open variant for the spare
-/// device (iOS 27.3) end-to-end stage, if it is ever built, is a
-/// separate build decided separately — it is not a mode of this one.
+/// Since 2026-11-19 the route has a research line of its own (Grace:
+/// 单独开一条 Alpha 的线): the gate now reads the build's channel
+/// stamp and opens ONLY on Alpha builds. The release and nightly
+/// workflows never stamp "alpha", so on every shipped line this flag
+/// is false exactly as the literal was — the seal there is by
+/// construction, not by a value someone could flip in a shared tree.
+/// On Alpha the open gate is necessary but nowhere near sufficient:
+/// the research switch (RestoreFlashPremise), the session premises
+/// (tunnel trio + iOS 27 segment by build number), the in-package
+/// dry-run gate and the fingerprint re-check all still stand in front
+/// of any write-back, and a run on this line is a dry run until the
+/// user confirms the write-back separately.
 enum DriftRestoreGate {
-    static let isEnabled = false
+    static var isEnabled: Bool { AppVersion.channel == .alpha }
 
-    /// The one suspension notice every blocked entry point shows, so the
-    /// wording cannot drift between pages. Plain and factual on purpose:
-    /// it says the route is off, why, and what still works.
-    static let notice = "恢复刷已封存：2026-11-10 一次恢复刷入在设备重启后把手机恢复了出厂设置、数据全部丢失。查清原因并在备用机上验证「从设备拉到真备份」之前不开放：入口可见，但没有任何可执行的恢复代码。重置商店与带数据库的容器包暂时都刷不了；其他直刷通道不受影响。"
+    /// Blocked entry points answer with a plain 「暂不可用」 (Grace,
+    /// 2026-11-19: every restore-route text and error came out of the
+    /// app; the route itself stays sealed behind this flag).
 }
