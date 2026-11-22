@@ -301,7 +301,7 @@ enum PosterBoardVideo {
     /// box in pixels (points × scale) the way the user knows their
     /// screen.
     static func deviceScreenScale() -> Double {
-        activeScreen()?.scale ?? 1
+        Double(activeScreen()?.scale ?? 1)
     }
 
     /// The document size, in points: the device's own screen, which is the one
