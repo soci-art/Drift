@@ -115,43 +115,50 @@ struct DriftAboutView: View {
         TableRow(version: "iOS 27.3 beta 2 起", noRespring: false, respring: false, local: false, restore: true),
     ]
 
+    /// Column widths are sized for the narrowest supported phones
+    /// (375pt across): at the old 47pt the seven columns plus the
+    /// version column overflowed the card there and the 恢复刷 column
+    /// fell off the right edge — the page read as if restore had
+    /// never been added (Grace's field report, 2026-11-22). At 41pt
+    /// and 2pt spacing the whole table fits with room to spare for
+    /// the version names.
     private var tableHeader: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             Text("系统版本").frame(maxWidth: .infinity, alignment: .leading)
-            Text("免注销直刷").frame(width: 47).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-            Text("注销直刷").frame(width: 47).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            Text("免注销直刷").frame(width: 41).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            Text("注销直刷").frame(width: 41).lineLimit(2).fixedSize(horizontal: false, vertical: true)
             // #333 (Grace, 2026-11-14): the local column must say up
             // front that it needs a certificate, not only in the
             // footnote under the table.
             VStack(spacing: 0) {
                 Text("本机直刷").lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 Text("需证书").font(.caption2.weight(.semibold)).lineLimit(2).fixedSize(horizontal: false, vertical: true).foregroundStyle(.orange)
-            }.frame(width: 47)
+            }.frame(width: 41)
             VStack(spacing: 0) {
                 Text("本机直刷").minimumScaleFactor(0.85).lineLimit(1)
                 Text("无需证书").font(.caption2.weight(.semibold)).lineLimit(2).fixedSize(horizontal: false, vertical: true).foregroundStyle(.green)
-            }.frame(width: 47)
-            Text("内核直刷").frame(width: 47).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            }.frame(width: 41)
+            Text("内核直刷").frame(width: 41).lineLimit(2).fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 0) {
                 Text("恢复刷").lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 Text("新").font(.caption2.weight(.semibold)).lineLimit(1).foregroundStyle(.red)
-            }.frame(width: 47)
+            }.frame(width: 41)
         }
         .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
     }
 
     private func tableRow(_ row: TableRow) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             Text(row.version).font(.subheadline)
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            mark(row.noRespring).frame(width: 47)
-            mark(row.respring).frame(width: 47)
-            mark(row.local).frame(width: 47)
-            mark(row.localNoCert).frame(width: 47)
-            mark(row.kernel).frame(width: 47)
-            mark(row.restore).frame(width: 47)
+            mark(row.noRespring).frame(width: 41)
+            mark(row.respring).frame(width: 41)
+            mark(row.local).frame(width: 41)
+            mark(row.localNoCert).frame(width: 41)
+            mark(row.kernel).frame(width: 41)
+            mark(row.restore).frame(width: 41)
         }
     }
 

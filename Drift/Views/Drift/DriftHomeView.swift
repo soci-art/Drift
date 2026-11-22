@@ -354,10 +354,9 @@ struct DriftHomeView: View {
             } else if judged.isBlocked, let blocked = judged.blockedReason {
                 Text(blocked).font(.caption).foregroundStyle(.orange)
             }
-            // Collection #329 (Grace, 2026-11-14): the sealed restore
-            // row that used to sit here is gone from Home entirely —
-            // 恢复刷 now lives only on the 实验性功能 page. The seal
-            // itself is unchanged.
+            // (The sealed restore row that collection #329 kept here
+            // is long gone: 恢复刷 sits in the method list below as a
+            // regular method since it opened on 2026-11-22.)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
@@ -391,11 +390,13 @@ struct DriftHomeView: View {
         } else if pick == .kernel {
             status = available ? "可用" : "不支持"
         } else if pick == .restore {
-            // The restore pick is selectable like the kernel pick,
-            // but there is no device premise to judge — while the
-            // route is sealed its honest state is 不可用； the switch
-            // reminder bites at the flash tap (Grace, 2026-11-19).
-            status = "不可用"
+            // The restore pick's status follows the same judged
+            // premise as its colour below (restoreAvailable): the
+            // route opened as a regular feature on 2026-11-22, so a
+            // device whose premises are ready honestly reads 可用 —
+            // the sealed-era hardcoded 不可用 read green-不可用 on
+            // exactly those devices (Grace's field report, 2026-11-22).
+            status = judged.restoreAvailable ? "可用" : "不可用"
         } else {
             status = available ? "可用" : "不可用"
         }
@@ -424,14 +425,6 @@ struct DriftHomeView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(pick.label).font(.subheadline.weight(.medium))
-                        if pick.isExperimental {
-                            Text("实验")
-                                .font(.caption2.weight(.semibold))
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(Color.orange.opacity(0.16),
-                                            in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-                                .foregroundStyle(.orange)
-                        }
                     }
                     Text(pick.subtitle)
                         .font(.caption).foregroundStyle(.secondary)

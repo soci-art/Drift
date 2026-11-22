@@ -146,8 +146,10 @@ enum TutorialChannelState {
     case needsSetup
     case systemBlocked
     case groupBlocked
-    /// The method's own switch is off (内核直刷 before its
-    /// 实验性功能 switch is turned on, #329).
+    /// A switch-gated method whose switch is off. No current method
+    /// is switch-gated （内核直刷 graduated 2026-11-20, 恢复刷 opened
+    /// 2026-11-22, and the 实验性功能 page is deleted); the case stays
+    /// for any future gated method.
     case notEnabled
 
     /// The tutorial-home pill (#231).
