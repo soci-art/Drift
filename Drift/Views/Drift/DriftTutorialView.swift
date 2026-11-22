@@ -5,9 +5,9 @@ import SwiftUI
 /// the Home page's entry card between the status card and the method card
 /// — the setup wizard is unchanged and Settings carries no tutorial entry
 /// any more (#239). 内核直刷 joined as the fourth card in #329
-/// (2026-11-14); unlike the others it is taught even while its
-/// 实验性功能 switch is off — the card is how a user finds out the
-/// method exists, and its page explains where the switch lives.
+/// (2026-11-14) and 恢复刷 as the fifth when it opened (2026-11-22);
+/// neither has a switch any more — the cards are how a user finds
+/// out the methods exist.
 ///
 /// Each card's pill follows the live judgement (#231): 可用 when the
 /// channel can run now; for the two tunnel channels, 需要配对和隧道 when
@@ -54,7 +54,15 @@ struct DriftTutorialView: View {
                 .frame(width: 42, height: 42)
                 .background(channel.tint, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             VStack(alignment: .leading, spacing: 3) {
-                Text(channel.title).font(.body.weight(.semibold)).foregroundStyle(.primary)
+                HStack(spacing: 6) {
+                    Text(channel.title).font(.body.weight(.semibold)).foregroundStyle(.primary)
+                    if channel == .restore {
+                        Text("新")
+                            .font(.caption2.weight(.bold)).foregroundStyle(.white)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Color.red, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    }
+                }
                 Text(channel.subtitle).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -68,13 +76,15 @@ struct DriftTutorialView: View {
     }
 }
 
-/// The channels the tutorial teaches (the sealed restore route is
-/// not one of them — it is not taught anywhere).
+/// The channels the tutorial teaches. 恢复刷 joined as the fifth
+/// card when the route opened on the formal line (Grace,
+/// 2026-11-22); before that the sealed route was taught nowhere.
 enum TutorialChannel: CaseIterable, Identifiable {
     case noRespring
     case respring
     case local
     case kernel
+    case restore
 
     var id: String { title }
 
@@ -87,6 +97,7 @@ enum TutorialChannel: CaseIterable, Identifiable {
         case .respring: return "注销直刷"
         case .local: return "本机直刷"
         case .kernel: return "内核直刷"
+        case .restore: return "恢复刷"
         }
     }
 
@@ -96,6 +107,7 @@ enum TutorialChannel: CaseIterable, Identifiable {
         case .respring: return "隧道写入 · 注销后生效"
         case .local: return "本机写入，免配对、免隧道"
         case .kernel: return "内核写入，免配对、免隧道"
+        case .restore: return "备份写回 · 拉取整机备份，只换壁纸再写回"
         }
     }
 
@@ -105,6 +117,7 @@ enum TutorialChannel: CaseIterable, Identifiable {
         case .respring: return "arrow.clockwise"
         case .local: return "iphone"
         case .kernel: return "cpu"
+        case .restore: return "arrow.counterclockwise.circle.fill"
         }
     }
 
@@ -114,10 +127,14 @@ enum TutorialChannel: CaseIterable, Identifiable {
         case .respring: return .purple
         case .local: return .green
         case .kernel: return .orange
+        case .restore: return .red
         }
     }
 
-    var isTunnel: Bool { self == .noRespring || self == .respring }
+    /// The restore route rides the same pairing + tunnel as the
+    /// two tunnel channels (its connection conditions are the trio,
+    /// Grace, 2026-11-17), so it shares their prepare cards.
+    var isTunnel: Bool { self == .noRespring || self == .respring || self == .restore }
 }
 
 /// Where one channel stands for this phone right now, in the tutorial's

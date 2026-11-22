@@ -14,19 +14,33 @@ enum DriftTutorialStates {
                                       selection: PosterBoardSelection(),
                                       pick: .auto, tunnelReady: tunnelReady)
         var states: [TutorialChannel: TutorialChannelState] = [:]
-        for channel in TutorialChannel.allCases where channel != .kernel {
+        for channel in TutorialChannel.allCases where channel != .kernel && channel != .restore {
             states[channel] = state(of: channel, judged: judged, identity: identity)
         }
         states[.kernel] = kernelState()
+        states[.restore] = restoreState(judged: judged, identity: identity)
         return states
     }
 
-    /// The kernel channel's standing (#319/#329): it has no mode in
-    /// the judgement, so it is read straight from its own premises —
-    /// the user's switch first, then the band + offset-table check on
-    /// this device.
+    /// The restore channel's standing, read off the judgement's own
+    /// restore answer (the premises already folded the gate, the
+    /// tunnel trio and the iOS 27 segment by build number): ready
+    /// when it can run now; system-blocked when a read system is
+    /// outside the segment; setup otherwise (tunnel, pairing or the
+    /// build number still missing).
+    private static func restoreState(judged: DriftModeJudgement,
+                                     identity: DeviceIdentity) -> TutorialChannelState {
+        if judged.restoreAvailable { return .ready }
+        if !identity.version.isEmpty,
+           !DriftJudge.isRestoreSegment(version: identity.version) {
+            return .systemBlocked
+        }
+        return .needsSetup
+    }
+
+    /// The kernel channel has no mode in the judgement; its state
+    /// comes directly from the system-band and model-table check.
     private static func kernelState() -> TutorialChannelState {
-        guard KernelDirectPremise.isEnabled else { return .notEnabled }
         let evaluation = KernelDirectPremise.evaluate(
             version: WorseQueryEscape.processVersion)
         return evaluation.ready ? .ready : .systemBlocked
@@ -39,7 +53,7 @@ enum DriftTutorialStates {
         case .noRespring: return .direct
         case .respring: return .airlift
         case .local: return .worseQuery
-        case .kernel: return nil
+        case .kernel, .restore: return nil
         }
     }
 
@@ -65,7 +79,7 @@ enum DriftTutorialStates {
             case .respring:
                 Airlift.isSupported(deviceVersion: identity.version,
                                     buildVersion: identity.buildVersion)
-            case .local, .kernel:
+            case .local, .kernel, .restore:
                 true
             }
             // The session layer closes two tunnel bands the channels'
