@@ -337,6 +337,108 @@ enum PosterBoardPreview {
         return UIImage(cgImage: cg)
     }
 
+    // MARK: - Unlock-preview stage media
+
+    /// What the unlock preview plays with for one pack: the lock
+    /// descriptor's picture (or its video, extracted to a cache file,
+    /// with the first frame as poster) and the home descriptor's
+    /// picture. Descriptor order in the archive is the pack's own:
+    /// first is the lock screen, second the home screen; a
+    /// single-descriptor pack uses the same picture on both.
+    /// Full-size stills, not the 360-wide list thumbnails — the stage
+    /// is the whole phone screen. Synchronous; call off the main
+    /// thread. Purely presentational, like the rest of this type.
+    struct StageMedia {
+        var lockImage: UIImage?
+        var homeImage: UIImage?
+        var lockVideo: URL?
+    }
+
+    static func stageMedia(for tendie: PosterBoardTendie) -> StageMedia {
+        guard let archive = try? Archive(url: tendie.url, accessMode: .read) else {
+            return StageMedia()
+        }
+        // Group stills and videos by descriptor folder, archive order
+        // kept — the same grouping `extract` uses.
+        var order: [String] = []
+        var stills: [String: [Candidate]] = [:]
+        var videos: [String: [Candidate]] = [:]
+        for entry in archive where entry.type == .file {
+            let lower = entry.path.lowercased()
+            let ext = (entry.path as NSString).pathExtension.lowercased()
+            let isStill = stillExtensions.contains(ext)
+            let isVideo = videoExtensions.contains(ext)
+            guard isStill || isVideo else { continue }
+            let marker = lower.contains("descriptor/") ? "descriptor/"
+                : (lower.contains("descriptors/") ? "descriptors/" : nil)
+            guard let marker,
+                  let tail = lower.components(separatedBy: marker).dropFirst().first,
+                  !tail.isEmpty else { continue }
+            let descriptor = tail.components(separatedBy: "/").first ?? tail
+            if !order.contains(descriptor) { order.append(descriptor) }
+            var score = Int(entry.uncompressedSize)
+            for keyword in ["preview", "poster", "thumbnail", "hero", "cover"] where lower.contains(keyword) {
+                score += 1_000_000_000
+                break
+            }
+            let candidate = Candidate(entry: entry, score: score)
+            if isStill { stills[descriptor, default: []].append(candidate) }
+            if isVideo { videos[descriptor, default: []].append(candidate) }
+        }
+        guard let lockName = order.first else { return StageMedia() }
+
+        var media = StageMedia()
+        let lockStills = stills[lockName] ?? []
+        if !lockStills.isEmpty {
+            media.lockImage = pickStillImage(archive: archive, stills: lockStills)
+        }
+        if media.lockImage == nil, let video = (videos[lockName] ?? []).max(by: { $0.score < $1.score }) {
+            media.lockVideo = extractStageVideo(archive: archive, entry: video.entry, tendie: tendie, slot: "lock")
+            if let url = media.lockVideo {
+                media.lockImage = firstFrameOfVideo(at: url)
+            }
+        }
+        if order.count > 1 {
+            let homeName = order[1]
+            let homeStills = stills[homeName] ?? []
+            if !homeStills.isEmpty {
+                media.homeImage = pickStillImage(archive: archive, stills: homeStills)
+            }
+            if media.homeImage == nil, let video = (videos[homeName] ?? []).max(by: { $0.score < $1.score }),
+               let url = extractStageVideo(archive: archive, entry: video.entry, tendie: tendie, slot: "home") {
+                media.homeImage = firstFrameOfVideo(at: url)
+            }
+        }
+        if media.homeImage == nil { media.homeImage = media.lockImage }
+        return media
+    }
+
+    /// The pack's video, copied out of the archive once and kept in
+    /// the preview cache directory, keyed like the stills (pack name +
+    /// size), so a replaced pack never serves the old video.
+    private static func extractStageVideo(archive: Archive, entry: Entry, tendie: PosterBoardTendie, slot: String) -> URL? {
+        let ext = (entry.path as NSString).pathExtension
+        let out = cacheDirectory.appending(path: "\(key(for: tendie))-stage-video-\(slot).\(ext)")
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: out.path),
+           (attrs[.size] as? NSNumber)?.int64Value == entry.uncompressedSize {
+            return out
+        }
+        do {
+            try archive.extract(entry, to: out)
+            return out
+        } catch { return nil }
+    }
+
+    private static func firstFrameOfVideo(at url: URL) -> UIImage? {
+        let asset = AVURLAsset(url: url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 1080, height: 1920)
+        guard let cg = try? generator.copyCGImage(at: CMTime(seconds: 0.1, preferredTimescale: 600),
+                                                  actualTime: nil) else { return nil }
+        return UIImage(cgImage: cg)
+    }
+
     /// Downscale to a list-friendly portrait thumbnail and encode as JPEG.
     private static func thumbnailJPEG(_ image: UIImage) -> Data? {
         let maxWidth: CGFloat = 360

@@ -728,6 +728,8 @@ private struct PackCoverPreview: View {
 
     @State private var images: [UIImage] = []
     @State private var loaded = false
+    @State private var unlockPayload: UnlockPreviewPayload?
+    @State private var preparingUnlock = false
 
     var body: some View {
         GeometryReader { geo in
@@ -749,6 +751,25 @@ private struct PackCoverPreview: View {
                     }
                 }
                 stage(height: stageHeight, width: geo.size.width)
+                if loaded && !images.isEmpty {
+                    // The unlock preview (Grace, 2026-11-23): the
+                    // lock-to-home swipe with this pack's own
+                    // material, full screen.
+                    Button {
+                        preparingUnlock = true
+                        Task {
+                            unlockPayload = await UnlockPreviewPayload.load(pack: pack)
+                            preparingUnlock = false
+                        }
+                    } label: {
+                        Label(preparingUnlock ? "正在准备…" : "预览解锁动画",
+                              systemImage: "chevron.up.circle")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.blue)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(preparingUnlock)
+                }
                 Text("下滑关闭")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer(minLength: 0)
@@ -768,6 +789,9 @@ private struct PackCoverPreview: View {
                 }
             }.value
             loaded = true
+        }
+        .fullScreenCover(item: $unlockPayload) { payload in
+            UnlockPreviewView(payload: payload)
         }
     }
 
