@@ -420,7 +420,7 @@ enum PosterBoardPreview {
         let ext = (entry.path as NSString).pathExtension
         let out = cacheDirectory.appending(path: "\(key(for: tendie))-stage-video-\(slot).\(ext)")
         if let attrs = try? FileManager.default.attributesOfItem(atPath: out.path),
-           (attrs[.size] as? NSNumber)?.int64Value == entry.uncompressedSize {
+           ((attrs[.size] as? NSNumber)?.int64Value ?? -1) == entry.uncompressedSize {
             return out
         }
         do {
