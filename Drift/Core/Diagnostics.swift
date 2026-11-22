@@ -57,15 +57,8 @@ enum Diagnostics {
         // not a PosterBoardApplyMode — so its standing is stated from
         // its own premise, on one line like the channels above.
         let kernelPremise = KernelDirectPremise.evaluate(version: WorseQueryEscape.processVersion)
-        let kernelState: String
-        if !KernelDirectPremise.isEnabled {
-            kernelState = "未开启（实验性功能里的开关是关的）"
-        } else if kernelPremise.ready {
-            kernelState = "可用"
-        } else {
-            kernelState = "不可用 — \(kernelPremise.reason)"
-        }
-        lines.append("    内核直刷: \(kernelState)（开关 \(KernelDirectPremise.isEnabled ? "开" : "关") · 系统在 17/18 带内 \(kernelPremise.inBand ? "是" : "否") · 机型在偏移表内 \(kernelPremise.chipCovered ? "是" : "否")）")
+        let kernelState = kernelPremise.ready ? "可用" : "不可用 — \(kernelPremise.reason)"
+        lines.append("    内核直刷: \(kernelState)")
 
         // Snapshot the Rust evidence FIRST.
         let logStatus = RustLog.status()

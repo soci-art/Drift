@@ -14,10 +14,6 @@ struct DriftHomeView: View {
     /// change the judgement card re-renders from immediately. The same key
     /// backs `DriftJudge.manualPick`, which stays for non-view readers.
     @AppStorage(DriftJudge.manualKey) private var manualPickRaw: String?
-    /// The 内核直刷 switch from 实验性功能 (#329): while it is off the
-    /// method does not exist on this page at all.
-    @AppStorage(KernelDirectPremise.enabledKey) private var kernelEnabled = false
-
     @State private var imports: [PosterBoardTendie] = PosterBoardImports.load()
     @State private var importingPairing = false
     @State private var statusLine: String?
@@ -34,10 +30,8 @@ struct DriftHomeView: View {
     private var identity: DeviceIdentity { identityMonitor.current }
     /// The user's method pick (2.0.0: a method, never a channel).
     private var manualPick: DriftMethodPick {
-        // The stored pick stands as-is (Grace, 2026-11-15): the
-        // kernel row is always shown and selectable, and the judge
-        // answers a kernel pick whose switch is off with a
-        // go-turn-it-on reminder — the pick is never rewritten.
+        // The stored pick stands as-is: the kernel row is always shown
+        // and selectable; the judge reports compatibility directly.
         DriftMethodPick.fromStored(manualPickRaw)
     }
     /// The local channel's premise: the app's own system only. It never
@@ -63,21 +57,16 @@ struct DriftHomeView: View {
     private var selectedDescriptors: Int { selection.tendies.reduce(0) { $0 + $1.descriptorCount } }
     private var overLimit: Bool { selectedDescriptors > PosterBoardImports.descriptorLimit }
     private var canApply: Bool {
-        // Kernel Direct writes the selected descriptor packs directly into
-        // PosterBoard's container; no pairing or tunnel is required. On a
-        // supported device the button stays tappable even while the
-        // 实验性功能 switch is off — the tap then answers with the
-        // go-turn-it-on reminder (Grace, 2026-11-15). An unsupported
-        // device cannot tap it at all.
+        // Kernel Direct writes selected descriptor packs directly into
+        // PosterBoard's container; it requires no pairing or tunnel.
+        // The button is available only when the system and model qualify.
         if manualPick == .kernel {
+            // #343: no `selection.video == nil` condition — the run
+            // clips the video out (see runApply), so a leftover on
+            // the video page must not disable this page's button.
             return kernelPremiseReady && !selection.tendies.isEmpty && !overLimit
-                && selection.video == nil && !selection.fullReset
+                && !selection.fullReset
                 && selection.resetModes.isEmpty && !session.running
-        }
-        // 自动选择 blocked only by the kernel switch: same deal — the
-        // tap must reach the reminder.
-        if judgement.kernelNeedsSwitch {
-            return !selection.tendies.isEmpty && !overLimit && !session.running
         }
         // A restore pick blocked only by its switch: same deal
         // (Grace, 2026-11-19).
@@ -90,10 +79,9 @@ struct DriftHomeView: View {
             && !selection.tendies.isEmpty && !overLimit && !session.running
     }
     /// The kernel channel's premise, judged on this device alone.
-    /// Ready only when the user turned it on in 实验性功能 and this
-    /// device is in its band and offset table (#319/#329).
+    /// The kernel channel's system-version and model compatibility.
     private var kernelReady: Bool {
-        kernelEnabled && kernelPremiseReady
+        kernelPremiseReady
     }
 
     /// Supported-or-not, device only: iOS 17 / 18 band and the model
@@ -381,11 +369,8 @@ struct DriftHomeView: View {
         // availability is its own premise, judged on this device.
         let kernelEval = pick == .kernel
             ? KernelDirectPremise.evaluate(version: localVersion) : nil
-        // The kernel row's 可用 is about the device alone (Grace,
-        // 2026-11-15): supported shows 可用 whether or not the
-        // 实验性功能 switch is on; the switch only bites at the
-        // flash tap, as a reminder.
-        let available = pick == .auto ? (!judged.isBlocked || judged.kernelNeedsSwitch)
+        // The kernel row's availability is its own system and model premise.
+        let available = pick == .auto ? !judged.isBlocked
             : (kernelEval?.ready ?? (option?.available ?? false))
         // Sealed (collection #142): the version is in range but this
         // install's signing grants no usable App Group — the row stays
@@ -394,9 +379,8 @@ struct DriftHomeView: View {
         let sealed = pick != .auto && (option?.sealed ?? false)
         let status: String
         if pick == .auto {
-            status = judged.kernelNeedsSwitch ? "→ 内核直刷（实验）"
-                : (judged.isBlocked ? "不可用"
-                    : (judged.useKernel ? "→ 内核直刷（实验）" : "→ \(judged.mode.shortTitle)"))
+            status = judged.isBlocked ? "不可用"
+                : (judged.useKernel ? "→ 内核直刷" : "→ \(judged.mode.shortTitle)")
         } else if sealed {
             status = "不可选"
         } else if pick == .kernel {
@@ -706,13 +690,7 @@ struct DriftHomeView: View {
         // but a blocked selection must never even be shaped into one.)
         if judgement.isBlocked {
             session.flashCover = false
-            // Blocked only by the kernel switch (Grace, 2026-11-15):
-            // this tap is the reminder moment — a notice pointing at
-            // 实验性功能, not an error.
-            if judgement.kernelNeedsSwitch {
-                session.noticeTitle = "内核直刷还没有打开"
-                session.noticeText = "请先到「设置 → 实验性功能」里打开内核直刷，再回来刷入。"
-            } else if judgement.restoreNeedsSwitch {
+            if judgement.restoreNeedsSwitch {
                 // The restore pick's reminder moment, same shape
                 // (Grace, 2026-11-19).
                 session.noticeTitle = "恢复刷还没有打开"

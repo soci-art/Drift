@@ -1,34 +1,11 @@
 import Foundation
 
-/// The kernel direct channel's premises (collections #319/#329,
-/// Grace 2026-11-13/14): a fifth flash method for iOS 17 / 18 that
-/// needs no pairing, no tunnel and no App Group. Like the local
-/// premise, it judges the app's own device only.
-///
-/// Two gates, both deliberate:
-/// * The user's own switch in Settings → 实验性功能 (`enabledKey`,
-///   default off). The method does not exist anywhere in the UI
-///   until the user turns it on.
-/// * The version band plus the chip-offset table. The band is
-///   iOS 17.0–17.7.x and 18.0–18.7.1; 18.7.2 and later sit outside
-///   even though the table would reach them (the upstream gate
-///   closes there). A model outside the offset table is not
-///   covered — the upstream code silently fell back to its oldest
-///   values in that case, and Drift's guard exists to refuse
-///   instead (RESEARCH-17-18-KERNEL-OFFSETS.md).
-///
-/// Phase note: the channel itself lands separately. Until it does,
-/// the judge blocks kernel picks with an honest "being wired up"
-/// reason, so nothing in this file can make a run start.
+/// The kernel direct channel's compatibility premise (Grace, 2026-11-20):
+/// the device must be inside the supported iOS version band and present
+/// in the chip-offset table. There is no user switch or suspension gate.
+/// The method needs no pairing, tunnel or App Group, and judges the
+/// app's own device only.
 enum KernelDirectPremise {
-    /// UserDefaults key of the 实验性功能 switch for this method.
-    static let enabledKey = "DriftKernelDirectEnabled"
-
-    /// Whether the user has turned the method on in Settings.
-    static var isEnabled: Bool {
-        UserDefaults.standard.bool(forKey: enabledKey)
-    }
-
     /// The outcome of the band + table check for one device.
     struct Evaluation {
         let inBand: Bool

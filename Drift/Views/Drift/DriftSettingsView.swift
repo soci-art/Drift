@@ -188,9 +188,9 @@ struct DriftSettingsView: View {
             } label: {
                 Label("关于此 App", systemImage: "info.circle")
             }
-            // Collection #329 (Grace, 2026-11-14): the experimental
-            // features page sits with About — 内核直刷 lives there
-            // behind its switch, nowhere else.
+            // The experimental-features page remains here for the
+            // restore-flash placeholder; kernel direct is now a regular
+            // method and no longer has a settings switch.
             NavigationLink {
                 ExperimentalFeaturesView()
             } label: {

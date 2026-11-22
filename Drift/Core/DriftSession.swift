@@ -585,13 +585,6 @@ final class DriftSession: ObservableObject {
         guard !selection.fullReset, selection.resetModes.isEmpty else {
             return (false, "内核直刷不处理壁纸商店重置任务。")
         }
-        // The channel's own gates, checked here as well as in the
-        // judge (Grace, 2026-11-15: 判定层面要做好): no caller may
-        // start a kernel write with the switch off or off-premise,
-        // whatever any earlier judgement said.
-        guard KernelDirectPremise.isEnabled else {
-            return (false, "内核直刷还没有打开：请先到「设置 → 实验性功能」里打开内核直刷，再回来刷入。")
-        }
         let premise = KernelDirectPremise.evaluate(version: WorseQueryEscape.processVersion)
         guard premise.ready else {
             return (false, "内核直刷现在用不了：\(premise.reason)。")
@@ -964,10 +957,8 @@ enum DriftMethodPick: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 本机直刷 carried the 实验 badge until Grace graduated it
-    /// (#330, 2026-11-14); the badge belongs to 内核直刷 now, and
-    /// to 恢复刷 since it joined the list (Grace, 2026-11-19).
-    var isExperimental: Bool { self == .kernel || self == .restore }
+    /// Only 恢复刷 remains experimental in this build.
+    var isExperimental: Bool { self == .restore }
 
     /// Read a stored pick. Every value written by 2.0.0 or 1.x means the same
     /// thing now: let Drift choose. Only the three new raw values are picks.
@@ -1002,14 +993,10 @@ struct DriftModeJudgement {
     /// placeholder, and dispatchers must honour this flag instead
     /// (set for a manual 内核直刷 pick and for 自动选择 landing on it).
     var useKernel: Bool = false
-    /// Blocked only because the kernel method's 实验性功能 switch is
-    /// off (Grace, 2026-11-15): the flash button stays tappable and
-    /// the tap answers with the go-turn-it-on reminder, not an error.
-    var kernelNeedsSwitch: Bool = false
-    /// The restore pick's twin of `kernelNeedsSwitch` (Grace,
-    /// 2026-11-19): blocked only because the restore method's
-    /// 实验性功能 switch is off — the tap answers with the same
-    /// kind of reminder.
+    /// Blocked only because the restore method's 实验性功能 switch
+    /// is off (Grace, 2026-11-19): the flash button stays tappable
+    /// and the tap answers with the go-turn-it-on reminder, not an
+    /// error.
     var restoreNeedsSwitch: Bool = false
     var isBlocked: Bool { blockedReason != nil }
 }
@@ -1270,14 +1257,6 @@ enum DriftJudge {
         func sealedBlocked(_ reason: String) -> DriftModeJudgement {
             blocked(reason, notice: "暂不可用")
         }
-        /// Blocked only because the kernel switch is off: flagged so
-        /// the flash tap can answer with a reminder instead of an
-        /// error (Grace, 2026-11-15).
-        func kernelSwitchBlocked(_ reason: String, notice: String) -> DriftModeJudgement {
-            var judgement = blocked(reason, notice: notice)
-            judgement.kernelNeedsSwitch = true
-            return judgement
-        }
         /// Blocked only because the restore switch is off: the
         /// restore pick's twin of the kernel helper (Grace,
         /// 2026-11-19).
@@ -1304,12 +1283,6 @@ enum DriftJudge {
             // A manual kernel pick is used as-is when its premise
             // passes and blocked with the honest reason when it does
             // not; manual picks never reroute to another channel.
-            // The switch comes first: off is not "unavailable", it is
-            // "not turned on yet" — the answer points at the switch.
-            guard KernelDirectPremise.isEnabled else {
-                return kernelSwitchBlocked("你手动选了内核直刷：它还没有打开。先到「设置 → 实验性功能」里打开内核直刷，再回来刷入。手动选定后不会自动改走别的通道。",
-                               notice: "请先到「设置 → 实验性功能」里打开内核直刷。")
-            }
             let premise = KernelDirectPremise.evaluate(version: p.appVersion)
             if !premise.inBand {
                 // Finer split (Grace, 2026-11-16): a 17/18 system
@@ -1366,15 +1339,14 @@ enum DriftJudge {
         // band it asks the least of the user — no pairing, no tunnel,
         // no signing gate — and that band (iOS 17 / 18) never overlaps
         // the local channel's, so it is judged before the channel
-        // order. It exists as a candidate only while its 实验性功能
-        // switch is on, and an automatic landing on it still wears
-        // the 实验 marking, in the reason itself.
+        // order. It is a candidate whenever the system and model
+        // compatibility premise is satisfied.
         let kernelPremise = KernelDirectPremise.evaluate(version: p.appVersion)
-        if KernelDirectPremise.isEnabled, kernelPremise.ready {
+        if kernelPremise.ready {
             return DriftModeJudgement(
                 pick: pick,
                 mode: .worseQuery,
-                reason: "自动选择：走内核直刷（实验）——会先验证 PosterBoard 容器读写，再写入已选描述文件；不用配对、不用隧道，对签名没要求。",
+                reason: "自动选择：走内核直刷——会先验证 PosterBoard 容器读写，再写入已选描述文件；不用配对、不用隧道，对签名没要求。",
                 blockedReason: nil,
                 options: rows,
                 expectedEffect: "写完提示：打开应用切换器，上滑关闭 PosterBoard，系统重新拉起后生效",
@@ -1383,14 +1355,6 @@ enum DriftJudge {
 
         if let channel = firstAvailable(p) {
             return judged(channel, autoReason(channel))
-        }
-        // Nothing else can run. If this device could flash through
-        // the kernel channel and the only thing missing is its
-        // switch, 自动选择 says so instead of a bare dead end
-        // (Grace, 2026-11-15): the reminder is the answer.
-        if kernelPremise.ready, !KernelDirectPremise.isEnabled {
-            return kernelSwitchBlocked("自动选择：这台设备能用内核直刷（实验），但它还没有打开，其他方式现在也用不了。先到「设置 → 实验性功能」里打开内核直刷，就能刷了。",
-                           notice: "请先到「设置 → 实验性功能」里打开内核直刷。")
         }
         // #332 (Grace, 2026-11-14): this summary used to concatenate all
         // three channels' full reasons into one paragraph — the same

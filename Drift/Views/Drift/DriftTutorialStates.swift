@@ -21,12 +21,9 @@ enum DriftTutorialStates {
         return states
     }
 
-    /// The kernel channel's standing (#319/#329): it has no mode in
-    /// the judgement, so it is read straight from its own premises —
-    /// the user's switch first, then the band + offset-table check on
-    /// this device.
+    /// The kernel channel has no mode in the judgement; its state
+    /// comes directly from the system-band and model-table check.
     private static func kernelState() -> TutorialChannelState {
-        guard KernelDirectPremise.isEnabled else { return .notEnabled }
         let evaluation = KernelDirectPremise.evaluate(
             version: WorseQueryEscape.processVersion)
         return evaluation.ready ? .ready : .systemBlocked
