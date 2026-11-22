@@ -63,6 +63,8 @@ struct UnlockPreviewView: View {
                 lockLayer(geo.size)
                 chrome(geo.size)
             }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
             .background(Color.black)
             .contentShape(Rectangle())
             .gesture(unlockGesture)
@@ -75,17 +77,19 @@ struct UnlockPreviewView: View {
 
     private func homeLayer(_ size: CGSize) -> some View {
         ZStack {
-            wallpaper(image: payload.homeImage, video: nil)
+            wallpaper(image: payload.homeImage, video: nil, size: size)
                 .scaleEffect(1.09 - 0.09 * progress)
             iconGrid
                 .opacity(Double(smooth(0.45, 0.95, progress)))
                 .offset(y: (1 - progress) * 24)
         }
+        .frame(width: size.width, height: size.height)
+        .clipped()
     }
 
     private func lockLayer(_ size: CGSize) -> some View {
         ZStack {
-            wallpaper(image: payload.lockImage, video: payload.lockVideo)
+            wallpaper(image: payload.lockImage, video: payload.lockVideo, size: size)
                 .scaleEffect(1 + 0.06 * progress)
             // The clock and the bottom furniture leave early, the
             // wallpaper itself fades last — the order the real
@@ -111,9 +115,12 @@ struct UnlockPreviewView: View {
                 .padding(.bottom, 30)
             }
             .padding(.top, 64)
+            .frame(width: size.width, height: size.height)
             .opacity(Double(max(0, 1 - progress * 2.2)))
             .offset(y: -52 * progress)
         }
+        .frame(width: size.width, height: size.height)
+        .clipped()
         .opacity(Double(1 - smooth(0.55, 1.0, progress)))
         .offset(y: -0.10 * size.height * progress)
         .allowsHitTesting(false)
@@ -133,12 +140,12 @@ struct UnlockPreviewView: View {
         VStack {
             HStack {
                 Button { dismiss() } label: {
-                    Text("退出")
-                        .font(.subheadline.weight(.medium))
+                    Label("退出", systemImage: "xmark")
+                        .font(.headline)
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(Color.black.opacity(0.4), in: Capsule())
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 11)
+                        .background(Color.black.opacity(0.55), in: Capsule())
                 }
                 .buttonStyle(.plain)
                 Spacer()
@@ -182,119 +189,25 @@ struct UnlockPreviewView: View {
     }
 
     @ViewBuilder
-    private func wallpaper(image: UIImage?, video: URL?) -> some View {
-        if let video {
-            UnlockLoopingPlayer(url: video)
-                .ignoresSafeArea()
-        } else if let image {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .ignoresSafeArea()
-        } else {
-            LinearGradient(colors: [.indigo, .purple.opacity(0.7)],
-                           startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
+    private func wallpaper(image: UIImage?, video: URL?, size: CGSize) -> some View {
+        // The frame is not decoration: an unframed resizable image
+        // proposes its own pixel size to the stack, the stack grows
+        // past the screen, and every centred element (the clock,
+        // the icon grid, the exit button) lands off-centre — the
+        // first trial build shipped exactly that.
+        Group {
+            if let video {
+                UnlockLoopingPlayer(url: video)
+            } else if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Color.black
+            }
         }
-    }
-
-    // MARK: - The icon grid (drawn furniture, generic apps)
-
-    private struct AppIcon: Identifiable {
-        let id = UUID()
-        let name: String
-        let symbol: String
-        let color: Color
-    }
-
-    private static let apps: [AppIcon] = [
-        .init(name: "电话", symbol: "phone.fill", color: Color(red: 0.20, green: 0.78, blue: 0.35)),
-        .init(name: "信息", symbol: "message.fill", color: Color(red: 0.19, green: 0.82, blue: 0.35)),
-        .init(name: "Safari", symbol: "safari.fill", color: Color(red: 0.04, green: 0.52, blue: 1.0)),
-        .init(name: "邮件", symbol: "mail.fill", color: Color(red: 0.10, green: 0.45, blue: 0.95)),
-        .init(name: "照片", symbol: "photo.fill", color: Color(red: 1.0, green: 0.62, blue: 0.04)),
-        .init(name: "相机", symbol: "camera.fill", color: Color(red: 0.28, green: 0.28, blue: 0.29)),
-        .init(name: "地图", symbol: "map.fill", color: Color(red: 0.19, green: 0.82, blue: 0.35)),
-        .init(name: "时钟", symbol: "clock.fill", color: Color(red: 0.11, green: 0.11, blue: 0.12)),
-        .init(name: "天气", symbol: "cloud.sun.fill", color: Color(red: 0.04, green: 0.52, blue: 1.0)),
-        .init(name: "设置", symbol: "gearshape.fill", color: Color(red: 0.28, green: 0.28, blue: 0.29)),
-        .init(name: "日历", symbol: "calendar", color: Color(red: 1.0, green: 0.23, blue: 0.19)),
-        .init(name: "备忘录", symbol: "note.text", color: Color(red: 1.0, green: 0.84, blue: 0.04)),
-        .init(name: "音乐", symbol: "music.note", color: Color(red: 0.99, green: 0.24, blue: 0.27)),
-        .init(name: "钱包", symbol: "wallet.pass.fill", color: Color(red: 0.11, green: 0.11, blue: 0.12)),
-        .init(name: "计算器", symbol: "calculator.fill", color: Color(red: 0.28, green: 0.28, blue: 0.29)),
-        .init(name: "健康", symbol: "heart.fill", color: Color(red: 1.0, green: 0.18, blue: 0.33)),
-        .init(name: "文件", symbol: "folder.fill", color: Color(red: 0.04, green: 0.52, blue: 1.0)),
-        .init(name: "提醒事项", symbol: "checklist", color: Color(red: 1.0, green: 0.62, blue: 0.04)),
-        .init(name: "指南针", symbol: "location.north.fill", color: Color(red: 0.04, green: 0.52, blue: 1.0)),
-        .init(name: "录音机", symbol: "mic.fill", color: Color(red: 1.0, green: 0.23, blue: 0.19)),
-    ]
-
-    private static let dock: [AppIcon] = [
-        .init(name: "", symbol: "phone.fill", color: Color(red: 0.20, green: 0.78, blue: 0.35)),
-        .init(name: "", symbol: "safari.fill", color: Color(red: 0.04, green: 0.52, blue: 1.0)),
-        .init(name: "", symbol: "message.fill", color: Color(red: 0.19, green: 0.82, blue: 0.35)),
-        .init(name: "", symbol: "music.note", color: Color(red: 0.99, green: 0.24, blue: 0.27)),
-    ]
-
-    private var iconGrid: some View {
-        VStack {
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(62), spacing: 18), count: 4),
-                      spacing: 20) {
-                ForEach(Self.apps) { app in
-                    VStack(spacing: 4) {
-                        iconTile(app, size: 58)
-                        Text(app.name)
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(.white)
-                            .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
-                    }
-                }
-            }
-            .padding(.top, 78)
-            Spacer()
-            HStack(spacing: 22) {
-                ForEach(Self.dock) { app in iconTile(app, size: 58) }
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .background(Color.white.opacity(0.22),
-                        in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-            .padding(.bottom, 22)
-        }
-        .padding(.horizontal, 24)
-        .allowsHitTesting(false)
-    }
-
-    private func iconTile(_ app: AppIcon, size: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
-            .fill(app.color)
-            .frame(width: size, height: size)
-            .overlay(
-                Image(systemName: app.symbol)
-                    .font(.system(size: size * 0.42, weight: .medium))
-                    .foregroundStyle(.white))
-    }
-
-    // MARK: - Gesture
-
-    private var unlockGesture: some Gesture {
-        DragGesture(minimumDistance: 4)
-            .onChanged { value in
-                if dragStart == nil { dragStart = progress }
-                let start = dragStart ?? 0
-                progress = min(1, max(0, start - value.translation.height / 300))
-            }
-            .onEnded { value in
-                let start = dragStart ?? progress
-                dragStart = nil
-                let predicted = min(1, max(0, start - value.predictedEndTranslation.height / 300))
-                let target: CGFloat = predicted > 0.45 ? 1 : 0
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
-                    progress = target
-                }
-                if target == 1 { AppLog.op("解锁预览：滑到桌面（\(payload.title)）") }
-            }
+        .frame(width: size.width, height: size.height)
+        .clipped()
     }
 
     private func smooth(_ edge0: CGFloat, _ edge1: CGFloat, _ x: CGFloat) -> CGFloat {
@@ -312,9 +225,12 @@ struct UnlockPreviewView: View {
     }
 
     private static var timeLine: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "H:mm"
-        return formatter.string(from: Date())
+        // Built from components on purpose: a locale formatter
+        // handed the trial build "凌晨2:02" — period text the real
+        // lock clock shows small, here blown up and clipped. The
+        // real clock face is digits; spell them out directly.
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: Date())
+        return String(format: "%d:%02d", parts.hour ?? 0, parts.minute ?? 0)
     }
 }
 
