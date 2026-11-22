@@ -65,11 +65,22 @@ enum RestoreRunner {
             // Effective set: (false, false, true, false, false). The
             // reference passes systemFiles=true; this line runs false until
             // a spare-device pass says otherwise.
+            //
+            // 2026-11-22 (Grace, build 8): the spare-device passes have now
+            // spoken — three write-back rounds with systemFiles=false
+            // restored the PosterBoard payloads fine but the merged cloud
+            // configuration in the system shared-container domain never
+            // took effect (setup walked every pane, every round). Both
+            // reference implementations (desktop Nugget via
+            // pymobiledevice3 system=True, GoldenNuggetMobile via
+            // systemFiles: true) restore with system files on. This line
+            // now matches them: systemFiles=true, the other four switches
+            // unchanged. Effective set: (false, true, true, false, false).
             try await minimuxer.restoreBackup(
                 backupRoot: backupRoot.path(percentEncoded: false),
                 sourceIdentifier: sourceIdentifier,
                 shouldReboot: false,
-                systemFiles: false,
+                systemFiles: true,
                 onProgress: { overall in
                     let pct = overall < 0 ? 0 : min(overall, 100)
                     onProgress?(pct)

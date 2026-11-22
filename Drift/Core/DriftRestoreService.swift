@@ -1080,15 +1080,17 @@ final class DriftRestoreService {
         }
         // The restore options this package goes out with, made
         // visible (build 7, 2026-11-21): they are fixed by
-        // construction in the gateway call — no reboot, no system
-        // files, settings preserved, backup copied — and
-        // RemoveItemsNotRestored is never passed, so its Rust-side
-        // default (false) holds: the device must never read "not in
-        // this pruned package" as "delete it". Logged on every
-        // write-back so the log shows what was in force, not just
-        // what the code claims.
+        // construction in the gateway call — no reboot, settings
+        // preserved, backup copied — and RemoveItemsNotRestored is
+        // never passed, so its Rust-side default (false) holds: the
+        // device must never read "not in this pruned package" as
+        // "delete it". Logged on every write-back so the log shows
+        // what was in force, not just what the code claims.
+        // System files: off through build 7, on from build 8
+        // (2026-11-22, matching both reference implementations —
+        // see the note at the gateway call in RestoreRunner).
         AppLog.write("restore write-back: options — RestoreShouldReboot=false, "
-            + "RestoreSystemFiles=false, RestorePreserveSettings=true, "
+            + "RestoreSystemFiles=true, RestorePreserveSettings=true, "
             + "RestoreDontCopyBackup=false, RemoveItemsNotRestored=false")
 
         do {
