@@ -22,6 +22,7 @@ struct DriftSettingsView: View {
     @State private var packaging = false
     @State private var sharePackage: SharePackageItem?
     @State private var recordsNote: String?
+    @State private var showSealedNotice = false
     @State private var receipts: [PosterBoardLocalReceipt] = PosterBoardLocalReceipts.load()
     @State private var confirmClearHistory = false
     @State private var exportTarget: ApplyHistory.Record?
@@ -35,6 +36,10 @@ struct DriftSettingsView: View {
     @State private var exportPopupMessage: String?
     @State private var recordBusy = false
     @ObservedObject private var updateChecker = AppUpdateChecker.shared
+    /// #339 (Grace, 2026-11-16): the 预发行版更新 switch — while on,
+    /// the update check also looks at the nightly line. The checker
+    /// reads the same defaults key.
+    @AppStorage(AppUpdateChecker.nightlyOptInKey) private var checkNightlyUpdates = false
     @State private var cacheBreakdown: AppCache.Breakdown?
     @State private var confirmClearCache = false
     // #312 (Grace, 2026-11-13): the clear-cache outcome is a popup
@@ -51,8 +56,10 @@ struct DriftSettingsView: View {
             List {
                 aboutEntrySection
                 announcementSection
+                nightlyUpdateSection
                 connectionSection
                 localRouteSection
+                restoreSealedSection
                 historySection
                 recordsSection
                 appSection
@@ -137,6 +144,11 @@ struct DriftSettingsView: View {
                                     recordsNote = "刷入记录已清空；回执没有动，管理页仍能认出已刷的壁纸。"
                                 },
                               ])
+            .alert("恢复刷已封存", isPresented: $showSealedNotice) {
+                Button("知道了", role: .cancel) {}
+            } message: {
+                Text(DriftRestoreGate.notice)
+            }
             .sheet(item: $sharePackage) { item in
                 FileShareSheet(url: item.url)
             }
@@ -188,14 +200,10 @@ struct DriftSettingsView: View {
             } label: {
                 Label("关于此 App", systemImage: "info.circle")
             }
-            // The experimental-features page remains here for the
-            // restore-flash placeholder; kernel direct is now a regular
-            // method and no longer has a settings switch.
-            NavigationLink {
-                ExperimentalFeaturesView()
-            } label: {
-                Label("实验性功能", systemImage: "flask")
-            }
+            // The 实验性功能 page that sat here (#329) was deleted
+            // whole (Grace, 2026-11-22): once 内核直刷 and 恢复刷
+            // graduated and their switches went, the page held only
+            // two explanation cards under an "experimental" name.
         }
     }
 
@@ -208,6 +216,26 @@ struct DriftSettingsView: View {
             Button { showAnnouncement = true } label: {
                 Label("更新公告", systemImage: "megaphone")
             }
+        }
+    }
+
+    // MARK: - Nightly updates opt-in (#339)
+
+    /// One row and a switch, nothing else (Grace's final shape,
+    /// 2026-11-16): the orange one-way warning stands under the
+    /// switch only while it is on. Turning it on checks right away,
+    /// so the update page and the Settings badge can speak without
+    /// waiting for the next launch.
+    private var nightlyUpdateSection: some View {
+        Section {
+            Toggle("预发行版更新", isOn: $checkNightlyUpdates)
+            if checkNightlyUpdates {
+                Text("装上预发行版之后，这个 App 就按预发行版走，只查预发行版的更新；想回正式版，要重新下载正式版装回来。")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+        }
+        .onChange(of: checkNightlyUpdates) { _, isOn in
+            if isOn { Task { await updateChecker.refresh() } }
         }
     }
 
@@ -261,7 +289,7 @@ struct DriftSettingsView: View {
     // MARK: - In-process route
 
     /// The in-process route's premise, shown where the user can act on it:
-    /// whether this system is in range, and which App Group the process
+    /// whether this system is in range, and which App Group the installed
     /// signing profile actually granted.
     private var localRouteSection: some View {
         Section("本机直刷") {
@@ -277,32 +305,32 @@ struct DriftSettingsView: View {
                 Text("刷完上滑关闭 PosterBoard")
                     .foregroundStyle(.secondary)
             }
+            HStack {
+                Label("写入后端", systemImage: "arrow.triangle.branch")
+                Spacer()
+                let backend = WorseQueryEscape.backend(deviceVersion: WorseQueryEscape.processVersion,
+                                                       buildVersion: WorseQueryEscape.processBuildVersion)
+                Text(backend == .badQuery ? "bad_query（无需 App Group）" : (backend == .worseQuery ? "worse_query（需要 App Group）" : "不支持"))
+                    .foregroundStyle(.secondary)
+            }
             HStack(alignment: .top) {
                 Label("App Group", systemImage: "person.2")
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
                     if let group = WorseQueryEscape.discoveredGroupIdentifier {
                         Text(group).font(.caption.monospaced())
-                        Text("进程实际带着，容器可打开")
+                        Text("签名授予，容器可打开")
                             .font(.caption2).foregroundStyle(.secondary)
-                    } else if WorseQueryEscape.backend(
-                        deviceVersion: WorseQueryEscape.processVersion,
-                        buildVersion: WorseQueryEscape.processBuildVersion) == .badQuery {
-                        Text("bad_query 不需要 App Group")
-                            .foregroundStyle(.secondary)
-                        Text("iOS 26.0–26.6.1 走 bad_query，直接按路径授权")
-                            .font(.caption2).foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
                     } else {
                         Text("没有可用的组")
                             .foregroundStyle(.orange)
-                        Text("进程没有带着 App Group，或带着的组都打不开")
+                        Text("签名没有授予 App Group，或授予的组都打不开")
                             .font(.caption2).foregroundStyle(.secondary)
                             .multilineTextAlignment(.trailing)
                     }
                 }
             }
-            Text("组名在运行时向系统查询（SecTask，问的是本进程实际带着的组），逐个试开，第一个能打开的才用；不再读安装包里的描述文件。")
+            Text("iOS 26.0–26.6.1 使用 bad_query，不需要 App Group；其余支持版本使用 worse_query，需要当前进程实际带有可打开的组。组名通过 SecTask 从当前进程的签名权限中读取。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -365,6 +393,32 @@ struct DriftSettingsView: View {
             DriftEngine.shared.log("settings: wireless pairing record adopted (\(PairingRecord.sourceLabel(record)))")
         } catch {
             session.errorText = error.localizedDescription
+        }
+    }
+
+    // MARK: - Restore method (sealed)
+
+    /// The sealed restore entry (2.0.0): visible and greyed, never
+    /// selectable. There is no restore code behind it — safety by
+    /// non-existence. Tapping the row shows the sealing notice; the
+    /// pre-2.0.0 local-backup write-back/delete actions went away with
+    /// the backup machinery they belonged to.
+    private var restoreSealedSection: some View {
+        Section("恢复刷") {
+            Button {
+                showSealedNotice = true
+            } label: {
+                HStack {
+                    Label("恢复刷", systemImage: "lock.fill")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("已封存")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+            Text("2026-11-10 一次恢复刷入在重启后把设备恢复了出厂设置。查清原因并在备用机上验证之前不开放；点上面这一行看完整说明。")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -740,6 +794,12 @@ struct DriftSettingsView: View {
                     Spacer()
                     if updateChecker.updateAvailable, let latest = updateChecker.latest {
                         Text("有新版 \(latest.version)")
+                            .foregroundStyle(.red)
+                    } else if updateChecker.nightlyUpdateAvailable {
+                        // #339: the nightly offer shows here too, so
+                        // the switch's effect is visible without
+                        // opening the update page.
+                        Text("预发行版有新版")
                             .foregroundStyle(.red)
                     } else {
                         Text(updateChecker.currentVersion).foregroundStyle(.secondary)

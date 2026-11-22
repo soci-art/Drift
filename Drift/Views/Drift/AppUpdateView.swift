@@ -69,8 +69,37 @@ struct AppUpdateView: View {
                     Text("下的是未签名 IPA，保存或分享到签名工具里，签好再装。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-            } else if checker.latest != nil && !checker.checking {
+            } else if checker.latest != nil && !checker.checking && !checker.nightlyUpdateAvailable {
                 Section { Text("已经是最新版本了。").foregroundStyle(.secondary) }
+            }
+
+            // #339 (Grace, 2026-11-16): with the 预发行版更新 switch
+            // on, a newer nightly is offered here as its own section
+            // — clearly labelled as the pre-release it is, with its
+            // own download. The switch lives in Settings; this page
+            // only ever shows what the checker fetched under it.
+            if checker.nightlyUpdateAvailable, let nightly = checker.nightlyLatest {
+                Section("预发行版") {
+                    HStack {
+                        Text("最新版本")
+                        Spacer()
+                        Text("Drift \(nightly.displayVersion)")
+                    }
+                    Text("来自预发行版（先行测试）：新功能和修复先在那边验，可能不稳定。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    downloadButton(nightly, nightly: true)
+                    if !checker.updateAvailable {
+                        if !checker.routeNote.isEmpty {
+                            Text(checker.routeNote).font(.caption).foregroundStyle(.secondary)
+                        }
+                        if case .failed(let message) = checker.downloadPhase {
+                            Text(message).font(.caption).foregroundStyle(.red)
+                            Text(wirelessDataHint).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text("下的是未签名 IPA，保存或分享到签名工具里，签好再装。装上预发行版之后，这个 App 就按预发行版走。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
 
             Section {
@@ -111,7 +140,7 @@ struct AppUpdateView: View {
     }
 
     @ViewBuilder
-    private func downloadButton(_ latest: AppUpdateChecker.ReleaseInfo) -> some View {
+    private func downloadButton(_ latest: AppUpdateChecker.ReleaseInfo, nightly: Bool = false) -> some View {
         switch checker.downloadPhase {
         case .working(let fraction, let downloadedBytes, let totalBytes):
             VStack(alignment: .leading, spacing: 6) {
@@ -151,9 +180,10 @@ struct AppUpdateView: View {
             }
         default:
             Button {
-                checker.startDownload()
+                if nightly { checker.startNightlyDownload() } else { checker.startDownload() }
             } label: {
-                Label("下载 Drift \(latest.displayVersion)", systemImage: "arrow.down.circle")
+                Label(nightly ? "下载预发行版 \(latest.displayVersion)" : "下载 Drift \(latest.displayVersion)",
+                      systemImage: "arrow.down.circle")
             }
         }
     }

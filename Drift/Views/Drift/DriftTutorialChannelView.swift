@@ -22,11 +22,28 @@ struct DriftTutorialChannelView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     banner
+                    if channel == .restore {
+                        section("这是什么") {
+                            checklistCard(lines: [
+                                "把手机的备份拉下来，只把里面的壁纸换成你选的，再把备份写回去；数据和 App 都不动。",
+                                "别的通道都用不了的时候走这条：比如 iOS 27.3 beta 2 起，其他方式全断了，只剩恢复刷。",
+                            ])
+                        }
+                    }
                     section("需要什么") { checklistCard(lines: requirements) }
                     if channel.isTunnel {
                         section("先准备这两样") { prepareCards }
                     }
                     section("怎么刷") { stepsCard(steps: flashSteps) }
+                    if channel == .restore {
+                        section("注意") {
+                            checklistCard(lines: [
+                                "全程大约十分钟，拉取备份占大头；手机存储要留够空间。",
+                                "中途断了不会把手机弄坏：重新刷一次就行。",
+                                "刷完重启后会走一遍设置流程，是正常现象，手动走完就好。",
+                            ])
+                        }
+                    }
                     section("刷完怎么生效") { effectCard }
                     section("常见问题") { faqCard(items: faqs) }
                 }
@@ -95,17 +112,36 @@ struct DriftTutorialChannelView: View {
             ]
         case .kernel:
             return [
-                "先在「设置 → 实验性功能」里打开「内核直刷」开关（主页里能看到这一项，但不开开关刷不了，选了会先提醒你去打开）",
+                "没有额外开关，选了内核直刷，在系统和机型支持范围内就能用",
                 "系统在 iOS 17.0 到 iOS 18.7.1 之间",
                 "不用配对、不用隧道，也不用连 Wi-Fi",
                 "签名不限：哪种签名装的都行",
+            ]
+        case .restore:
+            return [
+                "系统是 iOS 27（正式版和 beta 都行）",
+                "不要求证书：免费 ID 签名也能用",
+                "配对文件（先配对一次，之后一直能用）",
+                "隧道：刷的时候开着 LocalDevVPN，手机连着 Wi-Fi",
+                "刷之前先把手机整机备份到电脑，并关掉「查找」",
             ]
         }
     }
 
     private var flashSteps: [String] {
+        if channel == .restore {
+            return [
+                "先把手机整机备份到电脑，并关掉「查找」；再打开 LocalDevVPN、确认配对文件已导入",
+                "选壁纸：壁纸包在壁纸页勾选；视频先在视频页解码，再在选择页里选已解码的",
+                "刷入方式选「恢复刷」，点「刷入」，看完弹窗点「确定刷入」",
+                "等它跑完：先拉取备份、再写回，中途不要划掉 App、不要断 Wi-Fi 和 LocalDevVPN",
+                "写回成功后，按提示重启手机",
+                "重启后会走一遍设置流程，手动走完即可，数据和 App 都在",
+                "回到桌面后检查描述文件还在不在，不在了就重新安装",
+            ]
+        }
         let third = switch channel {
-        case .noRespring, .local, .kernel:
+        case .noRespring, .local, .kernel, .restore:
             "点「刷入」，等它写完（手机保持解锁，别切走）"
         case .respring:
             "点「刷入」，等它写完（手机保持解锁，别切走；写完会提示你注销）"
@@ -153,10 +189,22 @@ struct DriftTutorialChannelView: View {
                 ("每次刷都要配对吗？",
                  "不用。配对一次、文件导进来之后，一直能用。"),
             ]
+        case .restore:
+            return [
+                ("没关「查找」会怎样？",
+                 "写回会被手机拒绝（错误 211），刷不进去。先到「设置 → 你的名字 → 查找」里关掉，刷完再打开。"),
+                ("刷完描述文件不见了？",
+                 "写回有时会把描述文件弄掉，原因还没查清。刷完到「设置 → 通用 → VPN 与设备管理」里看一眼，不在了就重新安装。"),
+                ("走设置流程时要验证 Apple ID？",
+                 "那是恢复后的固定一页，照常验证就行；验证的是你自己的账号，跟签名、证书没关系。"),
+                ("要多久？",
+                 "全程大约十分钟，大头在拉取备份。拉取时别划掉 App。"),
+                pickWallpaper,
+            ]
         case .kernel:
             return [
                 ("选了「内核直刷」却刷不了？",
-                 "多半是还没打开：先去「设置 → 实验性功能」里把「内核直刷」打开，再回来刷。"),
+                 "先检查系统是否在 iOS 17.0–17.7.x 或 iOS 18.0–18.7.1 范围内，再确认机型是否在支持表里。"),
                 ("提示用不了？",
                  "这个方式只支持 iOS 17.0–17.7.x 和 iOS 18.0–18.7.1，iOS 18.7.2 起用不了；机型不在支持表里也用不了。"),
                 ("刷完了，壁纸没变？",
@@ -301,6 +349,16 @@ struct DriftTutorialChannelView: View {
                         .font(.subheadline.weight(.semibold)).foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+            }
+        case .restore:
+            heroCard(tint: .red, icon: "arrow.counterclockwise.circle.fill",
+                     title: "重启后走完设置流程就生效") {
+                numberedSteps([
+                    "写回成功后 Drift 会问你要不要重启，点重启（也可以自己手动重启）",
+                    "重启后会走一遍设置流程，手动走完，数据和 App 都在",
+                    "回到桌面后，长按锁屏（或打开「设置 → 墙纸」），在列表里选刚刷的这张，设成当前壁纸",
+                    "最后检查一遍描述文件还在不在，不在了重新安装",
+                ], tint: .red)
             }
         case .kernel:
             heroCard(tint: .orange, icon: "hand.tap.fill",

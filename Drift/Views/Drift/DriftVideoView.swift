@@ -20,11 +20,16 @@ struct DriftVideoView: View {
     @State private var pickingFrame = false
     @State private var statusLine: String?
     @State private var videoPreview: UIImage?
+    @State private var decodeNote: String?
+    @State private var showPicker = false
+    @ObservedObject private var library = DecodedVideoLibrary.shared
 
     private var identity: DeviceIdentity { identityMonitor.current }
     private var manualPick: DriftMethodPick { DriftMethodPick.fromStored(manualPickRaw) }
-    private var canApply: Bool {
-        selection.video != nil && !session.running
+    /// The decode takes the pick exactly as it stands: a video, and
+    /// — in the non-loop shape — its freeze frame.
+    private var canDecode: Bool {
+        selection.video != nil && !session.running && !library.isDecoding
             && (selection.loop || selection.thumbnail != nil)
     }
 
@@ -93,7 +98,7 @@ struct DriftVideoView: View {
     private var introCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             introPills
-            Text("视频会在本机生成，再按上面显示的通道刷入。循环模式最多 400 帧；非循环是实况照片式（视频 + 一张定格帧）。")
+            Text("选好视频先解码存起来，刷的时候选已解码的，不用每次现等解码。循环模式最多 400 帧；非循环是实况照片式（视频 + 一张定格帧）。")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -122,7 +127,7 @@ struct DriftVideoView: View {
         case .worseQuery: return "关闭 PosterBoard 后生效"
         case .direct: return "刷完即生效"
         case .airlift: return "注销后生效"
-        case .backup: return "暂不可用"
+        case .backup: return "重启后生效"
         }
     }
 
@@ -173,10 +178,63 @@ struct DriftVideoView: View {
                 Text("定格帧在视频里选，不用另外准备图片。")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Divider()
+            // The decode section (Grace, 2026-11-22): decoding moves
+            // off the flash run entirely — a heavy video's decode is
+            // what used to kill a run minutes in. The product is
+            // kept in the library below and flashed from the picker.
+            HStack(spacing: 10) {
+                Button {
+                    startDecode()
+                } label: {
+                    if library.isDecoding {
+                        Label("解码中…", systemImage: "hourglass")
+                    } else {
+                        Label("开始解码", systemImage: "play.circle")
+                    }
+                }
+                .driftGlassButton()
+                .disabled(!canDecode)
+                Text("按下面的播放选项解码，改了选项要重新解码。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let decodeNote {
+                Text(decodeNote).font(.caption).foregroundStyle(.secondary)
+            }
+            NavigationLink {
+                DecodedVideoListView()
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "film.stack")
+                    Text("已解码的视频").font(.subheadline.weight(.medium))
+                    Spacer()
+                    Text(library.items.isEmpty
+                         ? "还没有"
+                         : "\(library.items.count) 个 · \(ByteCountFormatter.string(fromByteCount: library.totalBytes, countStyle: .file))")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                }
+                .foregroundStyle(.primary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
         .task(id: selection.video) { await loadPreview() }
+    }
+
+    /// Decode the current pick into the library. Errors land in the
+    /// shared error slot, like a failed flash's do.
+    private func startDecode() {
+        decodeNote = nil
+        Task {
+            do {
+                try await library.decode(selection: selection, preview: videoPreview)
+                decodeNote = "解码完成，已存到「已解码的视频」，刷的时候选它就行。"
+            } catch {
+                session.errorText = error.localizedDescription
+            }
+        }
     }
 
     private var optionsCard: some View {
@@ -215,11 +273,18 @@ struct DriftVideoView: View {
 
     private var applyCard: some View {
         VStack(spacing: 10) {
-            NativePrimaryButton(title: session.running ? "刷入中…" : "按当前通道刷入视频壁纸",
+            // Decode-first (Grace, 2026-11-22): there is no direct
+            // flash of the current pick any more — every video flash
+            // chooses a decoded product, so the decode never rides
+            // inside a run.
+            NativePrimaryButton(title: session.running ? "刷入中…" : "选择已解码的视频并刷入",
                                 systemImage: "film",
                                 running: session.running,
-                                disabled: !canApply) {
-                runVideo()
+                                disabled: session.running) {
+                showPicker = true
+            }
+            .navigationDestination(isPresented: $showPicker) {
+                DecodedVideoPickerView()
             }
             if session.running {
                 Button("取消") { session.cancelRun() }.driftGlassButton()
@@ -228,50 +293,13 @@ struct DriftVideoView: View {
                 Text(statusLine).font(.subheadline).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if selection.video != nil && !selection.loop && selection.thumbnail == nil {
-                NativeNote("非循环模式先选一张定格帧：在视频里挑一帧就行。")
-            }
+            NativeNote("先在上面把视频解码存好，这里选已解码的刷入，刷的时候不再现解码。")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
     }
 
     // MARK: - Actions
-
-    private func runVideo() {
-        var videoSelection = PosterBoardSelection()
-        videoSelection.video = selection.video
-        videoSelection.thumbnail = selection.thumbnail
-        videoSelection.loop = selection.loop
-        videoSelection.reverse = selection.reverse
-        videoSelection.foreground = selection.foreground
-        videoSelection.calculationMode = selection.calculationMode
-        Task {
-            var checked = DriftJudge.judge(
-                identity: identity, selection: videoSelection, pick: manualPick,
-                tunnelReady: tunnelMonitor.status == .ready)
-            if checked.isBlocked || checked.mode != .worseQuery {
-                if session.paired { await session.refreshIdentity() }
-                checked = DriftJudge.judge(
-                    identity: identity, selection: videoSelection, pick: manualPick,
-                    tunnelReady: tunnelMonitor.status == .ready)
-            }
-            guard !checked.isBlocked else {
-                session.errorText = checked.blockedReason
-                return
-            }
-            if checked.useKernel {
-                let outcome = await session.runKernelApply(identity: identity, selection: videoSelection)
-                if outcome.ok { statusLine = outcome.message }
-                else { statusLine = nil; session.errorText = outcome.message }
-            } else {
-                let outcome = await session.run(selection: videoSelection, mode: checked.mode,
-                                                 pick: manualPick, identity: identity)
-                if outcome.ok { statusLine = outcome.message }
-                else { statusLine = nil; session.errorText = outcome.message }
-            }
-        }
-    }
 
     private func importPicked(_ urls: [URL], into directory: URL,
                               assign: @escaping (URL?) -> Void) {

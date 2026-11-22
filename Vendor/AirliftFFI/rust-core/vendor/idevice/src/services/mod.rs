@@ -29,6 +29,8 @@ pub mod installcoordination_proxy;
 pub mod lockdown;
 #[cfg(feature = "misagent")]
 pub mod misagent;
+#[cfg(feature = "mobile_config")]
+pub mod mobile_config;
 #[cfg(feature = "mobile_image_mounter")]
 pub mod mobile_image_mounter;
 #[cfg(feature = "mobileactivationd")]

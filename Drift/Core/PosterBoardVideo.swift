@@ -78,6 +78,31 @@ enum PosterBoardVideo {
     /// belongs to is called from a `Task` a view's `body` started — i.e. from
     /// the main actor. Everything inside is synchronous once it is going, so the
     /// hop has to be made here rather than awaited around.
+    /// Stage a selection's video into `outputDirectory`: decode it
+    /// now, or — for a pre-decoded pick (video page, Grace,
+    /// 2026-11-22) — copy the stored product across. The product of
+    /// a decode is exactly the tree `generate(plan:)` writes, so the
+    /// two are interchangeable downstream; the copy lands in the
+    /// caller's scratch directory, never in the library, so the
+    /// caller's cleanup can treat both the same way.
+    static func generate(selection: PosterBoardSelection,
+                         outputDirectory: URL,
+                         log: @escaping @Sendable (String) -> Void) async throws {
+        if let preGenerated = selection.preGeneratedVideoDirectory {
+            log("  → video: staging the pre-decoded product of "
+                + "\(selection.preGeneratedVideoName ?? "Video")")
+            let fm = FileManager.default
+            for child in try fm.contentsOfDirectory(at: preGenerated, includingPropertiesForKeys: nil) {
+                try fm.copyItem(at: child,
+                                to: outputDirectory.appendingPathComponent(child.lastPathComponent,
+                                                                           isDirectory: true))
+            }
+            return
+        }
+        guard let plan = selection.plan else { return }
+        try await generate(plan: plan, outputDirectory: outputDirectory, log: log)
+    }
+
     static func generate(plan: PosterBoardVideoPlan,
                          outputDirectory: URL,
                          log: @escaping @Sendable (String) -> Void) async throws {

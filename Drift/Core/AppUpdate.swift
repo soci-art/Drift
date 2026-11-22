@@ -62,6 +62,10 @@ final class AppUpdateChecker: ObservableObject {
     }
 
     @Published var latest: ReleaseInfo?
+    /// #339 (Grace, 2026-11-16): the newest nightly, fetched only
+    /// while the 预发行版更新 switch in Settings is on — a release
+    /// build otherwise never looks at the nightly line at all.
+    @Published var nightlyLatest: ReleaseInfo?
     @Published var checking = false
     @Published var checkError: String?
     @Published var downloadPhase: DownloadPhase = .idle
@@ -71,18 +75,11 @@ final class AppUpdateChecker: ObservableObject {
 
     static let releasesAPI = "https://api.github.com/repos/soci-art/Drift/releases/latest"
     static let latestPage = "https://github.com/soci-art/Drift/releases/latest"
-    /// The nightly line's pre-release, taken from the releases
-    /// list: the /latest endpoint above never returns a pre-release,
-    /// which is exactly why the two lines can share it no longer
-    /// (Grace, 2026-11-16 — each line checks on its own line now).
-    /// Since the manual workflow landed (Grace, 2026-11-19) a
-    /// nightly release's tag is its bare version (`3.3.6`), not the
-    /// fixed `nightly` tag the old rolling release used, so there
-    /// is no single tag left to fetch by: the check reads the list
-    /// and takes the newest pre-release carrying the drift-nightly
-    /// stamp — a rule the legacy `nightly`-tagged release, whose
-    /// body carries the same stamp, also matches.
-    static let nightlyListAPI = "https://api.github.com/repos/soci-art/Drift/releases?per_page=20"
+    /// The nightly line's fixed pre-release, fetched by tag: the
+    /// /latest endpoint above never returns a pre-release, which is
+    /// exactly why the two lines can share it no longer (Grace,
+    /// 2026-11-16 — each line checks on its own line now).
+    static let nightlyAPI = "https://api.github.com/repos/soci-art/Drift/releases/tags/nightly"
     /// Domestic accelerator prefix — verified working 2026-11-11.
     /// RE-VERIFY AND REPLACE AT EVERY RELEASE (Grace's rule).
     static let mirrorPrefix = "https://gh.86419753.xyz/"
@@ -111,6 +108,25 @@ final class AppUpdateChecker: ObservableObject {
         return latestBuild > currentBuild
     }
 
+    /// #339: the Settings switch's defaults key, shared with the
+    /// settings page's toggle. Default off — a release build checks
+    /// its own line only until the user turns this on.
+    static let nightlyOptInKey = "DriftCheckNightlyUpdates"
+
+    static var nightlyOptIn: Bool {
+        UserDefaults.standard.bool(forKey: nightlyOptInKey)
+    }
+
+    /// Whether the fetched nightly is newer than this install, by
+    /// the same version-then-build comparison as the formal check.
+    var nightlyUpdateAvailable: Bool {
+        guard let nightlyLatest else { return false }
+        let order = PosterBoard.compareVersion(nightlyLatest.version, currentVersion) ?? 0
+        if order != 0 { return order > 0 }
+        guard let nightlyBuild = nightlyLatest.build else { return false }
+        return nightlyBuild > currentBuild
+    }
+
     func autoCheck() async {
         guard !didAutoCheck else { return }
         didAutoCheck = true
@@ -123,6 +139,14 @@ final class AppUpdateChecker: ObservableObject {
         do {
             latest = try await Self.fetchLatest()
             checkError = nil
+            // #339: with the switch on, a release build also looks
+            // at the nightly line. Best-effort — a nightly fetch
+            // that fails stays quiet and simply offers nothing.
+            if AppVersion.channel == .release, Self.nightlyOptIn {
+                nightlyLatest = try? await Self.fetchNightly()
+            } else {
+                nightlyLatest = nil
+            }
         } catch {
             checkError = "没查到更新信息：网络不通，或者发行页暂时不可用。"
         }
@@ -217,7 +241,7 @@ final class AppUpdateChecker: ObservableObject {
     }
 
     private static func fetchNightlyViaAPI(base: String) async throws -> ReleaseInfo {
-        guard let url = URL(string: base + nightlyListAPI) else { throw URLError(.badURL) }
+        guard let url = URL(string: base + nightlyAPI) else { throw URLError(.badURL) }
         var request = URLRequest(url: url)
         request.timeoutInterval = 12
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -225,23 +249,15 @@ final class AppUpdateChecker: ObservableObject {
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
             throw URLError(.badServerResponse)
         }
-        // The list comes back newest first. A nightly release is a
-        // pre-release titled "Nightly" (the legacy rolling release's
-        // tag is "nightly" instead) whose body carries the stamp;
-        // formal releases are never pre-releases, so the first
-        // match is this line's current build.
-        guard let list = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-              let object = list.first(where: { candidate in
-                  guard candidate["prerelease"] as? Bool == true,
-                        (candidate["name"] as? String) == "Nightly"
-                            || (candidate["tag_name"] as? String) == "nightly"
-                  else { return false }
-                  return nightlyStamp(in: candidate["body"] as? String ?? "") != nil
-              }),
-              let stamp = nightlyStamp(in: object["body"] as? String ?? "")
-        else { throw URLError(.cannotParseResponse) }
-        let rawBody = object["body"] as? String ?? ""
-        let assets = object["assets"] as? [[String: Any]] ?? []
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let tag = object?["tag_name"] as? String, tag == "nightly" else {
+            throw URLError(.cannotParseResponse)
+        }
+        let rawBody = object?["body"] as? String ?? ""
+        guard let stamp = nightlyStamp(in: rawBody) else {
+            throw URLError(.cannotParseResponse)
+        }
+        let assets = object?["assets"] as? [[String: Any]] ?? []
         guard let asset = assets.first(where: { ($0["name"] as? String) == "Drift-unsigned.ipa" })
                 ?? assets.first(where: { ($0["name"] as? String)?.hasSuffix(".ipa") == true }),
               let name = asset["name"] as? String,
@@ -249,9 +265,9 @@ final class AppUpdateChecker: ObservableObject {
               let assetURL = URL(string: download) else {
             throw URLError(.cannotParseResponse)
         }
-        // The asset's updated_at is when this build actually
-        // landed — a same-version replacement recreates the whole
-        // release, so this stays the honest date either way.
+        // The nightly release was created once and is never
+        // republished, so its published_at is the creation date;
+        // the asset's updated_at is when this build actually landed.
         let dateLine = (asset["updated_at"] as? String)
             .flatMap(AppAnnouncement.dateLine(fromISO:))
         return ReleaseInfo(version: stamp.version,
@@ -333,6 +349,18 @@ final class AppUpdateChecker: ObservableObject {
                                  totalBytes: Int64(latest.assetSize))
         routeNote = ""
         Task { await download(latest) }
+    }
+
+    /// #339: the nightly offer downloads through the same tiers and
+    /// progress as the formal one — only the ReleaseInfo differs.
+    func startNightlyDownload() {
+        guard let nightlyLatest, nightlyUpdateAvailable else { return }
+        if case .working = downloadPhase { return }
+        downloadPhase = .working(fraction: nightlyLatest.assetSize > 0 ? 0 : nil,
+                                 downloadedBytes: 0,
+                                 totalBytes: Int64(nightlyLatest.assetSize))
+        routeNote = ""
+        Task { await download(nightlyLatest) }
     }
 
     private func download(_ info: ReleaseInfo) async {

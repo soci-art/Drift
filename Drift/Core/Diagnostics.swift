@@ -41,8 +41,8 @@ enum Diagnostics {
         let localBackend = WorseQueryEscape.backend(
             deviceVersion: WorseQueryEscape.processVersion,
             buildVersion: WorseQueryEscape.processBuildVersion).rawValue
-        lines.append("  本机直刷后端: \(localBackend)"
-            + "；发现的组: \(WorseQueryEscape.discoveredGroupIdentifier ?? "未发现可用组")")
+        let discoveredGroup = WorseQueryEscape.discoveredGroupIdentifier ?? "未发现可用组"
+        lines.append("  本机直刷后端: \(localBackend)；发现的组: \(discoveredGroup)")
         let tunnelReady = await TunnelMonitor.shared.status == .ready
         let judged = DriftJudge.judge(identity: identity,
                                       selection: PosterBoardSelection(),

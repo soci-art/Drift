@@ -17,7 +17,8 @@ enum KernelDirectPremise {
         /// iOS 17 / 18」 told an 18.7.7 user nothing about where
         /// they stand).
         var pastBandTop: Bool = false
-        /// Both gates passed: the method may be offered as usable.
+
+        /// Both compatibility requirements passed.
         var ready: Bool { inBand && chipCovered }
         /// Why not, in one user-facing line (empty when ready).
         var reason: String {
@@ -29,9 +30,10 @@ enum KernelDirectPremise {
 
     static func evaluate(version: String) -> Evaluation {
         let band = isInBand(version: version)
+        let covered = isChipCovered(model: modelIdentifier)
         let major = Int(version.split(separator: ".").first ?? "") ?? 0
         return Evaluation(inBand: band,
-                          chipCovered: isChipCovered(model: modelIdentifier),
+                          chipCovered: covered,
                           pastBandTop: !band && (major == 17 || major == 18))
     }
 

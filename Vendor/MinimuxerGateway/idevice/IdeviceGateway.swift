@@ -2578,6 +2578,80 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
         }
     }
 
+    /// The diagnostics relay (com.apple.mobile.diagnostics_relay):
+    /// the paired channel desktop tools use for device power actions.
+    private func withDiagnosticsRelay<T: Sendable>(
+        _ action: (OpaquePointer) throws -> T
+    ) throws -> T {
+        try performWithEitherService(
+            connectRP: diagnostics_relay_client_connect_rsd,
+            connectLockdown: diagnostics_relay_client_connect,
+            cleanup: diagnostics_relay_client_free,
+            serviceName: "Diagnostics relay"
+        ) { client in
+            try action(client)
+        }
+    }
+
+    private func withMobileConfig<T: Sendable>(
+        _ action: (OpaquePointer) throws -> T
+    ) throws -> T {
+        try performWithEitherService(
+            connectRP: mobile_config_client_connect_rsd,
+            connectLockdown: mobile_config_client_connect,
+            cleanup: mobile_config_client_free,
+            serviceName: "Mobile config"
+        ) { client in
+            try action(client)
+        }
+    }
+
+    /// Ask the device to restart itself through the diagnostics
+    /// relay. The request is the whole conversation — the device
+    /// answers, then reboots — so there is no goodbye afterwards.
+    /// Throws when the service refuses the request itself. Drift
+    /// offers this after a successful restore write-back (Alpha
+    /// line, Grace, 2026-11-21).
+    public func restartDevice() async throws {
+        try await withFFIDispatch {
+            try self.withDiagnosticsRelay { client in
+                if let err = diagnostics_relay_client_restart(client) {
+                    let msg = self.getErrorMessage(from: err)
+                    defer { idevice_error_free(err) }
+                    throw IdeviceGatewayError(.serviceError, reason: "Diagnostics relay restart failed: \(msg)")
+                }
+            }
+        }
+    }
+
+    /// Fetch the device's live cloud configuration through the
+    /// MCInstall service (Alpha restore line, 2026-11-22): the real
+    /// dictionary the Setup Assistant staging file is built from,
+    /// read over the pairing channel because a backup pull never
+    /// delivers that file's contents. Read-only by construction —
+    /// the vendored client has no setter and no profile surface.
+    ///
+    /// Returns nil when the device answers without a
+    /// CloudConfiguration dictionary (none stored). Throws when the
+    /// service cannot be reached or the exchange fails; callers
+    /// that can proceed without the configuration decide that
+    /// themselves.
+    public func fetchCloudConfiguration() async throws -> [String: Any]? {
+        try await withFFIDispatch {
+            try self.withMobileConfig { client in
+                var node: plist_t? = nil
+                if let err = mobile_config_client_get_cloud_configuration(client, &node) {
+                    let msg = self.getErrorMessage(from: err)
+                    defer { idevice_error_free(err) }
+                    throw IdeviceGatewayError(.serviceError, reason: "Mobile config fetch failed: \(msg)")
+                }
+                guard let node else { return nil }
+                defer { self.safeFreePlist(node) }
+                return self.plistNodeToDictionary(node)
+            }
+        }
+    }
+
     /// The same, against one app's data container, via house_arrest.
     ///
     /// `startHouseArrestAfc` (above) already frees the house_arrest client and
@@ -3378,6 +3452,11 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
             // shortfall there is what it reports as MBErrorDomain/104. These
             // numbers are the only host-side evidence of what happened.
             delegateLog?(ctx.commitSummary())
+            // Name whatever the commit did not carry away BEFORE the
+            // stand-ins are cleaned up: afterwards the evidence is gone
+            // by design (build 5, 2026-11-21 — the 205 shortfall of
+            // exactly four files, two runs running, had no names).
+            let unmoved = ctx.reportUnmovedPlaceholders()
             // The 0-byte stand-ins for filtered payloads must outlive the whole
             // exchange: the device validates the backup tree against the
             // Manifest.db it uploaded before it answers, and a payload that is
@@ -3408,13 +3487,73 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
             // failure that is entirely about free space on the backup volume.
             if let refusal = Self.backupRefusal(dict, backupRoot: backupRoot) {
                 delegateLog?("device refused the backup: \(refusal)")
+                // The refusal dictionary in full (build 6, 2026-11-21):
+                // until now only the parsed code and description were
+                // kept, and the rest of what the device said — the most
+                // direct evidence of what 205 actually means — was
+                // thrown away at exactly this point.
+                delegateLog?("device final response: \(dict)")
+                // The one reclassification this gateway will ever make
+                // (build 6, 2026-11-21 — the 205 direction confirmed
+                // with GPT and Claude after the build-5 field log): a
+                // 205 that arrives as the session's FINAL response, in a
+                // session with no earlier error of any kind and a fully
+                // reconciled commit, is thrown as a distinct type so the
+                // caller can judge the pulled tree on host-side evidence
+                // instead of treating the refusal as a failed pull. It
+                // is NOT success: the type carries the refusal verbatim,
+                // and every other refusal — any other code, any earlier
+                // blemish, any unreconciled placeholder — throws exactly
+                // as before. A transport failure never reaches this
+                // branch at all (it throws above), so a disconnect or
+                // timeout can never be reclassified.
+                let code = (dict["ErrorCode"] as? NSNumber)?.intValue ?? 0
+                let accounting = ctx.closeAccounting()
+                if code == 205,
+                   accounting.skipped == 0, accounting.failed == 0,
+                   accounting.delegateErrors == 0,
+                   unmoved.stillStaged == 0, unmoved.forgotten == 0,
+                   unmoved.unknown == 0 {
+                    throw BackupCloseRefusal(code: code, refusalText: refusal)
+                }
                 throw IdeviceGatewayError(.serviceError, reason: "The device refused the backup: "
                     + refusal)
+            }
+            // The accepted final response is evidence too (build 7,
+            // 2026-11-21): three pulls were refused at close and the
+            // fourth was accepted, and until now only refusals were
+            // kept. With both sides on record, a future refusal can be
+            // diffed against an acceptance from the same device
+            // instead of theorised about.
+            if !dict.isEmpty {
+                delegateLog?("device final response (accepted): \(dict)")
             }
             verboseLog("[IdeviceGateway] syncBackupBackup() mobilebackup2_backup completed")
             return dict
         }
     }
+
+/// A device refusal delivered as the backup session's final response,
+/// under accounting clean enough that the caller may judge the pulled
+/// tree on host-side evidence (build 6, 2026-11-21 — see the
+/// classification site in `syncBackupBackup`).
+///
+/// This is a refusal, not a success: it carries the device's code and
+/// text verbatim, and any flow that receives it must keep saying so —
+/// in its report and in anything it later asks the user to confirm.
+/// Flows that do not opt into the distinction (the protective pull)
+/// surface it through `errorDescription`, whose wording matches the
+/// generic refusal error it replaces.
+public struct BackupCloseRefusal: Error, LocalizedError {
+    public let code: Int
+    /// The refusal as `backupRefusal` phrases it, e.g.
+    /// `MBErrorDomain/205 — Manifest references files not in backup`.
+    public let refusalText: String
+
+    public var errorDescription: String? {
+        "The device refused the backup: \(refusalText)"
+    }
+}
 
     /// The device's own reason for refusing a `Backup`, or `nil` when it accepted.
     ///

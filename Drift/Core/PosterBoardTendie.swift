@@ -616,11 +616,8 @@ enum PosterBoardImports {
         let version = DeviceIdentityMonitor.shared.current.version.isEmpty
             ? WorseQueryEscape.processVersion
             : DeviceIdentityMonitor.shared.current.version
-        // iOS 17 only (Grace, 2026-11-17): complete the descriptor
-        // instance configurations a pack may not ship — on that
-        // system a missing rendering configuration leaves a flashed
-        // layered wallpaper static. Best-effort and in place, like
-        // the steps around it; other systems are not touched.
+        // iOS 17 only: fill missing per-descriptor instance plists at import.
+        // Existing pack files are preserved; failures leave the original pack.
         if let completed = PackInstanceConfigs.completeIfNeeded(clean, deviceVersion: version) {
             clean = completed
         }

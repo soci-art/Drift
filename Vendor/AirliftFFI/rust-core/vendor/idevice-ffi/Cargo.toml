@@ -53,6 +53,7 @@ installation_proxy = ["idevice/installation_proxy"]
 springboardservices = ["idevice/springboardservices"]
 misagent = ["idevice/misagent"]
 mobileactivationd = ["idevice/mobileactivationd"]
+mobile_config = []
 mobilebackup2 = ["idevice/mobilebackup2"]
 mobile_image_mounter = ["idevice/mobile_image_mounter"]
 location_simulation = ["idevice/location_simulation"]
@@ -99,6 +100,7 @@ full = [
   "misagent",
   "mobileactivationd",
   "mobile_image_mounter",
+  "mobile_config",
   "mobilebackup2",
   "notification_proxy",
   "pair",

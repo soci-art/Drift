@@ -175,6 +175,13 @@ final class DriftEngine {
     /// the verification confirms every descriptor is in store.
     private(set) var lastVerification: PosterStoreVerification?
 
+    /// The dry-run report of the latest restore run (Alpha line), read
+    /// by the session funnel the way it reads `lastPosterBoardEffect`.
+    private(set) var lastRestoreDryRun: RestoreDryRunReport?
+    /// Retained so the confirmed write-back reaches the same prepared
+    /// package the dry run audited; nil outside a pending dry run.
+    private var restoreService: DriftRestoreService?
+
     /// The `eta.py` port.  Recreated per run so a new apply starts estimating
     /// from a clean slate even though the engine object is a singleton.
     private var etaEstimator = ProgressEta()
@@ -241,6 +248,7 @@ final class DriftEngine {
         clearProgress()
         lastPosterBoardEffect = nil
         lastVerification = nil
+        lastRestoreDryRun = nil
         let runStage = StageTimer("RUN apply")
         defer { runStage.done() }
 
@@ -251,6 +259,7 @@ final class DriftEngine {
         // name both halves. (Preserved from the old engine.)
         if selection.fullReset || !selection.resetModes.isEmpty {
             let carriesWallpapers = !selection.tendies.isEmpty || selection.video != nil
+                || selection.preGeneratedVideoDirectory != nil
             if carriesWallpapers {
                 throw DriftError("PosterBoard 页已有一个待执行的重置："
                     + "（\(selection.describe)），同时还选中了壁纸。重置运行"
@@ -342,16 +351,90 @@ final class DriftEngine {
             return
 
         case .backup:
-            // The restore route is suspended (feedback #30) and its whole
-            // delivery machinery was removed in the 2.0.0 swap: there is no
-            // backup or restore code behind this facade to fall back to.
-            // The session funnel refuses this mode first; this is the
-            // second, engine-side refusal with the same notice.
-            throw DriftError("暂不可用")
+            // The restore route (feedback #30): the session funnel
+            // refuses this mode while the gate is closed, and this is
+            // the second, engine-side refusal with the same notice.
+            // The gate opens only on the Alpha research line
+            // (DriftRestoreGate), and there a run in this mode is the
+            // one-flow apply: this dry run (pull, compile, prune,
+            // inject, audit, fingerprint) first, then the session
+            // funnels straight into `writeBackRestore` below within
+            // the same run (Grace, 2026-11-21). The dry run's report
+            // rides back on `lastRestoreDryRun`, mirroring
+            // `lastPosterBoardEffect`.
+            guard DriftRestoreGate.isEnabled else {
+                throw DriftError("暂不可用")
+            }
+            let minimuxer = Minimuxer.shared()
+            guard await testReady(minimuxer) else {
+                throw DriftError("核心还没就绪。请确保 Wi-Fi 可用，并打开 LocalDevVPN 连上隧道，然后选择配对文件。")
+            }
+            markRustLog()
+            let service = DriftRestoreService()
+            let report = try await service.dryRun(
+                selection: selection,
+                deviceVersion: modeVersion,
+                buildVersion: modeIdentity.buildVersion,
+                // One real bar for the whole one-flow run (Grace,
+                // 2026-11-21): the dry run's device-reported pull
+                // progress fills the first half, the write-back's
+                // device-reported restore progress the second half
+                // (see writeBackRestore). The local prepare between
+                // them reports nothing, so the bar holds at halfway.
+                onProgress: { overall in self.logProgress("restore dry run", overall / 2) })
+            restoreService = service
+            lastRestoreDryRun = report
+            log("Restore dry run complete: \(report.payloadCount) payload(s) compiled, "
+                + "package \(report.packageFileCount) file(s), fingerprint \(report.fingerprintShort)")
+            return
         }
     }
 
     // MARK: - Readiness
+
+    // MARK: - Restore write-back (Alpha line)
+
+    /// Write back the package the latest restore dry run prepared.
+    /// The service re-verifies the dry run's fingerprint first; a
+    /// mismatch — or no dry run at all — refuses here.
+    func writeBackRestore() async throws {
+        guard let restoreService else {
+            throw DriftError("还没有准备好的恢复包。")
+        }
+        do {
+            // Second half of the run's one real bar (see the dry
+            // run's mapping in applyWallpapersRun): the restore's own
+            // device-reported progress, 50→100.
+            try await restoreService.writeBack(
+                onProgress: { overall in self.logProgress("restore write-back", 50 + overall / 2) })
+        } catch {
+            self.restoreService = nil
+            lastRestoreDryRun = nil
+            throw error
+        }
+        self.restoreService = nil
+        lastRestoreDryRun = nil
+    }
+
+    /// Ask the device to restart itself through the diagnostics
+    /// relay (Alpha line, Grace, 2026-11-21): the follow-up to a
+    /// successful restore write-back, offered to the user as a
+    /// choice — never automatic. The five restore switches are not
+    /// involved; this is a separate, ordinary paired service.
+    func restartDevice() async throws {
+        guard let gateway = Minimuxer.shared().ideviceGateway else {
+            throw DriftError("没有 idevice 网关——隧道通了吗？")
+        }
+        try await gateway.restartDevice()
+        log("已请设备重启（诊断通道）")
+    }
+
+    /// Throw a prepared dry run away without writing it back.
+    func discardRestoreDryRun() {
+        restoreService?.discard()
+        restoreService = nil
+        lastRestoreDryRun = nil
+    }
 
     private func testReady(_ minimuxer: Minimuxer) async -> Bool {
         if case .success(true) = await minimuxer.core.isReady() {

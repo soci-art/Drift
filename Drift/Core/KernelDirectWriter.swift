@@ -16,15 +16,12 @@ enum KernelDirectWriter {
         let installedCount: Int
         /// What was placed, for the receipt journal (#334).
         let placed: [Placed]
-        /// iOS 17.0 experimental route: descriptors only, no database row.
-        let systemImportOnly: Bool
     }
 
     private struct Source {
         let name: String
         let url: URL
         let defaultExtension: String
-        let plannedDescriptors: Int
         let extract: (URL) throws -> Void
     }
 
@@ -68,25 +65,21 @@ enum KernelDirectWriter {
         storePath: String,
         structureVersions: [Int],
         deviceVersion: String,
-        generatedVideoDirectory: URL? = nil,
         log: @escaping @Sendable (String) -> Void,
         progress: @escaping (Double) -> Void
     ) throws -> Outcome {
-        guard !selection.tendies.isEmpty || generatedVideoDirectory != nil else {
-            throw DriftError("内核直刷需要先选择壁纸包或视频。")
+        guard !selection.tendies.isEmpty else {
+            throw DriftError("内核直刷需要先选择至少一个 .tendies 壁纸包。")
         }
-        guard !selection.fullReset, selection.resetModes.isEmpty else {
-            throw DriftError("内核直刷不处理壁纸商店重置任务。")
+        guard selection.video == nil,
+              selection.preGeneratedVideoDirectory == nil,
+              !selection.fullReset,
+              selection.resetModes.isEmpty else {
+            throw DriftError("内核直刷当前只处理已选的 .tendies 描述文件，不处理视频或重置任务。")
         }
         guard selection.tendies.allSatisfy({ !$0.isContainer && !$0.isUnsafeContainer }) else {
             throw DriftError("内核直刷当前只写入描述文件，不接受包含整个商店容器或数据库的包。")
         }
-
-        // iOS 17.0.0 loads no animation for a descriptor that also carries a
-        // hand-written database row (#施工单 1). The experimental route
-        // publishes only the descriptor folders and lets PosterBoard import
-        // them itself; later systems keep the registered path.
-        let systemImportOnly = usesSystemImportOnly(deviceVersion: deviceVersion)
 
         // Keep the exact path spelling returned by the kernel probe.
         // URL.standardizedFileURL may strip the existing "/private" alias.
@@ -122,10 +115,9 @@ enum KernelDirectWriter {
             )
         }
 
-        var sources = selection.tendies.map { pack in
+        let sources = selection.tendies.map { pack in
             Source(name: pack.name, url: pack.url,
-                   defaultExtension: pack.posterType.extensionBundleID,
-                   plannedDescriptors: PosterBoardAirlift.countDescriptors(inArchiveAt: pack.url)) { stage in
+                   defaultExtension: pack.posterType.extensionBundleID) { stage in
                 try pack.extract(to: stage)
                 if PosterBoard.shouldConvertLegacy(pack: pack,
                                                     deviceVersion: deviceVersion,
@@ -133,22 +125,6 @@ enum KernelDirectWriter {
                     PosterBoard.convertLegacyPack(pack.name, at: stage, log: log)
                 }
             }
-        }
-
-        if let generatedVideoDirectory {
-            sources.append(Source(
-                name: "视频：\(selection.video?.lastPathComponent ?? "Video")",
-                url: generatedVideoDirectory,
-                defaultExtension: PosterBoardPosterType.collections.extensionBundleID,
-                plannedDescriptors: 1
-            ) { stage in
-                for child in try FileManager.default.contentsOfDirectory(
-                    at: generatedVideoDirectory, includingPropertiesForKeys: nil) {
-                    try FileManager.default.copyItem(
-                        at: child,
-                        to: stage.appendingPathComponent(child.lastPathComponent, isDirectory: true))
-                }
-            })
         }
 
         let manager = FileManager.default
@@ -159,7 +135,9 @@ enum KernelDirectWriter {
 
         // Unpack first, then select a generation from the providers actually
         // declared by the descriptor trees, not from the pack's default type.
-        let planned = max(1, sources.reduce(0) { $0 + $1.plannedDescriptors })
+        let planned = max(1, sources.reduce(0) {
+            $0 + PosterBoardAirlift.countDescriptors(inArchiveAt: $1.url)
+        })
         log("[内核写入] 计划统计：\(sources.count) 个包，预计 \(planned) 个描述符")
         var prepared: [PreparedDescriptor] = []
 
@@ -190,13 +168,6 @@ enum KernelDirectWriter {
 
             for (index, descriptor) in descriptors.enumerated() {
                 guard PosterBoard.managedProviders.contains(descriptor.extensionID) else {
-                    // The container provider gets the same plain wording
-                    // as the session-layer refusal (Grace, 2026-11-18):
-                    // a raw provider id is not user language.
-                    if descriptor.extensionID == PosterBoardPosterType.container.extensionBundleID {
-                        throw DriftError("「\(source.name)」是『容器』类型的包，这类包内核直刷写不了。"
-                            + "请到壁纸包页把它的出现位置改回『自动』，再刷一次。")
-                    }
                     throw DriftError("不支持的 PosterBoard provider：\(descriptor.extensionID)")
                 }
                 let numericID = Int.random(in: PosterBoard.identifierRange)
@@ -250,21 +221,17 @@ enum KernelDirectWriter {
 
         let databaseURL = URL(fileURLWithPath:
             storePath + "/\(generation)/" + PosterBoard.databaseFileName)
+        var databaseIsDirectory: ObjCBool = false
+        guard manager.fileExists(atPath: databaseURL.path, isDirectory: &databaseIsDirectory),
+              !databaseIsDirectory.boolValue else {
+            throw DriftError("结构版本 \(generation) 中不存在设备现有数据库：\(databaseURL.path)")
+        }
 
         log("[内核写入] PosterBoard 容器：\(canonicalContainer)")
         log("[内核写入] 商店目录：\(storePath)")
         log("[内核写入] 采用结构版本：\(generation)")
         log("[内核写入] 实际 provider：\(requiredProviders.sorted().joined(separator: "、"))")
-        if systemImportOnly {
-            log("[系统导入] iOS \(deviceVersion)：本次只发布描述符，不写数据库、不生成缩略图，交给 PosterBoard 自行扫描导入")
-        } else {
-            var databaseIsDirectory: ObjCBool = false
-            guard manager.fileExists(atPath: databaseURL.path, isDirectory: &databaseIsDirectory),
-                  !databaseIsDirectory.boolValue else {
-                throw DriftError("结构版本 \(generation) 中不存在设备现有数据库：\(databaseURL.path)")
-            }
-            log("[内核数据库] 目标：\(databaseURL.path)")
-        }
+        log("[内核数据库] 目标：\(databaseURL.path)")
 
         // Copy and fsync hidden staging folders before opening the DB transaction.
         // The final UUID path is published only after BEGIN IMMEDIATE has locked
@@ -291,69 +258,6 @@ enum KernelDirectWriter {
         }
         log("[内核写入] 隐藏暂存完成：\(pending.count) 个目录，尚未发布最终 UUID 目录")
 
-        var placed: [Placed] = []
-        var completed = 0
-        var lastPublishedAt = Date.distantPast
-        func publishPending() throws {
-            for item in pending {
-                lastPublishedAt = try publish(item, log: log)
-                placed.append(Placed(
-                    extensionID: item.extensionID,
-                    folderName: item.folderName,
-                    parent: item.parent,
-                    key: item.key,
-                    pack: item.pack,
-                    numericID: item.numericID
-                ))
-                completed += 1
-                progress(Double(completed) / Double(max(1, pending.count)) * 100)
-            }
-        }
-        func rollBackPublished() {
-            for item in placed.reversed() {
-                try? manager.removeItem(atPath: item.parent + "/" + item.folderName)
-                fsyncDirectory(item.parent)
-            }
-        }
-
-        if systemImportOnly {
-            do {
-                try publishPending()
-            } catch {
-                log("[系统导入] 发布失败：\(error.localizedDescription)")
-                rollBackPublished()
-                throw error
-            }
-            let expected = Set(pending.map(\.key))
-            var present: Set<String> = []
-            for item in pending {
-                if let stats = try? treeStats(item.destination), stats.files > 0 {
-                    present.insert(item.key)
-                }
-            }
-            let missing = expected.subtracting(present)
-            guard missing.isEmpty else {
-                rollBackPublished()
-                throw DriftError("系统导入路径发布后目录核验未通过："
-                    + missing.sorted().joined(separator: "、"))
-            }
-            log("[系统导入] 目录核验通过 \(present.count)/\(expected.count)；未写数据库行，等待 PosterBoard 自行扫描")
-            let providers = Set(placed.map(\.extensionID))
-            let verification = PosterStoreVerification(
-                structureVersion: generation,
-                structureVersionSource: "iOS 17.0 系统导入实验：只发布描述符，未写 SQLite 登记、未生成缩略图",
-                providersSeen: providers,
-                expected: expected,
-                confirmed: present,
-                enumeratedAfter: true
-            )
-            progress(100)
-            return Outcome(verification: verification,
-                           installedCount: placed.count,
-                           placed: placed,
-                           systemImportOnly: true)
-        }
-
         // A kernel registration only adds the wallpaper to the picker. It must
         // never change the user's currently selected wallpaper.
         let registrationItems = pending.map {
@@ -364,6 +268,8 @@ enum KernelDirectWriter {
             )
         }
 
+        var placed: [Placed] = []
+        var completed = 0
         let registration: PosterBoardStore.InPlaceRegistration
         do {
             registration = try PosterBoardStore.registerInPlace(
@@ -372,14 +278,30 @@ enum KernelDirectWriter {
                 backupRoot: PosterBoard.workDirectory.deletingLastPathComponent()
                     .appendingPathComponent("KernelDirectDatabaseBackups", isDirectory: true),
                 installFiles: {
-                    try publishPending()
+                    var lastPublishedAt = Date.distantPast
+                    for item in pending {
+                        lastPublishedAt = try publish(item, log: log)
+                        placed.append(Placed(
+                            extensionID: item.extensionID,
+                            folderName: item.folderName,
+                            parent: item.parent,
+                            key: item.key,
+                            pack: item.pack,
+                            numericID: item.numericID
+                        ))
+                        completed += 1
+                        progress(Double(completed) / Double(max(1, pending.count)) * 100)
+                    }
                     return lastPublishedAt
                 },
                 log: { log("[内核数据库] " + $0) }
             )
         } catch {
             log("[内核写入] 文件发布/数据库事务失败：\(error.localizedDescription)")
-            rollBackPublished()
+            for item in placed.reversed() {
+                try? manager.removeItem(atPath: item.parent + "/" + item.folderName)
+                fsyncDirectory(item.parent)
+            }
             throw error
         }
 
@@ -449,8 +371,7 @@ enum KernelDirectWriter {
         return Outcome(
             verification: verification,
             installedCount: placed.count,
-            placed: placed,
-            systemImportOnly: false
+            placed: placed
         )
     }
 
@@ -582,15 +503,6 @@ enum KernelDirectWriter {
             if hasProviders { return generation }
         }
         return nil
-    }
-
-    /// iOS 17.0.0 is the one system in the band that turns a registered
-    /// descriptor into a static snapshot: its renderer never starts the
-    /// animation scene. Only 17.0.x takes the import-only experiment.
-    static func usesSystemImportOnly(deviceVersion: String) -> Bool {
-        let parts = deviceVersion.split(separator: ".")
-        guard parts.count >= 2 else { return false }
-        return parts[0] == "17" && parts[1] == "0"
     }
 
     private static func ensureRoleIdentifier(in folder: URL) throws {

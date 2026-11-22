@@ -14,11 +14,28 @@ enum DriftTutorialStates {
                                       selection: PosterBoardSelection(),
                                       pick: .auto, tunnelReady: tunnelReady)
         var states: [TutorialChannel: TutorialChannelState] = [:]
-        for channel in TutorialChannel.allCases where channel != .kernel {
+        for channel in TutorialChannel.allCases where channel != .kernel && channel != .restore {
             states[channel] = state(of: channel, judged: judged, identity: identity)
         }
         states[.kernel] = kernelState()
+        states[.restore] = restoreState(judged: judged, identity: identity)
         return states
+    }
+
+    /// The restore channel's standing, read off the judgement's own
+    /// restore answer (the premises already folded the gate, the
+    /// tunnel trio and the iOS 27 segment by build number): ready
+    /// when it can run now; system-blocked when a read system is
+    /// outside the segment; setup otherwise (tunnel, pairing or the
+    /// build number still missing).
+    private static func restoreState(judged: DriftModeJudgement,
+                                     identity: DeviceIdentity) -> TutorialChannelState {
+        if judged.restoreAvailable { return .ready }
+        if !identity.version.isEmpty,
+           !DriftJudge.isRestoreSegment(version: identity.version) {
+            return .systemBlocked
+        }
+        return .needsSetup
     }
 
     /// The kernel channel has no mode in the judgement; its state
@@ -36,7 +53,7 @@ enum DriftTutorialStates {
         case .noRespring: return .direct
         case .respring: return .airlift
         case .local: return .worseQuery
-        case .kernel: return nil
+        case .kernel, .restore: return nil
         }
     }
 
@@ -62,7 +79,7 @@ enum DriftTutorialStates {
             case .respring:
                 Airlift.isSupported(deviceVersion: identity.version,
                                     buildVersion: identity.buildVersion)
-            case .local, .kernel:
+            case .local, .kernel, .restore:
                 true
             }
             // The session layer closes two tunnel bands the channels'

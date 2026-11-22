@@ -224,6 +224,25 @@ struct PosterBoardSelection {
     var video: URL?
     var thumbnail: URL?
 
+    /// A video that was decoded ahead of time (video page, Grace,
+    /// 2026-11-22): the finished descriptor tree the decode produced,
+    /// kept in the decoded-video library. An apply carrying this
+    /// stages the stored tree instead of decoding again — the decode
+    /// of a heavy video is exactly what used to kill a run minutes
+    /// in. Mutually exclusive with `video` in practice: the picker
+    /// that sets this leaves `video` nil, and the pages keep the two
+    /// flows apart.
+    var preGeneratedVideoDirectory: URL?
+    /// The source file's name for a pre-decoded pick, carried for
+    /// source names and logs — the source itself is not kept.
+    var preGeneratedVideoName: String?
+
+    /// How a video in this selection is named, whichever flow
+    /// carries it.
+    var videoDisplayName: String? {
+        video?.lastPathComponent ?? preGeneratedVideoName
+    }
+
     /// The four options the reference keeps on the tweak object.
     var loop = true
     var reverse = false
@@ -248,6 +267,7 @@ struct PosterBoardSelection {
     /// Whether the apply has anything to do — the reference's `uses_domains`.
     var isActive: Bool {
         fullReset || !resetModes.isEmpty || !tendies.isEmpty || video != nil
+            || preGeneratedVideoDirectory != nil
     }
 
     /// The video stage's input, or nil when no video was picked.
@@ -270,6 +290,9 @@ struct PosterBoardSelection {
         var parts: [String] = []
         if !tendies.isEmpty { parts.append("\(tendies.count) pack(s)") }
         if let video { parts.append("video \(video.lastPathComponent)") }
+        if preGeneratedVideoDirectory != nil {
+            parts.append("video \(preGeneratedVideoName ?? "Video") (pre-decoded)")
+        }
         return parts.isEmpty ? "nothing" : parts.joined(separator: ", ")
     }
 
@@ -427,7 +450,8 @@ extension PosterBoard {
         //    len(templates) == 0 and videoFile == None` — so a template on its
         //    own keeps this branch open, which is why `templates` is a term here
         //    and not only in the walk below.
-        guard !selection.tendies.isEmpty || selection.video != nil || !templates.isEmpty else {
+        guard !selection.tendies.isEmpty || selection.video != nil
+                || selection.preGeneratedVideoDirectory != nil || !templates.isEmpty else {
             log("PosterBoard: nothing selected.")
             return []
         }
@@ -441,17 +465,34 @@ extension PosterBoard {
         //    reference's order, and it matters: a live-photo pack's descriptor
         //    is written by the video step, and all three are then found by the
         //    single walk below.
-        if let plan = selection.plan {
-            try await PosterBoardVideo.generate(plan: plan,
-                                                outputDirectory: workingDirectory,
-                                                log: log)
+        //
+        //    Step errors name the step and the file (Grace, 2026-11-21):
+        //    AVFoundation's bare "无法打开" cost a restore dry run its
+        //    diagnosis — the log showed a failure with no step and no
+        //    culprit, and the cause (a `.tendies` sitting in the video
+        //    slot) had to be reconstructed by hand. A wrapped error
+        //    carries both, in the status line and in the log alike.
+        if selection.plan != nil || selection.preGeneratedVideoDirectory != nil {
+            do {
+                try await PosterBoardVideo.generate(selection: selection,
+                                                    outputDirectory: workingDirectory,
+                                                    log: log)
+            } catch {
+                throw DriftError("视频处理失败（文件 \(selection.videoDisplayName ?? "Video")）："
+                    + error.localizedDescription)
+            }
         }
         for (index, tendie) in selection.tendies.enumerated() {
             // Deterministic, not `uuid4()`: see this type's divergence note.
             let destination = workingDirectory.appendingPathComponent(
                 String(format: "%03d-%@", index, sanitised(tendie.name)), conformingTo: .data)
             log("  → unpacking \(tendie.name) (\(tendie.summary))")
-            try tendie.extract(to: destination)
+            do {
+                try tendie.extract(to: destination)
+            } catch {
+                throw DriftError("解开壁纸包失败（\(tendie.name)）："
+                    + error.localizedDescription)
+            }
             // Each pack is converted in its own folder so the per-pack
             // "convert / install as is" answer is honoured
             // (`PosterboardTweak.apply_tweak`'s `extracted: list[tuple[str, bool]]`).
@@ -507,9 +548,15 @@ extension PosterBoard {
                 + "壁纸是否出现在选择器中。请把日志发给维护者定位。")
         }
         if let database {
-            let staged = try PosterBoardStore.stitch(database: database,
+            let staged: URL
+            do {
+                staged = try PosterBoardStore.stitch(database: database,
                                                      items: stagedItems,
                                                      workingDirectory: workingDirectory)
+            } catch {
+                throw DriftError("把新壁纸并入壁纸库失败："
+                    + error.localizedDescription)
+            }
             log("PosterBoard: the staged store carries \(PosterBoardStore.summary(staged))")
             payloads.append(TweakPayload(domain: domain,
                                          relativePath: storePath(version) + "/" + databaseFileName,
