@@ -47,15 +47,14 @@ struct PosterBoardManagerView: View {
     }
 
     /// The kernel route, judged exactly as the store listing judges
-    /// it: switch on and premise ready. This gate was missing when
+    /// it: premise ready. This gate was missing when
     /// the kernel source was added to the page (#334) — on a 17/18
     /// device the label fell through to 不可用 and the delete button
     /// stayed disabled no matter what was selected (user report,
     /// 2026-11-15).
     private var kernelAvailable: Bool {
-        KernelDirectPremise.isEnabled
-            && KernelDirectPremise.evaluate(
-                version: WorseQueryEscape.processVersion).ready
+        KernelDirectPremise.evaluate(
+            version: WorseQueryEscape.processVersion).ready
     }
 
     private var routeLabel: String {

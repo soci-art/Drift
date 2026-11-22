@@ -1468,15 +1468,16 @@ enum DriftJudge {
         // band it asks the least of the user — no pairing, no tunnel,
         // no signing gate — and that band (iOS 17 / 18) never overlaps
         // the local channel's, so it is judged before the channel
-        // order. It exists as a candidate only while its 实验性功能
-        // switch is on, and an automatic landing on it still wears
-        // the 实验 marking, in the reason itself.
+        // order. It is a candidate whenever the system and model
+        // compatibility premise is satisfied (the 实验性功能 switch
+        // that used to gate it was removed with the 2026-11-22
+        // opening set, here as on the formal line).
         let kernelPremise = KernelDirectPremise.evaluate(version: p.appVersion)
-        if KernelDirectPremise.isEnabled, kernelPremise.ready {
+        if kernelPremise.ready {
             return DriftModeJudgement(
                 pick: pick,
                 mode: .worseQuery,
-                reason: "自动选择：走内核直刷（实验）——会先验证 PosterBoard 容器读写，再写入已选描述文件；不用配对、不用隧道，对签名没要求。",
+                reason: "自动选择：走内核直刷——会先验证 PosterBoard 容器读写，再写入已选描述文件；不用配对、不用隧道，对签名没要求。",
                 blockedReason: nil,
                 options: rows,
                 expectedEffect: "写完提示：打开应用切换器，上滑关闭 PosterBoard，系统重新拉起后生效",
@@ -1486,14 +1487,6 @@ enum DriftJudge {
 
         if let channel = firstAvailable(p) {
             return judged(channel, autoReason(channel))
-        }
-        // Nothing else can run. If this device could flash through
-        // the kernel channel and the only thing missing is its
-        // switch, 自动选择 says so instead of a bare dead end
-        // (Grace, 2026-11-15): the reminder is the answer.
-        if kernelPremise.ready, !KernelDirectPremise.isEnabled {
-            return kernelSwitchBlocked("自动选择：这台设备能用内核直刷（实验），但它还没有打开，其他方式现在也用不了。先到「设置 → 实验性功能」里打开内核直刷，就能刷了。",
-                           notice: "请先到「设置 → 实验性功能」里打开内核直刷。")
         }
         // #332 (Grace, 2026-11-14): this summary used to concatenate all
         // three channels' full reasons into one paragraph — the same
