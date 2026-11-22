@@ -76,11 +76,21 @@ enum RestoreRunner {
             // systemFiles: true) restore with system files on. This line
             // now matches them: systemFiles=true, the other four switches
             // unchanged. Effective set: (false, true, true, false, false).
+            //
+            // 2026-11-22 (Grace, build 9): build 8's field round closed
+            // the question — with systemFiles=true the setup flow still
+            // did not skip a single pane, and the restore additionally
+            // reset the system language to English and the home-screen
+            // layout to defaults. Grace closed the skip-setup line: the
+            // setup payloads are gone from the restore service (build 6
+            // shape) and this switch returns to false. Do not flip it
+            // again without her word. Effective set back to
+            // (false, false, true, false, false).
             try await minimuxer.restoreBackup(
                 backupRoot: backupRoot.path(percentEncoded: false),
                 sourceIdentifier: sourceIdentifier,
                 shouldReboot: false,
-                systemFiles: true,
+                systemFiles: false,
                 onProgress: { overall in
                     let pct = overall < 0 ? 0 : min(overall, 100)
                     onProgress?(pct)
