@@ -16,7 +16,7 @@ enum KernelDirectWriter {
         let installedCount: Int
         /// What was placed, for the receipt journal (#334).
         let placed: [Placed]
-        /// iOS 17.0 experimental route: descriptors only, no database row.
+        /// iOS 17.0 uses PosterBoard's own descriptor import path.
         let systemImportOnly: Bool
     }
 
@@ -73,7 +73,7 @@ enum KernelDirectWriter {
         progress: @escaping (Double) -> Void
     ) throws -> Outcome {
         guard !selection.tendies.isEmpty || generatedVideoDirectory != nil else {
-            throw DriftError("内核直刷需要先选择壁纸包或视频。")
+            throw DriftError("内核直刷需要先选择至少一个 .tendies 壁纸包或提供已生成的视频目录。")
         }
         guard selection.video == nil,
               selection.preGeneratedVideoDirectory == nil,
@@ -84,12 +84,6 @@ enum KernelDirectWriter {
         guard selection.tendies.allSatisfy({ !$0.isContainer && !$0.isUnsafeContainer }) else {
             throw DriftError("内核直刷当前只写入描述文件，不接受包含整个商店容器或数据库的包。")
         }
-
-        // iOS 17.0.0 loads no animation for a descriptor that also carries a
-        // hand-written database row (#施工单 1). The experimental route
-        // publishes only the descriptor folders and lets PosterBoard import
-        // them itself; later systems keep the registered path.
-        let systemImportOnly = usesSystemImportOnly(deviceVersion: deviceVersion)
 
         // Keep the exact path spelling returned by the kernel probe.
         // URL.standardizedFileURL may strip the existing "/private" alias.
@@ -139,17 +133,29 @@ enum KernelDirectWriter {
         }
 
         if let generatedVideoDirectory {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(
+                atPath: generatedVideoDirectory.path, isDirectory: &isDirectory
+            ), isDirectory.boolValue else {
+                throw DriftError("生成的视频目录不存在或不是目录：\(generatedVideoDirectory.path)")
+            }
+            let children = try FileManager.default.contentsOfDirectory(
+                at: generatedVideoDirectory, includingPropertiesForKeys: nil
+            )
+            guard !children.isEmpty else {
+                throw DriftError("生成的视频目录为空，未找到可导入的描述符。")
+            }
             sources.append(Source(
-                name: "视频：\(selection.video?.lastPathComponent ?? "Video")",
+                name: "视频：\(selection.videoDisplayName ?? "Video")",
                 url: generatedVideoDirectory,
                 defaultExtension: PosterBoardPosterType.collections.extensionBundleID,
                 plannedDescriptors: 1
             ) { stage in
-                for child in try FileManager.default.contentsOfDirectory(
-                    at: generatedVideoDirectory, includingPropertiesForKeys: nil) {
+                for child in children {
                     try FileManager.default.copyItem(
                         at: child,
-                        to: stage.appendingPathComponent(child.lastPathComponent, isDirectory: true))
+                        to: stage.appendingPathComponent(child.lastPathComponent, isDirectory: true)
+                    )
                 }
             })
         }
@@ -193,9 +199,6 @@ enum KernelDirectWriter {
 
             for (index, descriptor) in descriptors.enumerated() {
                 guard PosterBoard.managedProviders.contains(descriptor.extensionID) else {
-                    // The container provider gets the same plain wording
-                    // as the session-layer refusal (Grace, 2026-11-18):
-                    // a raw provider id is not user language.
                     if descriptor.extensionID == PosterBoardPosterType.container.extensionBundleID {
                         throw DriftError("「\(source.name)」是『容器』类型的包，这类包内核直刷写不了。"
                             + "请到壁纸包页把它的出现位置改回『自动』，再刷一次。")
@@ -253,19 +256,22 @@ enum KernelDirectWriter {
 
         let databaseURL = URL(fileURLWithPath:
             storePath + "/\(generation)/" + PosterBoard.databaseFileName)
-
-        log("[内核写入] PosterBoard 容器：\(canonicalContainer)")
-        log("[内核写入] 商店目录：\(storePath)")
-        log("[内核写入] 采用结构版本：\(generation)")
-        log("[内核写入] 实际 provider：\(requiredProviders.sorted().joined(separator: "、"))")
+        let systemImportOnly = usesSystemImportOnly(deviceVersion: deviceVersion)
         if systemImportOnly {
-            log("[系统导入] iOS \(deviceVersion)：本次只发布描述符，不写数据库、不生成缩略图，交给 PosterBoard 自行扫描导入")
+            log("[系统导入] iOS \(deviceVersion)：只发布描述符，不写数据库登记，交给 PosterBoard 自行扫描导入")
         } else {
             var databaseIsDirectory: ObjCBool = false
             guard manager.fileExists(atPath: databaseURL.path, isDirectory: &databaseIsDirectory),
                   !databaseIsDirectory.boolValue else {
                 throw DriftError("结构版本 \(generation) 中不存在设备现有数据库：\(databaseURL.path)")
             }
+        }
+
+        log("[内核写入] PosterBoard 容器：\(canonicalContainer)")
+        log("[内核写入] 商店目录：\(storePath)")
+        log("[内核写入] 采用结构版本：\(generation)")
+        log("[内核写入] 实际 provider：\(requiredProviders.sorted().joined(separator: "、"))")
+        if !systemImportOnly {
             log("[内核数据库] 目标：\(databaseURL.path)")
         }
 
@@ -323,7 +329,7 @@ enum KernelDirectWriter {
             do {
                 try publishPending()
             } catch {
-                log("[系统导入] 发布失败：\(error.localizedDescription)")
+                log("[系统导入] 描述符发布失败：\(error.localizedDescription)")
                 rollBackPublished()
                 throw error
             }
@@ -337,14 +343,13 @@ enum KernelDirectWriter {
             let missing = expected.subtracting(present)
             guard missing.isEmpty else {
                 rollBackPublished()
-                throw DriftError("系统导入路径发布后目录核验未通过："
-                    + missing.sorted().joined(separator: "、"))
+                throw DriftError("系统导入路径发布后目录核验未通过：" + missing.sorted().joined(separator: "、"))
             }
             log("[系统导入] 目录核验通过 \(present.count)/\(expected.count)；未写数据库行，等待 PosterBoard 自行扫描")
             let providers = Set(placed.map(\.extensionID))
             let verification = PosterStoreVerification(
                 structureVersion: generation,
-                structureVersionSource: "iOS 17.0 系统导入实验：只发布描述符，未写 SQLite 登记、未生成缩略图",
+                structureVersionSource: "iOS 17.0 系统导入：仅发布描述符，未写 SQLite 登记",
                 providersSeen: providers,
                 expected: expected,
                 confirmed: present,
@@ -587,9 +592,8 @@ enum KernelDirectWriter {
         return nil
     }
 
-    /// iOS 17.0.0 is the one system in the band that turns a registered
-    /// descriptor into a static snapshot: its renderer never starts the
-    /// animation scene. Only 17.0.x takes the import-only experiment.
+    /// iOS 17.0.x uses descriptor-only publication; other versions keep
+    /// the normal SQLite registration path.
     static func usesSystemImportOnly(deviceVersion: String) -> Bool {
         let parts = deviceVersion.split(separator: ".")
         guard parts.count >= 2 else { return false }
