@@ -14,10 +14,6 @@ struct DriftHomeView: View {
     /// change the judgement card re-renders from immediately. The same key
     /// backs `DriftJudge.manualPick`, which stays for non-view readers.
     @AppStorage(DriftJudge.manualKey) private var manualPickRaw: String?
-    /// The 内核直刷 switch from 实验性功能 (#329): while it is off the
-    /// method does not exist on this page at all.
-    @AppStorage(KernelDirectPremise.enabledKey) private var kernelEnabled = false
-
     @State private var imports: [PosterBoardTendie] = PosterBoardImports.load()
     @State private var importingPairing = false
     @State private var statusLine: String?
@@ -93,16 +89,6 @@ struct DriftHomeView: View {
             return kernelPremiseReady && !selection.tendies.isEmpty && !overLimit
                 && selection.video == nil && !selection.fullReset
                 && selection.resetModes.isEmpty && !session.running
-        }
-        // 自动选择 blocked only by the kernel switch: same deal — the
-        // tap must reach the reminder.
-        if judgement.kernelNeedsSwitch {
-            return !selection.tendies.isEmpty && !overLimit && !session.running
-        }
-        // A restore pick blocked only by its switch: same deal
-        // (Grace, 2026-11-19).
-        if judgement.restoreNeedsSwitch {
-            return !selection.tendies.isEmpty && !overLimit && !session.running
         }
         // The in-process route is the one path that does not need a pairing
         // record; every other mode still does.
@@ -198,10 +184,6 @@ struct DriftHomeView: View {
                         // an orange 「预发行版」 to its right; the name
                         // itself never moves. Release builds keep the
                         // system large title and never show this row.
-                        // The Alpha research line (Grace, 2026-11-19)
-                        // wears a red "Alpha-test" in the same place, and
-                        // a red warning banner under it: the restore
-                        // route inside is unverified research.
                         if AppVersion.channel != .release {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Text("Drift")
@@ -424,10 +406,10 @@ struct DriftHomeView: View {
         let kernelEval = pick == .kernel
             ? KernelDirectPremise.evaluate(version: localVersion) : nil
         // The kernel row's 可用 is about the device alone (Grace,
-        // 2026-11-15): supported shows 可用 whether or not the
-        // 实验性功能 switch is on; the switch only bites at the
-        // flash tap, as a reminder.
-        let available = pick == .auto ? (!judged.isBlocked || judged.kernelNeedsSwitch)
+        // 2026-11-15): supported shows 可用. (The 实验性功能 switch
+        // that used to gate it was removed with the 2026-11-22
+        // opening set, here as on the formal line.)
+        let available = pick == .auto ? !judged.isBlocked
             : (kernelEval?.ready ?? (option?.available ?? false))
         // Sealed (collection #142): the version is in range but this
         // install's signing grants no usable App Group — the row stays
@@ -436,9 +418,8 @@ struct DriftHomeView: View {
         let sealed = pick != .auto && (option?.sealed ?? false)
         let status: String
         if pick == .auto {
-            status = judged.kernelNeedsSwitch ? "→ 内核直刷（实验）"
-                : (judged.isBlocked ? "不可用"
-                    : (judged.useKernel ? "→ 内核直刷（实验）" : "→ \(judged.mode.shortTitle)"))
+            status = judged.isBlocked ? "不可用"
+                : (judged.useKernel ? "→ 内核直刷" : "→ \(judged.mode.shortTitle)")
         } else if sealed {
             status = "不可选"
         } else if pick == .kernel {
@@ -446,12 +427,11 @@ struct DriftHomeView: View {
         } else if pick == .restore {
             // The restore pick is selectable like the kernel pick,
             // and its status follows the judged premises: on the
-            // Alpha line, with its switch on, the tunnel premises
-            // ready and the device in the iOS 27 segment it honestly
-            // reads 可用； anywhere else — and on the shipped lines,
-            // where the route stays sealed — 不可用. The switch
-            // reminder still bites at the flash tap (Grace,
-            // 2026-11-19; status made premise-driven 2026-11-20).
+            // With the tunnel premises ready and the device in
+            // the iOS 27 segment it honestly reads 可用； anywhere
+            // else 不可用 (Grace, 2026-11-19; status made
+            // premise-driven 2026-11-20; the 实验性功能 switch
+            // that used to gate it was removed 2026-11-22).
             status = judged.restoreAvailable ? "可用" : "不可用"
         } else {
             status = available ? "可用" : "不可用"
@@ -759,20 +739,7 @@ struct DriftHomeView: View {
         // but a blocked selection must never even be shaped into one.)
         if judgement.isBlocked {
             session.flashCover = false
-            // Blocked only by the kernel switch (Grace, 2026-11-15):
-            // this tap is the reminder moment — a notice pointing at
-            // 实验性功能, not an error.
-            if judgement.kernelNeedsSwitch {
-                session.noticeTitle = "内核直刷还没有打开"
-                session.noticeText = "请先到「设置 → 实验性功能」里打开内核直刷，再回来刷入。"
-            } else if judgement.restoreNeedsSwitch {
-                // The restore pick's reminder moment, same shape
-                // (Grace, 2026-11-19).
-                session.noticeTitle = "恢复刷还没有打开"
-                session.noticeText = "请先到「设置 → 实验性功能」里打开恢复刷，再回来刷入。"
-            } else {
-                session.errorText = judgement.blockedReason
-            }
+            session.errorText = judgement.blockedReason
             return
         }
         var runSelection = packsSelection

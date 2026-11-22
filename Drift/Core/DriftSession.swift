@@ -1053,9 +1053,13 @@ enum DriftMethodPick: String, CaseIterable, Identifiable {
     }
 
     /// 本机直刷 carried the 实验 badge until Grace graduated it
-    /// (#330, 2026-11-14); the badge belongs to 内核直刷 now, and
-    /// to 恢复刷 since it joined the list (Grace, 2026-11-19).
-    var isExperimental: Bool { self == .kernel || self == .restore }
+    /// (#330, 2026-11-14); 内核直刷 carried it until it graduated
+    /// on 2026-11-20; the badge belongs to 恢复刷 now, since it
+    /// joined the list (Grace, 2026-11-19).
+    /// Neither graduated route wears the experimental badge any
+    /// more: 内核直刷 graduated on the formal line first, and 恢复刷
+    /// followed with its formal opening (Grace, 2026-11-22).
+    var isExperimental: Bool { false }
 
     /// Read a stored pick. Every value written by 2.0.0 or 1.x means the same
     /// thing now: let Drift choose. Only the three new raw values are picks.
@@ -1090,21 +1094,10 @@ struct DriftModeJudgement {
     /// placeholder, and dispatchers must honour this flag instead
     /// (set for a manual 内核直刷 pick and for 自动选择 landing on it).
     var useKernel: Bool = false
-    /// Blocked only because the kernel method's 实验性功能 switch is
-    /// off (Grace, 2026-11-15): the flash button stays tappable and
-    /// the tap answers with the go-turn-it-on reminder, not an error.
-    var kernelNeedsSwitch: Bool = false
-    /// The restore pick's twin of `kernelNeedsSwitch` (Grace,
-    /// 2026-11-19): blocked only because the restore method's
-    /// 实验性功能 switch is off — the tap answers with the same
-    /// kind of reminder.
-    var restoreNeedsSwitch: Bool = false
     /// Whether the restore method's premises all hold on this device
-    /// right now (Alpha line: its switch on, the tunnel premises ready,
-    /// the iOS 27 segment; shipped lines: never, the route is sealed).
-    /// The Home restore row reads this for its 可用/不可用 status —
-    /// until the Alpha line existed the row's status was hardcoded
-    /// 不可用 (Grace, 2026-11-20).
+    /// right now (the tunnel premises ready and the iOS 27 segment,
+    /// judged by build number). The Home restore row and the
+    /// tutorial read this for their 可用/不可用 status.
     var restoreAvailable: Bool = false
     var isBlocked: Bool { blockedReason != nil }
 }
@@ -1235,20 +1228,17 @@ enum DriftJudge {
         let respringWhy = tunnelMissing
             ?? (respringReady ? "" : "这个系统版本不支持。")
 
-        // Restore (Alpha research line): while the gate is closed the
-        // shipped answer stands — not ready, 「暂不可用」. On Alpha the
-        // route additionally needs its own switch, the tunnel trio the
-        // tunnel channels need (the restore rides the same tunnel),
-        // and the iOS 27 segment judged by version AND build number;
-        // a build that cannot be read is a stop, not a guess.
+        // Restore (opened on the formal line, Grace, 2026-11-22):
+        // while the emergency gate is closed the answer stands — not
+        // ready, 「暂不可用」. Open, the route needs the tunnel trio
+        // the tunnel channels need (the restore rides the same
+        // tunnel) and the iOS 27 segment judged by version AND build
+        // number; a build that cannot be read is a stop, not a guess.
         let restoreReady: Bool
         let restoreWhy: String
         if !DriftRestoreGate.isEnabled {
             restoreReady = false
             restoreWhy = "暂不可用"
-        } else if !RestoreFlashPremise.isEnabled {
-            restoreReady = false
-            restoreWhy = "还没打开：先到「设置 → 实验性功能」里打开恢复刷"
         } else if let missing = tunnelMissing {
             restoreReady = false
             restoreWhy = missing
@@ -1260,7 +1250,7 @@ enum DriftJudge {
             restoreWhy = "恢复刷这一版只开 iOS 27 这一段"
         } else {
             restoreReady = true
-            restoreWhy = "可用：先干跑对账，确认后才写回，刷完重启生效"
+            restoreWhy = "可用：拉取设备备份，只换壁纸再写回，刷完重启生效"
         }
 
         return Premises(
@@ -1402,23 +1392,6 @@ enum DriftJudge {
         func sealedBlocked(_ reason: String) -> DriftModeJudgement {
             blocked(reason, notice: "暂不可用")
         }
-        /// Blocked only because the kernel switch is off: flagged so
-        /// the flash tap can answer with a reminder instead of an
-        /// error (Grace, 2026-11-15).
-        func kernelSwitchBlocked(_ reason: String, notice: String) -> DriftModeJudgement {
-            var judgement = blocked(reason, notice: notice)
-            judgement.kernelNeedsSwitch = true
-            return judgement
-        }
-        /// Blocked only because the restore switch is off: the
-        /// restore pick's twin of the kernel helper (Grace,
-        /// 2026-11-19).
-        func restoreSwitchBlocked(_ reason: String, notice: String) -> DriftModeJudgement {
-            var judgement = blocked(reason, notice: notice)
-            judgement.restoreNeedsSwitch = true
-            return judgement
-        }
-
         // Hard limits: these leave only the restore method, and while it is
         // sealed the answer is "cannot flash now". On the Alpha line the
         // restore route is open but its first version does not carry
@@ -1448,12 +1421,6 @@ enum DriftJudge {
             // A manual kernel pick is used as-is when its premise
             // passes and blocked with the honest reason when it does
             // not; manual picks never reroute to another channel.
-            // The switch comes first: off is not "unavailable", it is
-            // "not turned on yet" — the answer points at the switch.
-            guard KernelDirectPremise.isEnabled else {
-                return kernelSwitchBlocked("你手动选了内核直刷：它还没有打开。先到「设置 → 实验性功能」里打开内核直刷，再回来刷入。手动选定后不会自动改走别的通道。",
-                               notice: "请先到「设置 → 实验性功能」里打开内核直刷。")
-            }
             let premise = KernelDirectPremise.evaluate(version: p.appVersion)
             if !premise.inBand {
                 return blocked("你手动选了内核直刷：它只支持 iOS 17 / 18，这台的系统是 iOS \(p.appVersion)，不在这个范围。手动选定后不会自动改走别的通道。",
@@ -1478,36 +1445,19 @@ enum DriftJudge {
 
         if pick == .restore {
             // A manual restore pick mirrors the kernel pick (Grace,
-            // 2026-11-19): selectable, never rerouted. While the
-            // route is sealed the answer is the go-turn-it-on
-            // reminder — the 实验性功能 switch it points at is
-            // itself still a placeholder that answers 暂不可用，
-            // and the session funnel refuses a restore run
-            // regardless.
-            //
-            // On the Alpha line the gate is open and this branch
-            // judges for real, premise by premise: the switch first
-            // (off is "not turned on yet", not "unavailable"), then
-            // the premises restoreReady/restoreWhy already folded
-            // (tunnel trio, iOS 27 segment by build number). A judged
-            // run is the dry run; the write-back is confirmed
-            // separately on the home page's dry-run card.
-            if DriftRestoreGate.isEnabled {
-                guard RestoreFlashPremise.isEnabled else {
-                    return restoreSwitchBlocked("你手动选了恢复刷：它还没有打开。先到「设置 → 实验性功能」里打开恢复刷，再回来刷入。手动选定后不会自动改走别的通道。",
-                                   notice: "请先到「设置 → 实验性功能」里打开恢复刷。")
-                }
-                if p.restoreReady {
-                    return judged(.backup, "已手动选择恢复刷：先干跑对账（只拉取和裁剪，不写回），确认后才真正恢复，刷完重启生效。")
-                }
-                return blocked("你手动选了恢复刷：\(p.restoreWhy)。手动选定后不会自动改走别的通道。",
-                               notice: "恢复刷现在用不了：\(p.restoreWhy)。")
-            }
+            // 2026-11-19): selectable, never rerouted. Since the
+            // formal opening (Grace, 2026-11-22) there is no switch:
+            // the branch judges for real on the premises
+            // restoreReady/restoreWhy already folded (tunnel trio,
+            // iOS 27 segment by version and build number). A judged
+            // run is the one-flow apply: the dry run chains straight
+            // into the write-back inside the same run, and the
+            // pre-start confirmation on the page covers the dangers.
             if p.restoreReady {
-                return judged(.backup, "已手动选择恢复刷：通过恢复方式刷入壁纸，刷完重启生效。")
+                return judged(.backup, "已手动选择恢复刷：拉取设备备份，只换壁纸再写回，刷完重启生效。")
             }
-            return restoreSwitchBlocked("你手动选了恢复刷：它还没有打开。先到「设置 → 实验性功能」里打开恢复刷，再回来刷入。手动选定后不会自动改走别的通道。",
-                           notice: "请先到「设置 → 实验性功能」里打开恢复刷。")
+            return blocked("你手动选了恢复刷：\(p.restoreWhy)。手动选定后不会自动改走别的通道。",
+                           notice: "恢复刷现在用不了：\(p.restoreWhy)。")
         }
 
         if let channel = pick.channel {
