@@ -433,28 +433,56 @@ private struct VideoFramePickerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var duration: Double = 0
     @State private var time: Double = 0
-    @State private var preview: UIImage?
     @State private var confirming = false
-    /// The in-flight scrub preview (Grace, 2026-11-19): a drag used to
-    /// spawn one full decode per slider tick and queue them all, so
-    /// the picture trailed far behind the finger. Now a new position
-    /// cancels the previous decode and only the latest position is
-    /// ever rendered — small, with a loose time tolerance. The full-
-    /// resolution, exact frame is rendered only on confirm.
-    @State private var previewTask: Task<Void, Never>?
+    @State private var editing = false
+    /// Live preview by player, not by extracted stills (Grace,
+    /// 2026-11-20). Two still-based attempts failed on device: the
+    /// per-tick decode trailed the finger (a finished frame was
+    /// dropped whenever the slider had already moved on), and
+    /// pre-rendering a whole filmstrip on open burned CPU alongside
+    /// the drag decodes — lag and a hot phone. The paused player
+    /// renders the scrub itself — but the third attempt, one seek
+    /// per slider tick, froze on device too (recording-verified:
+    /// the preview tracked to 2.6 s, then froze while the slider
+    /// swept 3.6→9.1 s, then snapped twice at the end): AVFoundation
+    /// does NOT coalesce a 60 Hz seek flood; each new seek kills
+    /// the previous one without freeing its decode work at once,
+    /// so no frame ever lands. Round four (Grace + GPT cross-check,
+    /// 2026-11-20) therefore schedules seeks like an editor:
+    /// at most one seek in flight, the slider only ever records
+    /// the LATEST target, a landed seek chains to that target,
+    /// launches are rate-capped at ~12/s, and letting go runs one
+    /// separate zero-tolerance seek once the in-flight one lands.
+    /// Only the confirm step extracts a still — once, at full
+    /// resolution, exact frame, independent of the preview.
+    @State private var player = AVPlayer()
+    /// Seek-scheduler state for the preview. `lastLanded` is the
+    /// last target whose seek completed with finished == true —
+    /// never read back from player.currentTime(), which during a
+    /// seek does not say what is actually on screen.
+    @State private var seekInFlight = false
+    @State private var lastLanded: Double = -1
+    @State private var lastSeekStart = Date.distantPast
+    @State private var finishing = false
+    @State private var generation = 0
+    @State private var delayedPump: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
                 ZStack {
-                    if let preview {
-                        Image(uiImage: preview).resizable().scaledToFit()
+                    if duration > 0 {
+                        PlayerLayerView(player: player)
                     } else {
                         ProgressView()
                     }
                 }
                 .frame(maxHeight: 420)
-                Slider(value: $time, in: 0...max(duration, 0.1))
+                Slider(value: $time, in: 0...max(duration, 0.1)) { isEditing in
+                    editing = isEditing
+                    if !isEditing { finishing = true }
+                    pump()
+                }
                 Text("第 \(String(format: "%.1f", time)) 秒 / 共 \(String(format: "%.1f", duration)) 秒")
                     .font(.caption).foregroundStyle(.secondary)
                 Text("拖动滑杆挑一帧，停在想要的那一画面，再点「用这一帧」。")
@@ -470,11 +498,16 @@ private struct VideoFramePickerView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("用这一帧") { confirm() }
-                        .disabled(preview == nil || confirming)
+                        .disabled(duration <= 0 || confirming)
                 }
             }
             .task { await load() }
-            .onChange(of: time) { _, _ in schedulePreview() }
+            .onChange(of: time) { _, _ in pump() }
+            .onDisappear {
+                generation += 1
+                delayedPump?.cancel()
+                player.pause()
+            }
         }
     }
 
@@ -482,28 +515,58 @@ private struct VideoFramePickerView: View {
         let asset = AVURLAsset(url: videoURL)
         let loaded = (try? await asset.load(.duration).seconds) ?? 0
         duration = loaded > 0 ? loaded : 0
+        player.replaceCurrentItem(with: AVPlayerItem(asset: asset))
+        player.pause()
         time = min(0.1, duration)
-        schedulePreview()
+        finishing = true
+        pump()
     }
 
-    /// Render the scrub preview for the current slider position,
-    /// cancelling whatever decode the previous position started. A
-    /// result that arrives after the slider has moved on (or after
-    /// its task was cancelled) is dropped, never shown.
-    private func schedulePreview() {
-        previewTask?.cancel()
-        let requested = time
-        let url = videoURL
-        previewTask = Task {
-            let asset = AVURLAsset(url: url)
-            let generator = AVAssetImageGenerator(asset: asset)
-            generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: 480, height: 854)
-            generator.requestedTimeToleranceBefore = CMTime(seconds: 0.15, preferredTimescale: 600)
-            generator.requestedTimeToleranceAfter = CMTime(seconds: 0.15, preferredTimescale: 600)
-            if let cg = try? await generator.image(at: CMTime(seconds: requested, preferredTimescale: 600)).image,
-               !Task.isCancelled, abs(time - requested) < 0.01 {
-                preview = UIImage(cgImage: cg)
+    /// The seek scheduler. Invariants: at most one seek in flight;
+    /// the target is always the slider's current value (latest
+    /// wins, no queue); while dragging, launches are capped at
+    /// ~12/s and land loose (0.35 s tolerance); when the drag ends,
+    /// `finishing` makes the next launch a zero-tolerance seek to
+    /// the final value, fired only after the in-flight one lands.
+    private func pump() {
+        guard !seekInFlight else { return }
+        if finishing {
+            fireSeek(target: time, exact: true)
+            return
+        }
+        guard editing else { return }
+        if abs(time - lastLanded) < 0.01 { return }
+        let elapsed = Date().timeIntervalSince(lastSeekStart)
+        if elapsed < 0.08 {
+            delayedPump?.cancel()
+            delayedPump = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64((0.08 - elapsed) * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                pump()
+            }
+            return
+        }
+        fireSeek(target: time, exact: false)
+    }
+
+    private func fireSeek(target: Double, exact: Bool) {
+        seekInFlight = true
+        lastSeekStart = Date()
+        let gen = generation
+        let slack = CMTime(seconds: 0.35, preferredTimescale: 600)
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600),
+                    toleranceBefore: exact ? .zero : slack,
+                    toleranceAfter: exact ? .zero : slack) { finished in
+            Task { @MainActor in
+                // Stale completion from a previous page/video: the
+                // state it would touch no longer exists.
+                guard gen == generation else { return }
+                seekInFlight = false
+                if finished {
+                    lastLanded = target
+                    if exact { finishing = false }
+                }
+                pump()
             }
         }
     }
@@ -523,4 +586,32 @@ private struct VideoFramePickerView: View {
             confirming = false
         }
     }
+}
+
+/// The paused player's picture: a plain AVPlayerLayer host with no
+/// controls — the slider is the only control on this page.
+private struct PlayerLayerView: UIViewRepresentable {
+    let player: AVPlayer
+
+    func makeUIView(context: Context) -> PlayerHostView {
+        let view = PlayerHostView()
+        view.playerLayer.player = player
+        return view
+    }
+
+    func updateUIView(_ uiView: PlayerHostView, context: Context) {
+        uiView.playerLayer.player = player
+    }
+}
+
+private final class PlayerHostView: UIView {
+    override class var layerClass: AnyClass { AVPlayerLayer.self }
+    var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        playerLayer.videoGravity = .resizeAspect
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
