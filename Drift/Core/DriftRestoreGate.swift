@@ -35,4 +35,23 @@ enum DriftRestoreGate {
     /// Unreachable while the gate is open; kept for the day the
     /// emergency stop is used again.
     static let notice = "恢复刷已暂停：请改用其他刷入方式。"
+
+    /// The pre-start confirmation every restore flash shows — on the
+    /// wallpaper page and on the video picker alike (Grace,
+    /// 2026-11-22): it pops the moment a restore flash is tapped,
+    /// before anything is pulled, and only 「确定刷入」 starts the
+    /// run. It shows every time; there is no "don't ask again". The
+    /// four points are the standing write-back warnings: a full
+    /// backup and Find My off first (the device refuses a restore
+    /// with error 211 while Find My is on), the setup walk after the
+    /// reboot, profiles possibly being cleared by the write-back
+    /// (seen in the field, cause undetermined — check and reinstall),
+    /// and keeping the app and the tunnel alive through the run.
+    static let confirmationTitle = "恢复刷入前请确认"
+    static let confirmationMessage = """
+        1. 先把手机整机备份到电脑，并关掉「查找」；没关「查找」会刷不进去。
+        2. 刷完重启后会走一遍设置流程，手动走完即可，数据和 App 都在。
+        3. 描述文件可能会被弄掉，刷完请检查，不在了就重新安装。
+        4. 刷入过程中不要划掉 App，也不要断开 Wi-Fi 和 LocalDevVPN。
+        """
 }

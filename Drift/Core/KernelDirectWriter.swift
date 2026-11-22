@@ -72,6 +72,7 @@ enum KernelDirectWriter {
             throw DriftError("内核直刷需要先选择至少一个 .tendies 壁纸包。")
         }
         guard selection.video == nil,
+              selection.preGeneratedVideoDirectory == nil,
               !selection.fullReset,
               selection.resetModes.isEmpty else {
             throw DriftError("内核直刷当前只处理已选的 .tendies 描述文件，不处理视频或重置任务。")

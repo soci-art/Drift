@@ -671,6 +671,7 @@ final class DriftSession: ObservableObject {
             return (false, "先在「壁纸包」里选择要写入的 .tendies 包。")
         }
         guard selection.video == nil,
+              selection.preGeneratedVideoDirectory == nil,
               !selection.fullReset,
               selection.resetModes.isEmpty else {
             return (false, "内核直刷当前只支持已选的 .tendies 描述文件，不处理视频或重置任务。")
