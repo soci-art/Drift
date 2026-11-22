@@ -231,6 +231,16 @@ final class AppUpdateChecker: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The alpha body with the stamp removed — what a human
+    /// reader (the announcement) should see.
+    nonisolated static func strippingAlphaStamp(_ body: String) -> String {
+        guard let start = body.range(of: "<!-- drift-alpha:"),
+              let end = body.range(of: "-->", range: start.upperBound..<body.endIndex)
+        else { return body }
+        return (String(body[..<start.lowerBound]) + String(body[end.upperBound...]))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private static func fetchNightly() async throws -> ReleaseInfo {
         // The same three API tiers as the release line. There is no
         // page fallback here: the version lives in the body stamp,
