@@ -16,6 +16,8 @@ enum KernelDirectWriter {
         let installedCount: Int
         /// What was placed, for the receipt journal (#334).
         let placed: [Placed]
+        /// iOS 17.0 uses PosterBoard's own descriptor import path.
+        let systemImportOnly: Bool
     }
 
     private struct Source {
@@ -221,17 +223,24 @@ enum KernelDirectWriter {
 
         let databaseURL = URL(fileURLWithPath:
             storePath + "/\(generation)/" + PosterBoard.databaseFileName)
-        var databaseIsDirectory: ObjCBool = false
-        guard manager.fileExists(atPath: databaseURL.path, isDirectory: &databaseIsDirectory),
-              !databaseIsDirectory.boolValue else {
-            throw DriftError("结构版本 \(generation) 中不存在设备现有数据库：\(databaseURL.path)")
+        let systemImportOnly = usesSystemImportOnly(deviceVersion: deviceVersion)
+        if systemImportOnly {
+            log("[系统导入] iOS \(deviceVersion)：只发布描述符，不写数据库登记，交给 PosterBoard 自行扫描导入")
+        } else {
+            var databaseIsDirectory: ObjCBool = false
+            guard manager.fileExists(atPath: databaseURL.path, isDirectory: &databaseIsDirectory),
+                  !databaseIsDirectory.boolValue else {
+                throw DriftError("结构版本 \(generation) 中不存在设备现有数据库：\(databaseURL.path)")
+            }
         }
 
         log("[内核写入] PosterBoard 容器：\(canonicalContainer)")
         log("[内核写入] 商店目录：\(storePath)")
         log("[内核写入] 采用结构版本：\(generation)")
         log("[内核写入] 实际 provider：\(requiredProviders.sorted().joined(separator: "、"))")
-        log("[内核数据库] 目标：\(databaseURL.path)")
+        if !systemImportOnly {
+            log("[内核数据库] 目标：\(databaseURL.path)")
+        }
 
         // Copy and fsync hidden staging folders before opening the DB transaction.
         // The final UUID path is published only after BEGIN IMMEDIATE has locked
@@ -258,6 +267,68 @@ enum KernelDirectWriter {
         }
         log("[内核写入] 隐藏暂存完成：\(pending.count) 个目录，尚未发布最终 UUID 目录")
 
+        var placed: [Placed] = []
+        var completed = 0
+        var lastPublishedAt = Date.distantPast
+        func publishPending() throws {
+            for item in pending {
+                lastPublishedAt = try publish(item, log: log)
+                placed.append(Placed(
+                    extensionID: item.extensionID,
+                    folderName: item.folderName,
+                    parent: item.parent,
+                    key: item.key,
+                    pack: item.pack,
+                    numericID: item.numericID
+                ))
+                completed += 1
+                progress(Double(completed) / Double(max(1, pending.count)) * 100)
+            }
+        }
+        func rollBackPublished() {
+            for item in placed.reversed() {
+                try? manager.removeItem(atPath: item.parent + "/" + item.folderName)
+                fsyncDirectory(item.parent)
+            }
+        }
+
+        if systemImportOnly {
+            do {
+                try publishPending()
+            } catch {
+                log("[系统导入] 描述符发布失败：\(error.localizedDescription)")
+                rollBackPublished()
+                throw error
+            }
+            let expected = Set(pending.map(\.key))
+            var present: Set<String> = []
+            for item in pending {
+                if let stats = try? treeStats(item.destination), stats.files > 0 {
+                    present.insert(item.key)
+                }
+            }
+            let missing = expected.subtracting(present)
+            guard missing.isEmpty else {
+                rollBackPublished()
+                throw DriftError("系统导入路径发布后目录核验未通过：" + missing.sorted().joined(separator: "、"))
+            }
+            log("[系统导入] 目录核验通过 \(present.count)/\(expected.count)；未写数据库行，等待 PosterBoard 自行扫描")
+            let providers = Set(placed.map(\.extensionID))
+            let verification = PosterStoreVerification(
+                structureVersion: generation,
+                structureVersionSource: "iOS 17.0 系统导入：仅发布描述符，未写 SQLite 登记",
+                providersSeen: providers,
+                expected: expected,
+                confirmed: present,
+                enumeratedAfter: true
+            )
+            progress(100)
+            return Outcome(verification: verification,
+                           installedCount: placed.count,
+                           placed: placed,
+                           systemImportOnly: true)
+        }
+
         // A kernel registration only adds the wallpaper to the picker. It must
         // never change the user's currently selected wallpaper.
         let registrationItems = pending.map {
@@ -268,8 +339,6 @@ enum KernelDirectWriter {
             )
         }
 
-        var placed: [Placed] = []
-        var completed = 0
         let registration: PosterBoardStore.InPlaceRegistration
         do {
             registration = try PosterBoardStore.registerInPlace(
@@ -278,30 +347,14 @@ enum KernelDirectWriter {
                 backupRoot: PosterBoard.workDirectory.deletingLastPathComponent()
                     .appendingPathComponent("KernelDirectDatabaseBackups", isDirectory: true),
                 installFiles: {
-                    var lastPublishedAt = Date.distantPast
-                    for item in pending {
-                        lastPublishedAt = try publish(item, log: log)
-                        placed.append(Placed(
-                            extensionID: item.extensionID,
-                            folderName: item.folderName,
-                            parent: item.parent,
-                            key: item.key,
-                            pack: item.pack,
-                            numericID: item.numericID
-                        ))
-                        completed += 1
-                        progress(Double(completed) / Double(max(1, pending.count)) * 100)
-                    }
+                    try publishPending()
                     return lastPublishedAt
                 },
                 log: { log("[内核数据库] " + $0) }
             )
         } catch {
             log("[内核写入] 文件发布/数据库事务失败：\(error.localizedDescription)")
-            for item in placed.reversed() {
-                try? manager.removeItem(atPath: item.parent + "/" + item.folderName)
-                fsyncDirectory(item.parent)
-            }
+            rollBackPublished()
             throw error
         }
 
@@ -371,7 +424,8 @@ enum KernelDirectWriter {
         return Outcome(
             verification: verification,
             installedCount: placed.count,
-            placed: placed
+            placed: placed,
+            systemImportOnly: false
         )
     }
 
@@ -503,6 +557,14 @@ enum KernelDirectWriter {
             if hasProviders { return generation }
         }
         return nil
+    }
+
+    /// iOS 17.0.x uses descriptor-only publication; other versions keep
+    /// the normal SQLite registration path.
+    static func usesSystemImportOnly(deviceVersion: String) -> Bool {
+        let parts = deviceVersion.split(separator: ".")
+        guard parts.count >= 2 else { return false }
+        return parts[0] == "17" && parts[1] == "0"
     }
 
     private static func ensureRoleIdentifier(in folder: URL) throws {
