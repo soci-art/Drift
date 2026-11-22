@@ -113,9 +113,6 @@ struct DriftVideoView: View {
             if judged.useKernel {
                 DriftPill(text: "内核直刷", tint: .green)
                 DriftPill(text: "关闭 PosterBoard 后生效")
-            } else if judged.kernelNeedsSwitch {
-                DriftPill(text: "内核直刷")
-                DriftPill(text: "暂不可用", tint: .orange)
             } else if judged.isBlocked {
                 DriftPill(text: "暂不可用", tint: .orange)
             } else {
