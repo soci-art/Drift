@@ -14,10 +14,6 @@ struct DriftHomeView: View {
     /// change the judgement card re-renders from immediately. The same key
     /// backs `DriftJudge.manualPick`, which stays for non-view readers.
     @AppStorage(DriftJudge.manualKey) private var manualPickRaw: String?
-    /// The 内核直刷 switch from 实验性功能 (#329): while it is off the
-    /// method does not exist on this page at all.
-    @AppStorage(KernelDirectPremise.enabledKey) private var kernelEnabled = false
-
     @State private var imports: [PosterBoardTendie] = PosterBoardImports.load()
     @State private var importingPairing = false
     @State private var statusLine: String?
@@ -89,11 +85,6 @@ struct DriftHomeView: View {
             return kernelPremiseReady && !selection.tendies.isEmpty && !overLimit
                 && !selection.fullReset
                 && selection.resetModes.isEmpty && !session.running
-        }
-        // A restore pick blocked only by its switch: the tap must
-        // reach the reminder (Grace, 2026-11-19).
-        if judgement.restoreNeedsSwitch {
-            return !selection.tendies.isEmpty && !overLimit && !session.running
         }
         // The in-process route is the one path that does not need a pairing
         // record; every other mode still does.
@@ -185,38 +176,16 @@ struct DriftHomeView: View {
                         // an orange 「预发行版」 to its right; the name
                         // itself never moves. Release builds keep the
                         // system large title and never show this row.
-                        // The Alpha research line (Grace, 2026-11-19)
-                        // wears a red "Alpha-test" in the same place, and
-                        // a red warning banner under it: the restore
-                        // route inside is unverified research.
                         if AppVersion.channel != .release {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Text("Drift")
                                     .font(.largeTitle)
                                     .fontWeight(.bold)
-                                if AppVersion.channel == .alpha {
-                                    Text("Alpha-test")
-                                        .font(.headline)
-                                        .foregroundStyle(.red)
-                                } else {
-                                    Text("预发行版")
-                                        .font(.headline)
-                                        .foregroundStyle(.orange)
-                                }
+                                Text("预发行版")
+                                    .font(.headline)
+                                    .foregroundStyle(.orange)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        if AppVersion.channel == .alpha {
-                            HStack(spacing: 8) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                Text("研究包：恢复刷已实机验证，仍有数据风险")
-                                    .font(.subheadline.weight(.semibold))
-                            }
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(10)
-                            .background(Color.red,
-                                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
                         headerCard
                         tutorialEntryCard
@@ -730,15 +699,7 @@ struct DriftHomeView: View {
         // but a blocked selection must never even be shaped into one.)
         if judgement.isBlocked {
             session.flashCover = false
-            // Blocked only by the restore switch (Grace, 2026-11-19):
-            // this tap is the reminder moment — a notice pointing at
-            // 实验性功能, not an error.
-            if judgement.restoreNeedsSwitch {
-                session.noticeTitle = "恢复刷还没有打开"
-                session.noticeText = "请先到「设置 → 实验性功能」里打开恢复刷，再回来刷入。"
-            } else {
-                session.errorText = judgement.blockedReason
-            }
+            session.errorText = judgement.blockedReason
             return
         }
         var runSelection = packsSelection

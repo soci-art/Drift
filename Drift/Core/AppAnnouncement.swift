@@ -126,11 +126,6 @@ enum AppAnnouncement {
         case .nightly:
             apis = ["https://api.github.com/repos/soci-art/Drift/releases/tags/\(version)",
                     "https://api.github.com/repos/soci-art/Drift/releases/tags/nightly"]
-        case .alpha:
-            // The Alpha line's announcements live on its own fixed
-            // tag — never the formal v-tag, whose notes are written
-            // for shipped users.
-            apis = ["https://api.github.com/repos/soci-art/Drift/releases/tags/alpha"]
         case .release:
             apis = ["https://api.github.com/repos/soci-art/Drift/releases/tags/v\(version)"]
         }
