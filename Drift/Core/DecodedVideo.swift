@@ -26,6 +26,9 @@ struct DecodedVideoItem: Identifiable, Equatable {
     let reverse: Bool
     let foreground: Bool
     let calculationMode: PosterBoardCalculationMode
+    /// The decode carried a user framing from the video page's box
+    /// (Grace, 2026-11-23): the product's geometry is the box's.
+    let framed: Bool
     /// Decoded frame count for a loop; nil for the live-photo shape.
     let frameCount: Int?
     /// Frame size in pixels (0 when it could not be read back).
@@ -56,6 +59,7 @@ struct DecodedVideoItem: Identifiable, Equatable {
         }
         if reverse { parts.append("倒放") }
         if foreground { parts.append("前景层") }
+        if framed { parts.append("已调整画面") }
         return parts.joined(separator: " · ")
     }
 
@@ -105,6 +109,10 @@ final class DecodedVideoLibrary: ObservableObject {
         var reverse: Bool
         var foreground: Bool
         var calculationMode: String
+        /// Optional on purpose: metas written before the framing
+        /// existed have no such key, and a missing key must read as
+        /// "not framed", never as an unreadable item.
+        var framed: Bool?
         var frameCount: Int?
         var width: Int
         var height: Int
@@ -138,6 +146,7 @@ final class DecodedVideoLibrary: ObservableObject {
                 reverse: meta.reverse,
                 foreground: meta.foreground,
                 calculationMode: PosterBoardCalculationMode(rawValue: meta.calculationMode) ?? .linear,
+                framed: meta.framed ?? false,
                 frameCount: meta.frameCount,
                 width: meta.width,
                 height: meta.height,
@@ -193,6 +202,7 @@ final class DecodedVideoLibrary: ObservableObject {
                         reverse: selection.reverse,
                         foreground: selection.foreground,
                         calculationMode: selection.calculationMode.rawValue,
+                        framed: selection.framing.map { !$0.isDefault } ?? false,
                         frameCount: frameCount,
                         width: width,
                         height: height,

@@ -243,6 +243,10 @@ struct PosterBoardSelection {
         video?.lastPathComponent ?? preGeneratedVideoName
     }
 
+    /// The user's framing of the video inside the screen box
+    /// (video page, Grace, 2026-11-23); nil keeps the centred cover.
+    var framing: PosterBoardFraming?
+
     /// The four options the reference keeps on the tweak object.
     var loop = true
     var reverse = false
@@ -278,7 +282,8 @@ struct PosterBoardSelection {
                                     loop: loop,
                                     reverse: reverse,
                                     foreground: foreground,
-                                    calculationMode: calculationMode)
+                                    calculationMode: calculationMode,
+                                    framing: framing)
     }
 
     /// The reference's own summary of what an apply will carry, for the log.
