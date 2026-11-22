@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 /// Drift's root: the first-run guide until setup is complete, then the
@@ -157,6 +158,15 @@ struct DriftRootView: View {
                             Text("\(Int(progress * 100))%")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                            // Grace (2026-11-22): where the bar shows,
+                            // the caution shows with it — this is the
+                            // long restore run, and a lock or a trip to
+                            // the home screen suspends the app and
+                            // kills it. Quick flashes keep the bare
+                            // cover her 2026-11-15 rule set.
+                            Text("请勿锁屏或退出 App")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
                         }
                         // Grace (2026-11-15): while a flash runs, the
                         // cover shows 「正在刷入」 and nothing else —
@@ -192,6 +202,15 @@ struct DriftRootView: View {
                 }
                 .transition(.opacity)
             }
+        }
+        // Keep the screen awake while a run cover is up (Grace,
+        // 2026-11-22): the restore pull holds this cover for minutes,
+        // and an auto-lock would suspend the app mid-run and kill the
+        // connection. The timer goes back the moment the cover drops —
+        // finish, failure and cancel all drop it, so the screen is
+        // never left un-lockable.
+        .onChange(of: session.flashCover || session.cover != nil) { _, covered in
+            UIApplication.shared.isIdleTimerDisabled = covered
         }
     }
 
