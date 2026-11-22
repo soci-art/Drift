@@ -18,6 +18,7 @@ struct DriftVideoView: View {
     @State private var importingVideo = false
     @State private var importingPhotos = false
     @State private var pickingFrame = false
+    @State private var adjustingFrame = false
     @State private var statusLine: String?
     @State private var videoPreview: UIImage?
     @State private var decodeNote: String?
@@ -51,6 +52,7 @@ struct DriftVideoView: View {
                     VStack(spacing: 14) {
                         introCard
                         filesCard
+                        framingCard
                         optionsCard
                         applyCard
                         // Collection #289 (Grace, 2026-11-13): no log
@@ -73,6 +75,7 @@ struct DriftVideoView: View {
                         // A freeze frame belongs to its video: a new
                         // video invalidates the old pick.
                         selection.thumbnail = nil
+                        selection.framing = nil
                     }
                 } onCancel: {
                     importingVideo = false
@@ -83,6 +86,13 @@ struct DriftVideoView: View {
                     importFromPhotos(result)
                 } onCancel: {
                     importingPhotos = false
+                }
+            }
+            .fullScreenCover(isPresented: $adjustingFrame) {
+                if let video = selection.video {
+                    VideoFramingView(videoURL: video, initial: selection.framing) { framing in
+                        selection.framing = framing
+                    }
                 }
             }
             .sheet(isPresented: $pickingFrame) {
@@ -166,6 +176,7 @@ struct DriftVideoView: View {
                         PosterBoard.clearFiles(in: PosterBoard.thumbnailDirectory)
                         selection.video = nil
                         selection.thumbnail = nil
+                        selection.framing = nil
                         videoPreview = nil
                     } label: { Image(systemName: "trash") }
                     .driftGlassButton()
@@ -235,6 +246,35 @@ struct DriftVideoView: View {
                 session.errorText = error.localizedDescription
             }
         }
+    }
+
+    /// The framing step (Grace, 2026-11-23): after the pick,
+    /// before the decode — the decode is where the box's geometry
+    /// is written into the product, so the adjustment has to be
+    /// settled by then. The box only bites on the looping shape;
+    /// the live-photo shape is laid out by the system.
+    private var framingCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("调整画面").font(.subheadline.weight(.semibold))
+                    Text(selection.framing?.isDefault == false
+                         ? "已调整：按你定的样子生成、刷入"
+                         : "还没调整：现在是居中裁剪")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button { adjustingFrame = true } label: {
+                    Label("调整", systemImage: "crop")
+                }
+                .driftGlassButton()
+                .disabled(selection.video == nil)
+            }
+            Text("按本机屏幕出框，框里就是刷上锁屏的样子：拖动移位置、双指缩放定裁剪，框外压暗的部分会被裁掉。循环模式用得上这个框；非循环（实况照片式）的画面由系统自己铺满。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .driftCard()
     }
 
     private var optionsCard: some View {
@@ -367,6 +407,7 @@ struct DriftVideoView: View {
                 importPicked([staging], into: PosterBoard.videoDirectory) { url in
                     selection.video = url
                     selection.thumbnail = nil
+                    selection.framing = nil
                 }
             }
         }

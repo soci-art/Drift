@@ -19,6 +19,24 @@ enum PosterBoardCalculationMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// How the user framed the video inside the screen-shaped box on
+/// the video page (Grace, 2026-11-23): the box is the device screen,
+/// the video moves and zooms behind it, and what is inside the box
+/// is what the Lock Screen shows. Offsets are in document points
+/// (the screen's own points), measured from the centred cover
+/// position; `offsetY` is positive when the picture moves DOWN the
+/// screen, the way the user's finger moved it.
+struct PosterBoardFraming: Equatable {
+    /// Multiplier over the cover scale: 1 fills the screen exactly,
+    /// larger zooms in. Never below 1 — the picture must always
+    /// cover the screen, with no empty edge inside the box.
+    var scale: Double = 1
+    var offsetX: Double = 0
+    var offsetY: Double = 0
+
+    var isDefault: Bool { scale == 1 && offsetX == 0 && offsetY == 0 }
+}
+
 /// A video wallpaper, as the page has assembled it.
 struct PosterBoardVideoPlan {
     /// The picked video, copied into the app's container.
@@ -33,6 +51,11 @@ struct PosterBoardVideoPlan {
     /// hides the clock.
     var foreground = false
     var calculationMode: PosterBoardCalculationMode = .linear
+    /// The user's framing from the video page's box, or nil for the
+    /// reference's centred cover. Only the caml loop has geometry of
+    /// ours to write it into; the live-photo shape is laid out by
+    /// the system and ignores it.
+    var framing: PosterBoardFraming?
 
     var name: String { video.lastPathComponent }
 }
@@ -67,9 +90,11 @@ enum PosterBoardVideo {
     /// JPEG the device decodes per animation step.
     static let frameLimit = 400
 
-    /// `video_handler.create_caml`'s JPEG quality.  OpenCV's `imwrite` default is
-    /// 95, which is what the reference relies on.
-    static let jpegQuality: CGFloat = 0.95
+    /// The JPEG quality frames are stored at. The reference relies
+    /// on OpenCV's `imwrite` default of 95; Grace ruled original
+    /// quality with no reduction (2026-11-23), so frames are stored
+    /// at the top of the scale, at the video's own resolution.
+    static let jpegQuality: CGFloat = 1.0
 
     /// Both halves of `create_*_files`, into `outputDirectory`.
     ///
@@ -147,6 +172,7 @@ enum PosterBoardVideo {
         log("  → video loop: decoding \(plan.name) into \(ca.lastPathComponent)")
         try await writeCAML(video: plan.video,
                             caDirectory: ca,
+                            framing: plan.framing,
                             calculationMode: plan.calculationMode.rawValue,
                             reverse: plan.reverse,
                             log: log)
@@ -155,6 +181,7 @@ enum PosterBoardVideo {
     /// `create_caml`: decode every frame, then write the frame list around them.
     private static func writeCAML(video: URL,
                                   caDirectory: URL,
+                                  framing: PosterBoardFraming?,
                                   calculationMode: String,
                                   reverse: Bool,
                                   log: @escaping @Sendable (String) -> Void) async throws {
@@ -204,9 +231,20 @@ enum PosterBoardVideo {
         let docWidth = screen.width
         let docHeight = screen.height
         let cover = max(Double(docWidth) / Double(width), Double(docHeight) / Double(height))
-        let layerScale = cover * Self.depthScale
-        let centerX = Double(docWidth) / 2
-        let centerY = Double(docHeight) / 2
+        // The user's framing rides on the centred cover: their zoom
+        // multiplies it, their drag moves the layer's centre by the
+        // offsets they left in the box. The caml measures the centre
+        // from the BOTTOM of the document (the transform layer's
+        // parent is unflipped), so a picture the user dragged down
+        // the screen subtracts from the centre height here.
+        let layerScale = cover * Self.depthScale * (framing?.scale ?? 1)
+        let centerX = Double(docWidth) / 2 + (framing?.offsetX ?? 0)
+        let centerY = Double(docHeight) / 2 - (framing?.offsetY ?? 0)
+        if let framing, !framing.isDefault {
+            log("  → user framing: scale ×\(String(format: "%.3f", framing.scale)) over cover, "
+                + "offset (\(String(format: "%.1f", framing.offsetX)), "
+                + "\(String(format: "%.1f", framing.offsetY))) points")
+        }
         // The layer is published by name, and `index.xml` has to name the same
         // one — the reference passes the same `layer_name` to both writers.
         let layerName = "Chip"
@@ -250,6 +288,22 @@ enum PosterBoardVideo {
             + "duration \(String(format: "%.3f", duration)) s")
     }
 
+    /// The device screen in points, for the video page's framing
+    /// box. Deliberately the same numbers `screenSize` writes into
+    /// the document: the box the user adjusts and the geometry the
+    /// decode writes are measured with one ruler, so the two cannot
+    /// drift apart.
+    static func deviceScreenPoints() -> (width: Int, height: Int) {
+        screenSize { _ in }
+    }
+
+    /// The same screen's scale, so the framing page can name the
+    /// box in pixels (points × scale) the way the user knows their
+    /// screen.
+    static func deviceScreenScale() -> Double {
+        activeScreen()?.scale ?? 1
+    }
+
     /// The document size, in points: the device's own screen, which is the one
     /// number the background and foreground packages were built for.
     ///
@@ -278,11 +332,17 @@ enum PosterBoardVideo {
     /// The bounds of a screen this app is actually on, or nil when no scene can
     /// be reached (a unit-test host, a background extension).
     private static func activeScreenBounds() -> CGRect? {
+        activeScreen()?.bounds
+    }
+
+    /// The display of the foreground scene — the one screen every
+    /// size in this file is measured against. `.foregroundActive`
+    /// first: a scene that is on screen but not active (say, a
+    /// Slide Over companion) is not the one whose size a wallpaper
+    /// document should match.
+    private static func activeScreen() -> UIScreen? {
         let scenes = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
-        // `.foregroundActive` first: a scene that is on screen but not active
-        // (say, a Slide Over companion) is not the one whose size a wallpaper
-        // document should match.
         let ordered = scenes.sorted { lhs, rhs in
             let rank: (UIScene.ActivationState) -> Int = {
                 switch $0 {
@@ -294,9 +354,9 @@ enum PosterBoardVideo {
             return rank(lhs.activationState) < rank(rhs.activationState)
         }
         if let screen = ordered.first(where: { !$0.screen.bounds.isEmpty })?.screen {
-            return screen.bounds
+            return screen
         }
-        return scenes.first?.screen.bounds
+        return scenes.first?.screen
     }
 
     /// `create_caml`'s `bounds_scale`, kept at the reference's default.

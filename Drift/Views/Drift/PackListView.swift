@@ -168,10 +168,16 @@ struct PackListView: View {
                 repairingCover
             }
         }
-        .overlay(alignment: .bottom) {
+        // Grace (2026-11-23): the progress card belongs in the
+        // middle of the screen, over a dim — at the bottom it was
+        // too easy to miss while a big import ran.
+        .overlay {
             if importProgress.active {
-                importProgressCard
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                ZStack {
+                    Color.black.opacity(0.25).ignoresSafeArea()
+                    importProgressCard
+                }
+                .transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: 0.25), value: importProgress.active)
@@ -630,8 +636,7 @@ struct PackListView: View {
         .padding(14)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
-        .padding(.horizontal, 16)
-        .padding(.bottom, 12)
+        .padding(.horizontal, 32)
     }
 
     private func handleTendiesPick(_ urls: [URL]) {
