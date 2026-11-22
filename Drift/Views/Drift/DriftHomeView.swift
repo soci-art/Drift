@@ -98,11 +98,12 @@ struct DriftHomeView: View {
         return (session.paired || judgement.mode == .worseQuery)
             && !selection.tendies.isEmpty && !overLimit && !session.running
     }
-    /// The kernel channel's premise, judged on this device alone.
-    /// Ready only when the user turned it on in 实验性功能 and this
-    /// device is in its band and offset table (#319/#329).
+    /// The kernel channel's premise, judged on this device alone:
+    /// this device in its band and offset table (#319/#329). (The
+    /// 实验性功能 switch that also gated it was removed with the
+    /// 2026-11-22 opening set.)
     private var kernelReady: Bool {
-        kernelEnabled && kernelPremiseReady
+        kernelPremiseReady
     }
 
     /// Supported-or-not, device only: iOS 17 / 18 band and the model

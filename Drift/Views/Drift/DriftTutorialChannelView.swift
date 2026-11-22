@@ -141,7 +141,7 @@ struct DriftTutorialChannelView: View {
             ]
         }
         let third = switch channel {
-        case .noRespring, .local, .kernel:
+        case .noRespring, .local, .kernel, .restore:
             "点「刷入」，等它写完（手机保持解锁，别切走）"
         case .respring:
             "点「刷入」，等它写完（手机保持解锁，别切走；写完会提示你注销）"
