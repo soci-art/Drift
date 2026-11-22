@@ -1041,6 +1041,11 @@ struct DriftModeJudgement {
     /// placeholder, and dispatchers must honour this flag instead
     /// (set for a manual 内核直刷 pick and for 自动选择 landing on it).
     var useKernel: Bool = false
+    /// Whether the restore method's premises all hold on this device
+    /// right now (the tunnel premises ready and the iOS 27 segment,
+    /// judged by build number). The Home restore row and the
+    /// tutorial read this for their 可用/不可用 status.
+    var restoreAvailable: Bool = false
     var isBlocked: Bool { blockedReason != nil }
 }
 
