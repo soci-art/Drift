@@ -46,11 +46,11 @@ struct PosterBoardManagerView: View {
             buildVersion: WorseQueryEscape.processBuildVersion)
     }
 
-    /// The kernel route, judged exactly as the store listing judges
-    /// it: switch on and premise ready. This gate was missing when
-    /// the kernel source was added to the page (#334) — on a 17/18
     /// The kernel management route is available when this device
-    /// meets the system-version and model compatibility premise.
+    /// meets the system-version and model compatibility premise —
+    /// the same premise the store listing itself judges by. (This
+    /// gate was missing when the kernel source was added to the
+    /// page, #334.)
     private var kernelAvailable: Bool {
         KernelDirectPremise.evaluate(
             version: WorseQueryEscape.processVersion).ready
