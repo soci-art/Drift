@@ -51,11 +51,12 @@ enum DriftRestoreGate {
     static var confirmationMessage: String {
         let spaceNotice = ProtectiveBackup.preflightSpaceNotice()
         return """
-            1. 先把手机整机备份到电脑，并关掉「查找」；没关「查找」会刷不进去。
-            2. 刷完重启后会走一遍设置流程，手动走完即可，数据和 App 都在。
-            3. 描述文件可能会被弄掉，刷完请检查，不在了就重新安装。
-            4. 刷入过程中不要划掉 App，也不要断开 Wi-Fi 和 LocalDevVPN。
-            5. \(spaceNotice)
+            1. 先把手机整机备份到电脑，并确认备份可用；同时关掉「查找」，否则设备可能拒绝恢复。
+            2. 本版本入口按 iOS 27.x 和可读取的构建号放行；这不代表每个 iOS 27 构建都已完成真机验证。
+            3. 恢复协议可能影响设备数据、App 或设置。即使本流程只准备壁纸相关变更，也无法保证设备端绝不会影响其他数据；电脑整机备份是必要保障，不是零风险保证。
+            4. 刷完重启后可能需要完成设置流程；描述文件也可能被清除，请刷完检查并按需重新安装。
+            5. 刷入过程中不要划掉 App，也不要断开 Wi-Fi 和 LocalDevVPN。
+            6. \(spaceNotice)
             """
     }
 }

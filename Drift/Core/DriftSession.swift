@@ -1212,7 +1212,12 @@ enum DriftJudge {
     /// version's major component (the build-number presence is the
     /// caller's own check — see premises and DriftRestoreService).
     static func isRestoreSegment(version: String) -> Bool {
-        (Int(version.split(separator: ".").first ?? "") ?? 0) == 27
+        let components = version.split(separator: ".", omittingEmptySubsequences: false)
+        guard !components.isEmpty,
+              components.allSatisfy({ !$0.isEmpty && Int($0) != nil }) else {
+            return false
+        }
+        return Int(components[0]) == 27
     }
 
     /// How a channel makes the wallpaper visible, in the user's terms.
