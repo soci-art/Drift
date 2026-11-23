@@ -27,8 +27,8 @@ struct DriftVideoView: View {
     /// item decoded from the currently picked video, so deleting
     /// the item (or clearing the video) takes the claim with it.
     private var decodeNote: String? {
-        guard let video = selection.video else { return nil }
-        let name = library.videoDisplayName(for: video)
+        guard selection.video != nil, let name = selection.videoDisplayName
+        else { return nil }
         return library.items.contains { $0.name == name }
             ? "解码完成，已存到「已解码的视频」，刷的时候选它就行。"
             : nil
