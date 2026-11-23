@@ -19,6 +19,14 @@ struct VideoLockPreviewView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var displaySize: CGSize = .zero
     @State private var now = Date()
+    /// Same leaving teardown as the framing page: the player
+    /// comes out before the dismissal animation runs.
+    @State private var leaving = false
+
+    private func leave() {
+        leaving = true
+        DispatchQueue.main.async { dismiss() }
+    }
 
     private let docW: Int = PosterBoardVideo.deviceScreenPoints().width
     private let docH: Int = PosterBoardVideo.deviceScreenPoints().height
@@ -27,7 +35,7 @@ struct VideoLockPreviewView: View {
         GeometryReader { geo in
             ZStack {
                 Color.black
-                if displaySize != .zero {
+                if displaySize != .zero && !leaving {
                     LockPreviewPlayerView(url: videoURL,
                                           videoRect: videoRect(in: geo.size))
                         .frame(width: geo.size.width, height: geo.size.height)
@@ -38,7 +46,7 @@ struct VideoLockPreviewView: View {
                 VStack {
                     HStack {
                         Spacer()
-                        Button { dismiss() } label: {
+                        Button { leave() } label: {
                             HStack(spacing: 5) {
                                 Image(systemName: "xmark")
                                 Text("退出")

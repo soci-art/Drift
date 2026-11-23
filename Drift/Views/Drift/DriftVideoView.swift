@@ -64,6 +64,7 @@ struct DriftVideoView: View {
                         introCard
                         filesCard
                         framingCard
+                        decodeCard
                         optionsCard
                         applyCard
                         // Collection #289 (Grace, 2026-11-13): no log
@@ -222,7 +223,20 @@ struct DriftVideoView: View {
                 Text("定格帧在视频里选，不用另外准备图片。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Divider()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .driftCard()
+        .task(id: selection.video) { await loadPreview() }
+    }
+
+
+    /// The decode step as its own card, below the framing card
+    /// (Grace, 2026-11-23): the flow down the page is the order
+    /// the work happens — pick, frame, then decode, and the
+    /// decode carries the framing settled above it.
+    private var decodeCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("解码").font(.subheadline.weight(.semibold))
             // The decode section (Grace, 2026-11-22): decoding moves
             // off the flash run entirely — a heavy video's decode is
             // what used to kill a run minutes in. The product is
@@ -268,7 +282,6 @@ struct DriftVideoView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
-        .task(id: selection.video) { await loadPreview() }
     }
 
     /// Decode the current pick into the library. Errors land in the
