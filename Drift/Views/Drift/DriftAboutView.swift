@@ -141,7 +141,7 @@ struct DriftAboutView: View {
             Text("内核直刷").frame(width: 41).lineLimit(2).fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 0) {
                 Text("恢复刷").lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                Text("新").font(.caption2.weight(.semibold)).lineLimit(1).foregroundStyle(.red)
+                Text("实验").font(.caption2.weight(.semibold)).lineLimit(1).foregroundStyle(.orange)
             }.frame(width: 41)
         }
         .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
