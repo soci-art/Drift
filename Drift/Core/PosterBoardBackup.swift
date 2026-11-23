@@ -210,21 +210,19 @@ enum PosterBoardBackup {
         // and they are right here.
         guard counter.posterBoardKept > 0 else {
             // `0 of 0` and `0 of N` are different failures wearing one message.
-            // Nothing offered means the device refused before it named a single
-            // payload — no filter, factory-info entry or container name is
-            // involved — and the most common cause is the free-space refusal
-            // (MBErrorDomain/105): the device compares its whole *planned* upload
-            // against the free space the host reports for the backup volume and
-            // refuses to start when that volume cannot hold it, even though this
-            // fetch keeps a few hundred MB. That number is the one fact that
-            // separates the two, so it belongs in the error.
+            // Nothing offered means the host callback saw no payload. It does
+            // NOT by itself identify why: disk-space refusal is one candidate,
+            // but FactoryInfo/container discovery and the backup handshake can
+            // also fail before the first offer. Report host capacity as context,
+            // never as the device's planned upload size or proof of MBError 105.
             let nothingOffered = counter.total == 0
-                ? " The device offered NOTHING at all (0 of 0), so the filter never saw a name: "
-                    + "this is the device refusing the session, not rejecting payloads. Host free "
-                    + "space on the backup volume: \(ProtectiveBackup.freeSpaceDescription()) — a "
-                    + "planned upload larger than that is refused with MBErrorDomain/105 after "
-                    + "DLMessagePurgeDiskSpace, and free space in this app's own container is the "
-                    + "fix."
+                ? " The device offered no payloads at all (0 of 0), so the host filter never "
+                    + "received a name; this is not evidence that the filter rejected files. "
+                    + "Available space on the backup volume: \(ProtectiveBackup.freeSpaceDescription()) "
+                    + "(host-side snapshot only, not the device's planned upload size). Check the "
+                    + "Rust log for an explicit MBErrorDomain/105 or DLMessagePurgeDiskSpace "
+                    + "before attributing this to insufficient space; otherwise inspect the "
+                    + "FactoryInfo/container offer and backup handshake."
                 : ""
             throw DriftRestoreError(
                 "The device uploaded nothing for \(PosterBoard.bundleID): \(counter.kept) of "
