@@ -22,7 +22,17 @@ struct DriftVideoView: View {
     @State private var previewingLock = false
     @State private var statusLine: String?
     @State private var videoPreview: UIImage?
-    @State private var decodeNote: String?
+    /// The note under the decode button, derived rather than
+    /// stored: it shows exactly while the library really holds an
+    /// item decoded from the currently picked video, so deleting
+    /// the item (or clearing the video) takes the claim with it.
+    private var decodeNote: String? {
+        guard let video = selection.video else { return nil }
+        let name = library.videoDisplayName(for: video)
+        return library.items.contains { $0.name == name }
+            ? "解码完成，已存到「已解码的视频」，刷的时候选它就行。"
+            : nil
+    }
     @State private var showPicker = false
     @ObservedObject private var library = DecodedVideoLibrary.shared
 
@@ -198,13 +208,17 @@ struct DriftVideoView: View {
                 }
                 .driftGlassButton()
             }
+            // Grace (2026-11-23): the frame pick aligns with the
+            // rows around it — a full-width pill like the decode
+            // button's row, not a hugging pill whose label starts
+            // one padding further in than everything else.
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 10) {
-                    Button { pickingFrame = true } label: { Label("选定格帧", systemImage: "photo") }
-                        .driftGlassButton()
-                        .disabled(selection.video == nil)
-                    Spacer()
+                Button { pickingFrame = true } label: {
+                    Label("选定格帧", systemImage: "photo")
+                        .frame(maxWidth: .infinity)
                 }
+                .driftGlassButton()
+                .disabled(selection.video == nil)
                 Text("定格帧在视频里选，不用另外准备图片。")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -260,11 +274,9 @@ struct DriftVideoView: View {
     /// Decode the current pick into the library. Errors land in the
     /// shared error slot, like a failed flash's do.
     private func startDecode() {
-        decodeNote = nil
         Task {
             do {
                 try await library.decode(selection: selection, preview: videoPreview)
-                decodeNote = "解码完成，已存到「已解码的视频」，刷的时候选它就行。"
             } catch {
                 session.errorText = error.localizedDescription
             }
@@ -278,32 +290,29 @@ struct DriftVideoView: View {
     /// the live-photo shape is laid out by the system.
     private var framingCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("调整画面").font(.subheadline.weight(.semibold))
-                    Text(selection.framing?.isDefault == false
-                         ? "已调整：按你定的样子生成、刷入"
-                         : "还没调整：现在是居中裁剪")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button { adjustingFrame = true } label: {
-                    Label("调整", systemImage: "crop")
-                }
-                .driftGlassButton()
-                .disabled(selection.video == nil)
-            }
+            Text("调整画面").font(.subheadline.weight(.semibold))
+            Text(selection.framing?.isDefault == false
+                 ? "已调整：按你定的样子生成、刷入"
+                 : "还没调整：现在是居中裁剪")
+                .font(.caption).foregroundStyle(.secondary)
             Text("按本机屏幕出框，框里就是刷上锁屏的样子：拖动移位置、双指缩放定裁剪，框外压暗的部分会被裁掉。循环模式用得上这个框；非循环（实况照片式）的画面由系统自己铺满。")
                 .font(.caption).foregroundStyle(.secondary)
             HStack(spacing: 10) {
-                Button { previewingLock = true } label: {
-                    Label("预览锁屏效果", systemImage: "lock.display")
+                Button { adjustingFrame = true } label: {
+                    Label("调整", systemImage: "crop")
+                        .frame(maxWidth: .infinity)
                 }
                 .driftGlassButton()
                 .disabled(selection.video == nil)
-                Text("只看锁屏：按本机屏幕大小，带着你定的框。")
-                    .font(.caption).foregroundStyle(.secondary)
+                Button { previewingLock = true } label: {
+                    Label("预览锁屏效果", systemImage: "lock.display")
+                        .frame(maxWidth: .infinity)
+                }
+                .driftGlassButton()
+                .disabled(selection.video == nil)
             }
+            Text("预览只看锁屏：按本机屏幕大小，带着你定的框。")
+                .font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
