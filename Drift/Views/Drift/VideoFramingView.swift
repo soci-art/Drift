@@ -40,6 +40,16 @@ struct VideoFramingView: View {
     /// In-flight gesture values, folded in on gesture end.
     @State private var pinch: Double = 1
     @State private var dragDoc: CGSize = .zero
+    /// Set the moment the page is leaving: the live player comes
+    /// out first, then the cover dismisses — a heavy player layer
+    /// riding the dismissal animation smears across the page
+    /// underneath (Grace's recording, 2026-11-23).
+    @State private var leaving = false
+
+    private func leave() {
+        leaving = true
+        DispatchQueue.main.async { dismiss() }
+    }
 
     init(videoURL: URL,
          initial: PosterBoardFraming?,
@@ -80,9 +90,11 @@ struct VideoFramingView: View {
                 let k = frame.width / Double(docW)   // view points per document point
                 ZStack {
                     if displaySize != .zero {
-                        FramingPlayerView(url: videoURL,
-                                          videoRect: videoRect(frame: frame))
-                            .frame(width: geo.size.width, height: geo.size.height)
+                        if !leaving {
+                            FramingPlayerView(url: videoURL,
+                                              videoRect: videoRect(frame: frame))
+                                .frame(width: geo.size.width, height: geo.size.height)
+                        }
                         // Everything outside the box is what gets
                         // cut: dim it, so the cut is visible.
                         Path { path in
@@ -131,7 +143,7 @@ struct VideoFramingView: View {
             }
             VStack {
                 HStack {
-                    Button("取消") { dismiss() }
+                    Button("取消") { leave() }
                         .foregroundStyle(.white)
                     Spacer()
                     Text("调整画面").font(.headline).foregroundStyle(.white)
@@ -168,7 +180,7 @@ struct VideoFramingView: View {
                         onDone(PosterBoardFraming(scale: scale,
                                                   offsetX: offsetDoc.width,
                                                   offsetY: offsetDoc.height))
-                        dismiss()
+                        leave()
                     }
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.white)
