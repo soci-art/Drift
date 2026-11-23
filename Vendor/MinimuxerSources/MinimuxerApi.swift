@@ -338,7 +338,8 @@ public extension Minimuxer {
         applications: [String: [String: Any]]? = nil,
         shouldPreserve: ((String, String) -> Bool)? = nil,
         onProgress: ((Double) -> Void)? = nil,
-        delegateLog: ((String) -> Void)? = nil
+        delegateLog: ((String) -> Void)? = nil,
+        diskSpacePolicy: MobileBackup2DiskSpacePolicy = .strict
     ) async throws -> [String: Any] {
         guard let gw = ideviceGateway else {
             throw MinimuxerError.noDevice("gateway is not IdeviceGateway")
@@ -350,7 +351,8 @@ public extension Minimuxer {
             applications: applications,
             shouldPreserve: shouldPreserve,
             onProgress: onProgress,
-            delegateLog: delegateLog
+            delegateLog: delegateLog,
+            diskSpacePolicy: diskSpacePolicy
         )
     }
 }
