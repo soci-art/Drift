@@ -279,6 +279,44 @@ enum PosterBoardLocal {
         return PosterBoardLocalOutcome(verification: verification, effect: effect)
     }
 
+    /// Forget local receipts whose descriptor is verifiably gone
+    /// from the store (Grace, 2026-11-23): a pack flashed more than
+    /// once leaves one receipt per write; deleting the wallpaper
+    /// forgets the live entry's receipt, but a superseded write's
+    /// receipt points at a directory that no longer exists — it
+    /// never shows in 本机壁纸管理 (which lists the store), yet it
+    /// lingers in Settings' merged record list with nothing able
+    /// to clear it. Only 本机直刷 receipts are pruned here: their
+    /// store is reachable through this channel's container. Tunnel
+    /// and kernel receipts are left alone — their stores cannot be
+    /// read from a settings refresh. An unreachable channel prunes
+    /// nothing: a receipt is dropped only on proof it is orphaned.
+    static func pruneOrphanedLocalReceipts(
+        log: @escaping @Sendable (String) -> Void) async {
+        let candidates = PosterBoardLocalReceipts.load()
+            .filter { $0.resolvedChannel == .local }
+        guard !candidates.isEmpty else { return }
+        do {
+            try await offMainActor {
+                let opened = try openContainer(log: log)
+                defer { WorseQueryEscape.release(opened.handle) }
+                let container = opened.path
+                let manager = FileManager.default
+                for receipt in candidates {
+                    guard receipt.path.hasPrefix(container + "/"),
+                          receipt.path.contains(PosterBoard.storeDirectoryName)
+                    else { continue }
+                    if !manager.fileExists(atPath: receipt.path) {
+                        PosterBoardLocalReceipts.forget(id: receipt.id)
+                        log("回执 \(receipt.id)（\(receipt.pack)）：目录已不在商店里，孤儿回执已清理。")
+                    }
+                }
+            }
+        } catch {
+            log("孤儿回执清理跳过：\(error.localizedDescription)")
+        }
+    }
+
     /// Delete one descriptor this channel wrote, then read the store back to
     /// confirm it is gone. Driven by the receipt list in Settings.
     static func delete(receipt: PosterBoardLocalReceipt,
