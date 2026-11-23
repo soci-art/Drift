@@ -271,7 +271,19 @@ enum HostManifests {
     /// Wipe `<backupRoot>/<udid>/` and re-seed the host-side manifests.
     static func reset(backupRoot: URL, udid: String) throws {
         let deviceDir = AppPaths.deviceDir(backupRoot: backupRoot, udid: udid)
-        try? FileManager.default.removeItem(at: deviceDir)
+        let fm = FileManager.default
+        if fm.fileExists(atPath: deviceDir.path) {
+            do {
+                try fm.removeItem(at: deviceDir)
+            } catch {
+                throw DriftRestoreError("无法清理上一次的恢复包目录，已停止准备，避免复用旧备份文件：\(error.localizedDescription)")
+            }
+        }
         try ensure(deviceDir: deviceDir, udid: udid)
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: deviceDir.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            throw DriftRestoreError("恢复包目录未能正确创建。")
+        }
     }
 }

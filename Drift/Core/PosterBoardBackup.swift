@@ -64,8 +64,20 @@ enum PosterBoardBackup {
                       onProgress: ((Double) -> Void)? = nil,
                       log: @escaping @Sendable (String) -> Void) async throws -> Result {
         let fm = FileManager.default
-        try? fm.removeItem(at: backupRoot)
+        if fm.fileExists(atPath: backupRoot.path) {
+            do {
+                try fm.removeItem(at: backupRoot)
+            } catch {
+                log("PosterBoard: refusing to reuse a dirty fetch directory; cleanup failed: \(error)")
+                throw DriftRestoreError("无法清理上一次的备份拉取目录，本次已停止，避免把旧文件混入新备份。请释放空间后重试；如果仍失败，请导出日志。")
+            }
+        }
         try fm.createDirectory(at: backupRoot, withIntermediateDirectories: true)
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: backupRoot.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            throw DriftRestoreError("备份拉取目录未能正确创建，本次已停止。")
+        }
         let deviceDir = AppPaths.deviceDir(backupRoot: backupRoot, udid: udid)
 
         // 1. The app record the device itself gave us. Forwarded, not composed:
