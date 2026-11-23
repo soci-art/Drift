@@ -34,6 +34,12 @@ public struct InstalledAppInfo: Sendable {
     }
 }
 
+/// Controls the device's initial capacity estimate and the host's real write budget.
+public enum MobileBackup2DiskSpacePolicy: Sendable {
+    case strict
+    case boundedExperiment(minimumFreeBytes: UInt64, maximumStoredBytes: UInt64)
+}
+
 /// Opaque context forwarded to every mobilebackup2 delegate callback.
 public final class MobileBackup2BackupContext: @unchecked Sendable {
     let onProgress: (@Sendable (Double) -> Void)?
@@ -55,6 +61,7 @@ public final class MobileBackup2BackupContext: @unchecked Sendable {
     /// Needed to resolve a rejected payload back to the path the device will
     /// later look for.  `nil` disables placeholder materialisation.
     let backupRoot: String?
+    let diskSpacePolicy: MobileBackup2DiskSpacePolicy
     var isCancelled = false
 
     private let handlesLock = NSLock()
@@ -125,6 +132,29 @@ public final class MobileBackup2BackupContext: @unchecked Sendable {
     private var delegateErrorKinds: [String: Int] = [:]
     private var delegateErrorSamples: [String] = []
     private var reportedDiskSpace = false
+    private let writeBudgetLock = NSLock()
+    private var storedPayloadBytes: UInt64 = 0
+
+    func authorizeWrite(bytes: UInt64, path: String) -> String? {
+        guard case let .boundedExperiment(minimumFreeBytes, maximumStoredBytes) = diskSpacePolicy else {
+            return nil
+        }
+        writeBudgetLock.lock()
+        defer { writeBudgetLock.unlock() }
+        guard let available = hostAvailableDiskSpace() else {
+            return "无法读取真实可用空间，已拒绝写入 \((path as NSString).lastPathComponent)"
+        }
+        let (nextStored, storedOverflow) = storedPayloadBytes.addingReportingOverflow(bytes)
+        guard !storedOverflow, nextStored <= maximumStoredBytes else {
+            return "达到本次实验写入上限 \(maximumStoredBytes) bytes，已停止写入 \((path as NSString).lastPathComponent)"
+        }
+        let (requiredFree, freeOverflow) = minimumFreeBytes.addingReportingOverflow(bytes)
+        guard !freeOverflow, available >= requiredFree else {
+            return "真实可用空间不足：当前 \(available) bytes，写入本块并保留安全余量至少需要 \(requiredFree) bytes；已停止写入 \((path as NSString).lastPathComponent)"
+        }
+        storedPayloadBytes = nextStored
+        return nil
+    }
 
     // ── Files the device actually took ───────────────────────────────────────
     //
@@ -195,7 +225,7 @@ public final class MobileBackup2BackupContext: @unchecked Sendable {
         reportedDiskSpace = true
         errorLock.unlock()
         guard first else { return }
-        reportEvent(String(format: "host free space reported to the device: %.2f GB",
+        reportEvent(String(format: "host capacity reported to the device: %.2f GB",
                            Double(bytes) / 1_073_741_824.0))
     }
 
@@ -203,12 +233,14 @@ public final class MobileBackup2BackupContext: @unchecked Sendable {
         onProgress: (@Sendable (Double) -> Void)? = nil,
         shouldPreserve: (@Sendable (String, String) -> Bool)? = nil,
         onEvent: (@Sendable (String) -> Void)? = nil,
-        backupRoot: String? = nil
+        backupRoot: String? = nil,
+        diskSpacePolicy: MobileBackup2DiskSpacePolicy = .strict
     ) {
         self.onProgress = onProgress
         self.shouldPreserve = shouldPreserve
         self.onEvent = onEvent
         self.backupRoot = backupRoot
+        self.diskSpacePolicy = diskSpacePolicy
     }
 
     // MARK: - Rejected-payload placeholders
@@ -684,29 +716,53 @@ private func context(_ ctx: UnsafeMutableRawPointer?) -> MobileBackup2BackupCont
 
 // MARK: - C delegate callbacks
 
+private func hostAvailableDiskSpace() -> UInt64? {
+    let url = URL(fileURLWithPath: NSHomeDirectory())
+    if let capacity = (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
+        .volumeAvailableCapacityForImportantUsage {
+        return UInt64(max(0, capacity))
+    }
+    if let value = try? FileManager.default.attributesOfFileSystem(forPath: url.path),
+       let bytes = (value[.systemFreeSize] as? NSNumber)?.int64Value {
+        return UInt64(max(0, bytes))
+    }
+    return nil
+}
+
+private func hostTotalDiskCapacity() -> UInt64? {
+    let url = URL(fileURLWithPath: NSHomeDirectory())
+    if let capacity = (try? url.resourceValues(forKeys: [.volumeTotalCapacityKey]))?
+        .volumeTotalCapacity {
+        return UInt64(max(0, capacity))
+    }
+    if let value = try? FileManager.default.attributesOfFileSystem(forPath: url.path),
+       let bytes = (value[.systemSize] as? NSNumber)?.int64Value {
+        return UInt64(max(0, bytes))
+    }
+    return nil
+}
+
 private func mb2_get_free_disk_space(
     _ path: UnsafePointer<CChar>?,
     _ ctx: UnsafeMutableRawPointer?
 ) -> UInt64 {
     guard let c = context(ctx) else { return 0 }
-    // The host-side backup root lives in the app's container, i.e. on the SAME
-    // volume as the device's own data. Report the actual available capacity.
-    // If the preferred API cannot answer, fall back to filesystem attributes;
-    // never invent 1 TiB of free space, and never turn a genuine zero into the
-    // same optimistic fallback. If both probes fail, report 0 (fail closed).
-    let url = URL(fileURLWithPath: NSHomeDirectory())
-    let capacity = (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
-        .volumeAvailableCapacityForImportantUsage
-    let fallbackAttributes = try? FileManager.default.attributesOfFileSystem(forPath: url.path)
-    let fallbackBytes = (fallbackAttributes?[.systemFreeSize] as? NSNumber)?.int64Value
+    let actualFree = hostAvailableDiskSpace()
     let bytes: UInt64
-    if let capacity {
-        bytes = UInt64(max(0, capacity))
-    } else if let fallbackBytes {
-        bytes = UInt64(max(0, fallbackBytes))
-    } else {
-        bytes = 0
-        c.reportEvent("disk-space probe failed; reporting 0 bytes to MobileBackup2 rather than inventing free capacity")
+    switch c.diskSpacePolicy {
+    case .strict:
+        bytes = actualFree ?? 0
+        if actualFree == nil {
+            c.reportEvent("disk-space probe failed; reporting 0 bytes to MobileBackup2 rather than inventing free capacity")
+        }
+    case .boundedExperiment(let minimumFreeBytes, let maximumStoredBytes):
+        if let total = hostTotalDiskCapacity() {
+            bytes = total
+            c.reportEvent("LOW-SPACE EXPERIMENT: preflight reports volume total capacity \(total) bytes; actual free space is \(actualFree.map { String($0) } ?? "unavailable"); each write must preserve \(minimumFreeBytes) bytes and total stored payload is capped at \(maximumStoredBytes) bytes")
+        } else {
+            bytes = actualFree ?? 0
+            c.reportEvent("LOW-SPACE EXPERIMENT: total-capacity probe failed; falling back to actual free space, so this run may still receive MBErrorDomain/105")
+        }
     }
     c.reportDiskSpaceOnce(bytes)
     return bytes
@@ -816,8 +872,16 @@ private func mb2_write_chunk(
         return fail(c, "write_chunk", "no open write handle: \(pathStr)")
     }
     let f = rawHandle.assumingMemoryBound(to: FILE.self)
-    let want = Int(len)
+    guard let want = Int(exactly: len) else {
+        return fail(c, "write_chunk", "payload chunk length is not representable as Int: \(len)")
+    }
+    if let refusal = c.authorizeWrite(bytes: UInt64(want), path: pathStr) {
+        return fail(c, "write_budget", refusal)
+    }
     let wrote = fwrite(data, 1, want, f)
+    if case .boundedExperiment = c.diskSpacePolicy, fflush(f) != 0 {
+        return fail(c, "write_budget", "cannot flush \(pathStr) after a bounded write (errno \(errno))")
+    }
     if wrote != want {
         // A short write used to be dropped on the floor: the payload ended up
         // truncated (or empty) while the device believed it had uploaded the

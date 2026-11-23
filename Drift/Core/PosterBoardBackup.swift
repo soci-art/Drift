@@ -25,6 +25,7 @@ import SQLite3
 /// The newest numeric store layout is selected, with its exact WAL companion,
 /// and missing snapshot files abort before restore.
 enum PosterBoardBackup {
+    static let lowSpaceExperimentEnabledKey = "Drift.lowSpaceBackupExperimentEnabled"
     struct Result {
         /// The consolidated database, cached under `Documents/PosterBoard/`.
         let database: URL
@@ -73,6 +74,17 @@ enum PosterBoardBackup {
             }
         }
         try fm.createDirectory(at: backupRoot, withIntermediateDirectories: true)
+        var keepBackupRoot = false
+        defer {
+            if !keepBackupRoot, fm.fileExists(atPath: backupRoot.path) {
+                do {
+                    try fm.removeItem(at: backupRoot)
+                    log("PosterBoard: removed incomplete backup directory after failed fetch")
+                } catch {
+                    log("PosterBoard: could not remove incomplete backup directory: \(error)")
+                }
+            }
+        }
         var isDirectory: ObjCBool = false
         guard fm.fileExists(atPath: backupRoot.path, isDirectory: &isDirectory),
               isDirectory.boolValue else {
@@ -121,6 +133,16 @@ enum PosterBoardBackup {
         //    metadata files, which must never be drained or the backup is
         //    un-restorable.
         let counter = Counter()
+        let experimentEnabled = UserDefaults.standard.bool(forKey: lowSpaceExperimentEnabledKey)
+        let diskSpacePolicy: MobileBackup2DiskSpacePolicy = experimentEnabled
+            ? .boundedExperiment(
+                minimumFreeBytes: 2 * 1_073_741_824,
+                maximumStoredBytes: 4 * 1_073_741_824
+            )
+            : .strict
+        if experimentEnabled {
+            log("PosterBoard: low-space experiment enabled — 2 GiB real free-space reserve, 4 GiB maximum stored payload")
+        }
         // The fetch is the one long call that used to run *unobserved*: the
         // protective pull and the restore each sit inside a `StallGuard`, this
         // one did not, so pressing Stop during "Fetch database from device" (or
@@ -190,7 +212,8 @@ enum PosterBoardBackup {
                 }
                 onProgress?(overall)
             },
-            delegateLog: { line in AppLog.write(line) }
+            delegateLog: { line in AppLog.write(line) },
+            diskSpacePolicy: diskSpacePolicy
             )
         }
         } catch let refusal as IdeviceGateway.BackupDeviceRefusal {
@@ -313,6 +336,7 @@ enum PosterBoardBackup {
             try PosterBoardSnapshot.retainBaseline(from: deviceDir, at: baseline)
             log("PosterBoard: original pre-apply recovery snapshot retained at " + baseline.path)
         }
+        keepBackupRoot = true
         return Result(database: consolidated,
                       structureVersion: extracted.structureVersion,
                       locatedBy: extracted.locatedBy,
