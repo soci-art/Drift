@@ -477,10 +477,27 @@ struct ManifestStore {
         var firstMissing: String?
         var firstBlobless: String?
         var firstUnreadable: String?
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            guard let cID = sqlite3_column_text(stmt, 0) else { continue }
+        while true {
+            let step = sqlite3_step(stmt)
+            if step == SQLITE_DONE { break }
+            guard step == SQLITE_ROW else {
+                return "pre-restore audit: SQLite failed while reading Manifest.db (code \(step))"
+            }
+            guard let cID = sqlite3_column_text(stmt, 0) else {
+                return "pre-restore audit: Manifest.db contains a row without fileID"
+            }
             let fileID = String(cString: cID)
+            let validFileID = fileID.utf8.count == 40
+                && fileID.utf8.allSatisfy {
+                    (48...57).contains($0) || (97...102).contains($0)
+                }
+            guard validFileID else {
+                return "pre-restore audit: invalid fileID in Manifest.db (expected 40 lowercase hex characters)"
+            }
             let flags = sqlite3_column_int(stmt, 1)
+            guard flags == 1 || flags == 2 || flags == 4 else {
+                return "pre-restore audit: unsupported file flags \(flags) for \(fileID)"
+            }
             if sqlite3_column_int(stmt, 2) != 0 {
                 bloblessRows += 1
                 if firstBlobless == nil { firstBlobless = fileID }

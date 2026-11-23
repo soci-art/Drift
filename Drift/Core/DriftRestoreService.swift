@@ -72,21 +72,36 @@ struct RestoreFingerprint {
         }
 
         var payloads: [(path: String, hash: String, bytes: Int64)] = []
-        if let walker = fm.enumerator(at: deviceDir, includingPropertiesForKeys: [.isRegularFileKey]) {
-            for case let url as URL in walker {
-                let rel = url.path.hasPrefix(deviceDir.path + "/")
-                    ? String(url.path.dropFirst(deviceDir.path.count + 1))
-                    : url.lastPathComponent
-                // The staging tree is not package content: the manifest
-                // never references it, and leftovers there are reported
-                // by the pull itself.
-                if rel == "Snapshot" || rel.hasPrefix("Snapshot/") { continue }
-                if !rel.contains("/"), metadataNames.contains(rel) { continue }
-                guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
-                else { continue }
-                let bytes = ((try? fm.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.int64Value ?? 0
-                payloads.append((rel, try sha256Hex(of: url), bytes))
+        var enumerationError: Error?
+        guard let walker = fm.enumerator(
+            at: deviceDir,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [],
+            errorHandler: { _, error in
+                enumerationError = error
+                return false
+            }) else {
+            throw DriftRestoreError("无法枚举恢复包文件，指纹校验已停止。")
+        }
+        for case let url as URL in walker {
+            let rel = url.path.hasPrefix(deviceDir.path + "/")
+                ? String(url.path.dropFirst(deviceDir.path.count + 1))
+                : url.lastPathComponent
+            // The staging tree is not package content: the manifest
+            // never references it, and leftovers there are reported
+            // by the pull itself.
+            if rel == "Snapshot" || rel.hasPrefix("Snapshot/") { continue }
+            if !rel.contains("/"), metadataNames.contains(rel) { continue }
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey])
+            guard values.isRegularFile == true else { continue }
+            let attributes = try fm.attributesOfItem(atPath: url.path)
+            guard let size = attributes[.size] as? NSNumber else {
+                throw DriftRestoreError("无法读取恢复包文件大小：\(rel)")
             }
+            payloads.append((rel, try sha256Hex(of: url), size.int64Value))
+        }
+        if let enumerationError {
+            throw DriftRestoreError("枚举恢复包时发生错误，指纹不完整，已停止：\(enumerationError.localizedDescription)")
         }
         payloads.sort { $0.path < $1.path }
         for payload in payloads {
@@ -520,8 +535,13 @@ final class DriftRestoreService {
             let source = sourceDeviceDir.appendingPathComponent(name)
             guard fm.fileExists(atPath: source.path) else { continue }
             let destination = deviceDir.appendingPathComponent(name)
-            try? fm.removeItem(at: destination)
+            if fm.fileExists(atPath: destination.path) {
+                try fm.removeItem(at: destination)
+            }
             try fm.copyItem(at: source, to: destination)
+        }
+        guard fm.fileExists(atPath: deviceDir.appendingPathComponent("Manifest.db").path) else {
+            throw DriftRestoreError("恢复包没有获得设备原始 Manifest.db，本次停止，不准备写回。")
         }
         AppLog.write("restore dry run: restore base derived from the fetch pull "
             + "(one backup session this run) — the device's Manifest.db copied "
@@ -804,9 +824,13 @@ final class DriftRestoreService {
             + "RestoreDontCopyBackup=false, RemoveItemsNotRestored=false")
 
         do {
+            // MobileBackup2 restore is not proven idempotent after a mid-stream
+            // disconnect: the device may already have applied part of this package.
+            // Replaying the same package could repeat destructive operations.
+            // Fail closed and require a fresh pull/compile/audit before another write.
             _ = try await ChannelRecovery.retry(
                 label: "restore",
-                attempts: 3,
+                attempts: 1,
                 diagnostics: { await Diagnostics.report() }
             ) {
                 try await RestoreRunner.run(backupRoot: prepared.backupRoot,
