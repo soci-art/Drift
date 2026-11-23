@@ -1,0 +1,82 @@
+diff --git a/ffi/src/mobilebackup2.rs b/ffi/src/mobilebackup2.rs
+--- a/ffi/src/mobilebackup2.rs
++++ b/ffi/src/mobilebackup2.rs
+@@ -126,4 +126,5 @@
+ struct FfiFileWriter {
+     path_c: std::ffi::CString,
+     delegate: *const Mobilebackup2BackupDelegateFFI,
++    closed: bool,
+ }
+@@ -131,30 +132,45 @@
+ impl Write for FfiFileWriter {
+     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+         let d = unsafe { &*self.delegate };
+         if is_cancelled(d) {
+             return Err(std::io::Error::other("operation cancelled"));
+         }
+ 
+         let err = (d.write_chunk)(self.path_c.as_ptr(), buf.as_ptr(), buf.len(), d.context);
+         if err.is_null() {
+             Ok(buf.len())
+         } else {
+             // Free the error and return a generic IO error
+             unsafe { crate::errors::idevice_error_free(err) };
+             Err(std::io::Error::other("write_chunk failed"))
+         }
+     }
+     fn flush(&mut self) -> std::io::Result<()> {
+-        Ok(())
++        if self.closed {
++            return Ok(());
++        }
++        let d = unsafe { &*self.delegate };
++        let err = (d.close_file)(self.path_c.as_ptr(), d.context);
++        // close_file owns the handle even when fclose reports a flush error.
++        // Never call it a second time from Drop.
++        self.closed = true;
++        if err.is_null() {
++            Ok(())
++        } else {
++            Err(std::io::Error::other(ffi_err_to_idevice(err).to_string()))
++        }
+     }
+ }
+ 
+ impl Drop for FfiFileWriter {
+     fn drop(&mut self) {
+-        let d = unsafe { &*self.delegate };
+-        let _ = (d.close_file)(self.path_c.as_ptr(), d.context);
++        if !self.closed {
++            let d = unsafe { &*self.delegate };
++            let _ = (d.close_file)(self.path_c.as_ptr(), d.context);
++            self.closed = true;
++        }
+     }
+ }
+ 
+ // Safety: the C side is responsible for thread safety.
+ unsafe impl Send for FfiFileWriter {}
+@@ -241,6 +257,7 @@
+             Ok(Box::new(FfiFileWriter {
+                 path_c: c,
+                 delegate: self as *const _,
++                closed: false,
+             }) as Box<dyn Write + Send>)
+         })
+     }
+diff --git a/idevice/src/services/mobilebackup2.rs b/idevice/src/services/mobilebackup2.rs
+--- a/idevice/src/services/mobilebackup2.rs
++++ b/idevice/src/services/mobilebackup2.rs
+@@ -1586,4 +1586,12 @@
+             }
+ 
++            // Drop cannot report errors. Explicitly flush each stored file so
++            // the FFI close_file/fclose result reaches the backup session.
++            if let Some(file) = file.as_mut() {
++                file.flush().map_err(|e| {
++                    IdeviceError::InternalError(format!("failed to flush uploaded file {fname}: {e}"))
++                })?;
++            }
++
+             file_count += 1;
+             delegate.on_file_received(&fname, file_count);
