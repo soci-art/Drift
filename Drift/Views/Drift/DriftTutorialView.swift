@@ -57,10 +57,10 @@ struct DriftTutorialView: View {
                 HStack(spacing: 6) {
                     Text(channel.title).font(.body.weight(.semibold)).foregroundStyle(.primary)
                     if channel == .restore {
-                        Text("新")
+                        Text("实验")
                             .font(.caption2.weight(.bold)).foregroundStyle(.white)
                             .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(Color.red, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            .background(Color.orange, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
                     }
                 }
                 Text(channel.subtitle).font(.caption).foregroundStyle(.secondary)
