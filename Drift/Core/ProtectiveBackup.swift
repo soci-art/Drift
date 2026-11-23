@@ -157,13 +157,12 @@ enum ProtectiveBackup {
                 //                The sample lines below are then the only record
                 //                of what the device actually called its domains.
                 let cause = trace.total == 0
-                    ? "the host keep-filter callback was never called, so the device streamed "
-                        + "nothing to judge — the filter is not the problem. The device refused "
-                        + "the session before naming a payload; host free space on the backup "
-                        + "volume: \(Self.freeSpaceDescription()). A planned upload larger than "
-                        + "that, even one this filter would have drained, is refused with "
-                        + "MBErrorDomain/105 after DLMessagePurgeDiskSpace — the device measures "
-                        + "what it would send against the volume the backup root lives on."
+                    ? "the host keep-filter callback was never called, so no payload reached the "
+                        + "host callback. This does not identify the cause by itself. Available "
+                        + "space on the backup volume: \(Self.freeSpaceDescription()) (a host-side "
+                        + "capacity snapshot, not the device's planned upload size). Check the "
+                        + "Rust log for an explicit MBErrorDomain/105 or "
+                        + "DLMessagePurgeDiskSpace refusal before treating free space as the cause."
                     : "the keep-filter rejected all \(trace.total) name(s) the device used"
                 AppLog.write("protective backup kept 0 of \(trace.total) file(s) — \(cause)")
                 AppLog.write("domains: \(trace.domainSummary())")
@@ -202,13 +201,12 @@ enum ProtectiveBackup {
         }
     }
 
-    /// Free space on the volume the backup root lives on, as one printable line.
-    ///
-    /// The device's own free-space check measures this exact number, so every
-    /// "the device offered nothing" message quotes it: with `MBErrorDomain/105`
-    /// that figure is the whole explanation, and without it the same message
-    /// sends the reader after the keep-filter. Read off the volume holding the
-    /// app's Documents directory, which is where every backup root lives.
+    /// A host-side capacity snapshot for the volume holding the app's Documents
+    /// directory, where the backup roots live. It is useful diagnostic context,
+    /// but it is not the device's planned upload size and does not prove that a
+    /// zero-payload run failed with `MBErrorDomain/105`. Confirm that code or
+    /// `DLMessagePurgeDiskSpace` in the Rust log before attributing the failure
+    /// to insufficient host space.
     static func freeSpaceDescription() -> String {
         let url = URL.documents
         if let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
