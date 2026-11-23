@@ -233,6 +233,7 @@ final class DriftRestoreService {
             : "restore preflight: encryption preference unreadable — verdict deferred to the pulled manifest")
 
         let log: @Sendable (String) -> Void = { AppLog.write($0) }
+        AppLog.write("restore preflight: \(ProtectiveBackup.preflightSpaceNotice())")
 
         // The device's own PosterBoard store first (its database is
         // what a wallpaper is compiled against), then the compile.
