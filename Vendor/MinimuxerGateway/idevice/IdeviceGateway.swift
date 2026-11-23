@@ -3824,8 +3824,7 @@ extension IdeviceGateway {
                 shouldReboot: shouldReboot,
                 systemFiles: systemFiles,
                 onProgress: onProgress,
-                delegateLog: delegateLog,
-                diskSpacePolicy: diskSpacePolicy
+                delegateLog: delegateLog
             )
         }
     }
@@ -3875,7 +3874,8 @@ extension IdeviceGateway {
                 factoryInfo: factoryInfo,
                 shouldPreserve: shouldPreserve,
                 onProgress: onProgress,
-                delegateLog: delegateLog
+                delegateLog: delegateLog,
+                diskSpacePolicy: diskSpacePolicy
             )
         }
     }
