@@ -1036,6 +1036,10 @@ struct DriftModeJudgement {
     /// judged by build number). The Home restore row and the
     /// tutorial read this for their 可用/不可用 status.
     var restoreAvailable: Bool = false
+    /// Why the restore row is unavailable, in the same words the
+    /// tunnel rows carry under their names; the home card shows it
+    /// under 恢复刷 exactly when the row reads 不可用.
+    var restoreReason: String = ""
     var isBlocked: Bool { blockedReason != nil }
 }
 
@@ -1276,7 +1280,7 @@ enum DriftJudge {
         case .airlift:
             return "自动选择：走注销直刷——隧道写入后注销生效"
         case .backup:
-            return "暂不可用"
+            return "自动选择：走恢复刷——其他方式都用不了才走这条：拉取设备备份，只换壁纸再写回，刷完重启生效"
         }
     }
 
@@ -1316,13 +1320,15 @@ enum DriftJudge {
         func judged(_ mode: PosterBoardApplyMode, _ reason: String) -> DriftModeJudgement {
             DriftModeJudgement(pick: pick, mode: mode, reason: reason,
                                options: rows, expectedEffect: expectedEffect(for: mode),
-                               restoreAvailable: p.restoreReady)
+                               restoreAvailable: p.restoreReady,
+                               restoreReason: p.restoreWhy)
         }
         func blocked(_ reason: String, notice: String) -> DriftModeJudgement {
             DriftModeJudgement(pick: pick, mode: .backup, reason: reason,
                                blockedReason: notice, options: rows,
                                expectedEffect: expectedEffect(for: .backup),
-                               restoreAvailable: p.restoreReady)
+                               restoreAvailable: p.restoreReady,
+                               restoreReason: p.restoreWhy)
         }
         /// Blocked because the selection can only travel the sealed method.
         func sealedBlocked(_ reason: String) -> DriftModeJudgement {
@@ -1379,7 +1385,8 @@ enum DriftJudge {
                 options: rows,
                 expectedEffect: "写完提示：打开应用切换器，上滑关闭 PosterBoard，系统重新拉起后生效",
                 useKernel: true,
-                restoreAvailable: p.restoreReady)
+                restoreAvailable: p.restoreReady,
+                restoreReason: p.restoreWhy)
         }
 
         if pick == .restore {
@@ -1422,11 +1429,22 @@ enum DriftJudge {
                 blockedReason: nil,
                 options: rows,
                 expectedEffect: "写完提示：打开应用切换器，上滑关闭 PosterBoard，系统重新拉起后生效",
-                useKernel: true)
+                useKernel: true,
+                restoreReason: p.restoreWhy)
         }
 
         if let channel = firstAvailable(p) {
             return judged(channel, autoReason(channel))
+        }
+        // Restore joins auto, last (Grace, 2026-11-23): it is the
+        // heaviest route — pull the backup, write back, reboot — so
+        // it wins only when nothing lighter is available, which is
+        // exactly the corner it exists for (iOS 27 segment, the
+        // local channel sealed, the tunnel trio ready). The run
+        // still passes the page's pre-start confirmation before
+        // anything is pulled, like a manual restore pick does.
+        if p.restoreReady {
+            return judged(.backup, autoReason(.backup))
         }
         // #332 (Grace, 2026-11-14): this summary used to concatenate all
         // three channels' full reasons into one paragraph — the same
