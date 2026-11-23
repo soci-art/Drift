@@ -39,6 +39,7 @@ struct DriftSettingsView: View {
     /// the update check also looks at the nightly line. The checker
     /// reads the same defaults key.
     @AppStorage(AppUpdateChecker.nightlyOptInKey) private var checkNightlyUpdates = false
+    @AppStorage(PosterBoardBackup.lowSpaceExperimentEnabledKey) private var lowSpaceExperimentEnabled = false
     @State private var cacheBreakdown: AppCache.Breakdown?
     @State private var confirmClearCache = false
     // #312 (Grace, 2026-11-13): the clear-cache outcome is a popup
@@ -58,6 +59,7 @@ struct DriftSettingsView: View {
                 nightlyUpdateSection
                 connectionSection
                 localRouteSection
+                lowSpaceExperimentSection
                 historySection
                 recordsSection
                 appSection
@@ -325,6 +327,20 @@ struct DriftSettingsView: View {
             }
             Text("iOS 26.0–26.6.1 使用 bad_query，不需要 App Group；其余支持版本使用 worse_query，需要当前进程实际带有可打开的组。组名通过 SecTask 从当前进程的签名权限中读取。")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Bounded low-space backup experiment
+
+    private var lowSpaceExperimentSection: some View {
+        Section("低空间备份实验") {
+            Toggle("启用受限容量实验", isOn: $lowSpaceExperimentEnabled)
+            Text("开启后，设备开始前的容量预检会参考备份卷总容量；实际写入仍逐块检查真实可用空间，至少保留 2 GiB，单次最多保存 4 GiB。触及任一限制会中止拉取并清理不完整备份，不会进入恢复写回。")
+                .font(.caption).foregroundStyle(.secondary)
+            if lowSpaceExperimentEnabled {
+                Text("实验模式不保证绕过所有设备限制。启用前请先完成整机备份；如果设备仍返回空间不足，程序会按失败处理，不会强行继续。")
+                    .font(.caption).foregroundStyle(.orange)
+            }
         }
     }
 

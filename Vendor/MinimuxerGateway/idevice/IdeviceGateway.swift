@@ -3418,7 +3418,8 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
         factoryInfo: plist_t?,
         shouldPreserve: (@Sendable (String, String) -> Bool)? = nil,
         onProgress: (@Sendable (Double) -> Void)? = nil,
-        delegateLog: (@Sendable (String) -> Void)? = nil
+        delegateLog: (@Sendable (String) -> Void)? = nil,
+        diskSpacePolicy: MobileBackup2DiskSpacePolicy = .strict
     ) throws -> [String: Any] {
         debugLog("[IdeviceGateway] syncBackupBackup() called, backupRoot: \(backupRoot)")
         return try performWithService(
@@ -3430,7 +3431,8 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
                 onProgress: onProgress,
                 shouldPreserve: shouldPreserve,
                 onEvent: delegateLog,
-                backupRoot: backupRoot
+                backupRoot: backupRoot,
+                diskSpacePolicy: diskSpacePolicy
             )
             var delegate = makeRestoreDelegate(context: ctx)
             defer { withExtendedLifetime(ctx) {} }
@@ -3822,7 +3824,8 @@ extension IdeviceGateway {
                 shouldReboot: shouldReboot,
                 systemFiles: systemFiles,
                 onProgress: onProgress,
-                delegateLog: delegateLog
+                delegateLog: delegateLog,
+                diskSpacePolicy: diskSpacePolicy
             )
         }
     }
@@ -3851,7 +3854,8 @@ extension IdeviceGateway {
         applications: [String: [String: Any]]? = nil,
         shouldPreserve: (@Sendable (String, String) -> Bool)? = nil,
         onProgress: (@Sendable (Double) -> Void)? = nil,
-        delegateLog: (@Sendable (String) -> Void)? = nil
+        delegateLog: (@Sendable (String) -> Void)? = nil,
+        diskSpacePolicy: MobileBackup2DiskSpacePolicy = .strict
     ) async throws -> [String: Any] {
         try await withFFIDispatch {
             var factoryInfo: plist_t? = nil
