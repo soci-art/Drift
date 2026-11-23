@@ -474,6 +474,17 @@ struct DriftHomeView: View {
                             .font(.caption2).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    // The restore pick has no option row, so the
+                    // block above never fires for it; its why rides
+                    // on the judgement itself and shows in the same
+                    // place, in the same words (Grace, 2026-11-23:
+                    // 恢复刷下面也要有这一行).
+                    if pick == .restore, !judged.restoreAvailable,
+                       !judged.restoreReason.isEmpty {
+                        Text(judged.restoreReason)
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     if let kernelEval, !kernelEval.ready {
                         Text(kernelEval.reason)
                             .font(.caption2).foregroundStyle(.secondary)
