@@ -18,9 +18,21 @@ struct DriftVideoView: View {
     @State private var importingVideo = false
     @State private var importingPhotos = false
     @State private var pickingFrame = false
+    @State private var adjustingFrame = false
+    @State private var previewingLock = false
     @State private var statusLine: String?
     @State private var videoPreview: UIImage?
-    @State private var decodeNote: String?
+    /// The note under the decode button, derived rather than
+    /// stored: it shows exactly while the library really holds an
+    /// item decoded from the currently picked video, so deleting
+    /// the item (or clearing the video) takes the claim with it.
+    private var decodeNote: String? {
+        guard selection.video != nil, let name = selection.videoDisplayName
+        else { return nil }
+        return library.items.contains { $0.name == name }
+            ? "解码完成，已存到「已解码的视频」，刷的时候选它就行。"
+            : nil
+    }
     @State private var showPicker = false
     @ObservedObject private var library = DecodedVideoLibrary.shared
 
@@ -51,6 +63,8 @@ struct DriftVideoView: View {
                     VStack(spacing: 14) {
                         introCard
                         filesCard
+                        framingCard
+                        decodeCard
                         optionsCard
                         applyCard
                         // Collection #289 (Grace, 2026-11-13): no log
@@ -73,6 +87,7 @@ struct DriftVideoView: View {
                         // A freeze frame belongs to its video: a new
                         // video invalidates the old pick.
                         selection.thumbnail = nil
+                        selection.framing = nil
                     }
                 } onCancel: {
                     importingVideo = false
@@ -83,6 +98,18 @@ struct DriftVideoView: View {
                     importFromPhotos(result)
                 } onCancel: {
                     importingPhotos = false
+                }
+            }
+            .fullScreenCover(isPresented: $previewingLock) {
+                if let video = selection.video {
+                    VideoLockPreviewView(videoURL: video, framing: selection.framing)
+                }
+            }
+            .fullScreenCover(isPresented: $adjustingFrame) {
+                if let video = selection.video {
+                    VideoFramingView(videoURL: video, initial: selection.framing) { framing in
+                        selection.framing = framing
+                    }
                 }
             }
             .sheet(isPresented: $pickingFrame) {
@@ -132,8 +159,22 @@ struct DriftVideoView: View {
     }
 
     private var filesCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("素材").font(.subheadline.weight(.semibold))
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Text("素材").font(.subheadline.weight(.semibold))
+                Spacer()
+                if selection.video != nil {
+                    Button(role: .destructive) {
+                        PosterBoard.clearFiles(in: PosterBoard.videoDirectory)
+                        PosterBoard.clearFiles(in: PosterBoard.thumbnailDirectory)
+                        selection.video = nil
+                        selection.thumbnail = nil
+                        selection.framing = nil
+                        videoPreview = nil
+                    } label: { Image(systemName: "trash") }
+                    .driftGlassButton()
+                }
+            }
             HStack(spacing: 12) {
                 Group {
                     if let videoPreview {
@@ -149,6 +190,7 @@ struct DriftVideoView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(selection.video?.lastPathComponent ?? "还没选视频")
                         .font(.subheadline.weight(.medium)).lineLimit(1)
+                        .truncationMode(.middle)
                     Text(selection.thumbnail != nil ? "定格帧：已从视频选取"
                          : (selection.loop ? "定格帧：循环模式不需要" : "定格帧：未选（非循环模式必须）"))
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -156,51 +198,71 @@ struct DriftVideoView: View {
                 Spacer()
             }
             HStack(spacing: 10) {
-                Button { importingVideo = true } label: { Label("从文件选取", systemImage: "folder") }
-                    .driftGlassButton()
-                Button { importingPhotos = true } label: { Label("从照片选取", systemImage: "photo.on.rectangle") }
-                    .driftGlassButton()
-                if selection.video != nil {
-                    Button(role: .destructive) {
-                        PosterBoard.clearFiles(in: PosterBoard.videoDirectory)
-                        PosterBoard.clearFiles(in: PosterBoard.thumbnailDirectory)
-                        selection.video = nil
-                        selection.thumbnail = nil
-                        videoPreview = nil
-                    } label: { Image(systemName: "trash") }
-                    .driftGlassButton()
+                Button { importingVideo = true } label: {
+                    Label("从文件选取", systemImage: "folder")
+                        .frame(maxWidth: .infinity)
                 }
+                .driftGlassButton()
+                Button { importingPhotos = true } label: {
+                    Label("从照片选取", systemImage: "photo.on.rectangle")
+                        .frame(maxWidth: .infinity)
+                }
+                .driftGlassButton()
             }
-            HStack(spacing: 10) {
-                Button { pickingFrame = true } label: { Label("选定格帧", systemImage: "photo") }
-                    .driftGlassButton()
-                    .disabled(selection.video == nil)
+            // Grace (2026-11-23): the frame pick aligns with the
+            // rows around it — a full-width pill like the decode
+            // button's row, not a hugging pill whose label starts
+            // one padding further in than everything else.
+            VStack(alignment: .leading, spacing: 6) {
+                Button { pickingFrame = true } label: {
+                    Label("选定格帧", systemImage: "photo")
+                        .frame(maxWidth: .infinity)
+                }
+                .driftGlassButton()
+                .disabled(selection.video == nil)
                 Text("定格帧在视频里选，不用另外准备图片。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Divider()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .driftCard()
+        .task(id: selection.video) { await loadPreview() }
+    }
+
+
+    /// The decode step as its own card, below the framing card
+    /// (Grace, 2026-11-23): the flow down the page is the order
+    /// the work happens — pick, frame, then decode, and the
+    /// decode carries the framing settled above it.
+    private var decodeCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("解码").font(.subheadline.weight(.semibold))
             // The decode section (Grace, 2026-11-22): decoding moves
             // off the flash run entirely — a heavy video's decode is
             // what used to kill a run minutes in. The product is
             // kept in the library below and flashed from the picker.
-            HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
                 Button {
                     startDecode()
                 } label: {
-                    if library.isDecoding {
-                        Label("解码中…", systemImage: "hourglass")
-                    } else {
-                        Label("开始解码", systemImage: "play.circle")
+                    Group {
+                        if library.isDecoding {
+                            Label("解码中…", systemImage: "hourglass")
+                        } else {
+                            Label("开始解码", systemImage: "play.circle")
+                        }
                     }
+                    .frame(maxWidth: .infinity)
                 }
-                .driftGlassButton()
+                .driftGlassProminentButton()
                 .disabled(!canDecode)
                 Text("按下面的播放选项解码，改了选项要重新解码。")
                     .font(.caption).foregroundStyle(.secondary)
+                if let decodeNote {
+                    Text(decodeNote).font(.caption).foregroundStyle(.secondary)
+                }
             }
-            if let decodeNote {
-                Text(decodeNote).font(.caption).foregroundStyle(.secondary)
-            }
+            Divider()
             NavigationLink {
                 DecodedVideoListView()
             } label: {
@@ -220,21 +282,53 @@ struct DriftVideoView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
-        .task(id: selection.video) { await loadPreview() }
     }
 
     /// Decode the current pick into the library. Errors land in the
     /// shared error slot, like a failed flash's do.
     private func startDecode() {
-        decodeNote = nil
         Task {
             do {
                 try await library.decode(selection: selection, preview: videoPreview)
-                decodeNote = "解码完成，已存到「已解码的视频」，刷的时候选它就行。"
             } catch {
                 session.errorText = error.localizedDescription
             }
         }
+    }
+
+    /// The framing step (Grace, 2026-11-23): after the pick,
+    /// before the decode — the decode is where the box's geometry
+    /// is written into the product, so the adjustment has to be
+    /// settled by then. The box only bites on the looping shape;
+    /// the live-photo shape is laid out by the system.
+    private var framingCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("调整画面").font(.subheadline.weight(.semibold))
+            Text(selection.framing?.isDefault == false
+                 ? "已调整：按你定的样子生成、刷入"
+                 : "还没调整：现在是居中裁剪")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("按本机屏幕出框，框里就是刷上锁屏的样子：拖动移位置、双指缩放定裁剪，框外压暗的部分会被裁掉。循环模式用得上这个框；非循环（实况照片式）的画面由系统自己铺满。")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Button { adjustingFrame = true } label: {
+                    Label("调整", systemImage: "crop")
+                        .frame(maxWidth: .infinity)
+                }
+                .driftGlassButton()
+                .disabled(selection.video == nil)
+                Button { previewingLock = true } label: {
+                    Label("预览锁屏效果", systemImage: "lock.display")
+                        .frame(maxWidth: .infinity)
+                }
+                .driftGlassButton()
+                .disabled(selection.video == nil)
+            }
+            Text("预览只看锁屏：按本机屏幕大小，带着你定的框。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .driftCard()
     }
 
     private var optionsCard: some View {
@@ -367,6 +461,7 @@ struct DriftVideoView: View {
                 importPicked([staging], into: PosterBoard.videoDirectory) { url in
                     selection.video = url
                     selection.thumbnail = nil
+                    selection.framing = nil
                 }
             }
         }

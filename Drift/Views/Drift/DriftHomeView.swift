@@ -425,12 +425,35 @@ struct DriftHomeView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(pick.label).font(.subheadline.weight(.medium))
+                        // Restore carries an 实验 tag (Grace,
+                        // 2026-11-23): it works, but it is the young
+                        // route — the tag says so at a glance, in the
+                        // same small-pill shape the other tags use.
+                        if pick == .restore {
+                            Text("实验")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.15),
+                                            in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                                .foregroundStyle(.orange)
+                        }
                     }
                     Text(pick.subtitle)
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if pick != .auto, let option, !option.available {
                         Text(option.reason)
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    // The restore pick has no option row, so the
+                    // block above never fires for it; its why rides
+                    // on the judgement itself and shows in the same
+                    // place, in the same words (Grace, 2026-11-23:
+                    // 恢复刷下面也要有这一行).
+                    if pick == .restore, !judged.restoreAvailable,
+                       !judged.restoreReason.isEmpty {
+                        Text(judged.restoreReason)
                             .font(.caption2).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }

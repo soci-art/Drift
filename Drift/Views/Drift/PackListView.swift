@@ -64,6 +64,7 @@ struct PackListView: View {
     @EnvironmentObject private var identityMonitor: DeviceIdentityMonitor
 
     @State private var importingTendies = false
+    @StateObject private var importProgress = PackImportProgress()
     @State private var legacyPrompt: LegacyConvertPrompt?
     @State private var confirmDelete = false
     @State private var repairSummary: RepairSummary?
@@ -167,6 +168,19 @@ struct PackListView: View {
                 repairingCover
             }
         }
+        // Grace (2026-11-23): the progress card belongs in the
+        // middle of the screen, over a dim — at the bottom it was
+        // too easy to miss while a big import ran.
+        .overlay {
+            if importProgress.active {
+                ZStack {
+                    Color.black.opacity(0.25).ignoresSafeArea()
+                    importProgressCard
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: importProgress.active)
         .task(id: selectionKey) {
             await refreshLegacyInfo()
             await refreshDepthNote()
@@ -600,13 +614,58 @@ struct PackListView: View {
         }
     }
 
+    /// The import progress card (Grace, 2026-11-23): while packs
+    /// are coming in, say so — which one of how many, its name,
+    /// and a bar driven by real copied bytes, not a spinner.
+    private var importProgressCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("正在导入")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("第 \(importProgress.index) 个／共 \(importProgress.total) 个")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ProgressView(value: importProgress.fraction)
+            Text(importProgress.name)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .padding(14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
+        .padding(.horizontal, 32)
+    }
+
     private func handleTendiesPick(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        // Overall progress is weighted by the picked files' real
+        // sizes (equal shares when a size can't be read), so the
+        // bar means the whole pick, not just the current file.
+        let sizes = urls.map {
+            ((try? FileManager.default.attributesOfItem(atPath: $0.path))?[.size]
+                as? NSNumber)?.int64Value ?? 0
+        }
+        let totalBytes = sizes.reduce(Int64(0), +)
+        let totalWeight = totalBytes > 0 ? Double(totalBytes) : Double(urls.count)
+        importProgress.begin(total: urls.count, name: urls[0].lastPathComponent)
         Task {
             var problemPacks: [String] = []
-            for url in urls {
+            var doneWeight = 0.0
+            for (offset, url) in urls.enumerated() {
+                let weight = totalBytes > 0 ? Double(sizes[offset]) : 1
+                let base = doneWeight
+                importProgress.update(index: offset + 1, name: url.lastPathComponent,
+                                      fraction: base / totalWeight)
                 do {
                     let packs = try await Task.detached {
-                        try PosterBoardImports.importPicked(from: url)
+                        try PosterBoardImports.importPicked(from: url) { local in
+                            Task { @MainActor in
+                                importProgress.fraction = (base + weight * local) / totalWeight
+                            }
+                        }
                     }.value
                     for pack in packs {
                         Task.detached { _ = PosterBoardPreview.previews(for: pack) }
@@ -622,14 +681,48 @@ struct PackListView: View {
                 } catch {
                     session.errorText = error.localizedDescription
                 }
+                doneWeight += weight
+                importProgress.fraction = doneWeight / totalWeight
             }
             imports = PosterBoardImports.load()
+            importProgress.finish()
             if !problemPacks.isEmpty {
                 session.noticeTitle = "有壁纸包需要修一下"
                 session.noticeText = problemPacks.map { "「\($0)」" }.joined(separator: "、")
                     + "的结构有点问题，导入时自动修了一次没修好，现在刷可能会找不到壁纸。"
             }
         }
+    }
+}
+
+/// The import progress the pack page shows while a pick is
+/// landing (Grace, 2026-11-23). Written from the import's own
+/// byte reports on the main actor; read by the card above.
+@MainActor
+private final class PackImportProgress: ObservableObject {
+    @Published var active = false
+    @Published var index = 0
+    @Published var total = 0
+    @Published var name = ""
+    @Published var fraction = 0.0
+
+    func begin(total: Int, name: String) {
+        self.total = total
+        self.name = name
+        index = 1
+        fraction = 0
+        active = true
+    }
+
+    func update(index: Int, name: String, fraction: Double) {
+        self.index = index
+        self.name = name
+        self.fraction = fraction
+    }
+
+    func finish() {
+        fraction = 1
+        active = false
     }
 }
 
