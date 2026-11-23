@@ -152,8 +152,9 @@ struct RestoreDryRunReport {
     }
 }
 
-/// The restore line's orchestration (Alpha research line only — the
-/// engine reaches this type solely behind `DriftRestoreGate`).
+/// The formal restore line's orchestration. The engine reaches this type
+/// solely behind `DriftRestoreGate`, and each run still has to pass its
+/// device, backup, payload and package-integrity preflight checks.
 ///
 /// Two phases, separately invoked, per the build plan:
 ///

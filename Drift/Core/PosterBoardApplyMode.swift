@@ -19,7 +19,9 @@ import Foundation
 ///    automatic fall-through to the other tunnel channel.
 ///  - `.airlift` — 注销直刷. The upstream AirCard write: descriptors injected
 ///    one by one over the pairing tunnel, then a normal respring.
-///  - `.backup` — 恢复刷. Sealed; no executable code.
+///  - `.backup` — 恢复刷. Pulls the device's real backup, prepares and audits a
+///    PosterBoard-only delta, then writes it back only after the checks pass.
+///    This release supports the iOS 27 segment and does not support store reset.
 ///
 /// The user picks a *method* (auto or one of the three channels). Auto runs
 /// the channels in 本机直刷 → 免注销直刷 → 注销直刷 order; a manual pick is
@@ -59,7 +61,7 @@ enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
     var summary: String {
         switch self {
         case .backup:
-            return "暂不可用。"
+            return "从设备拉取真实备份，只处理本次选中的 PosterBoard 壁纸增量；拉取对账、恢复包检查和指纹校验通过后才写回。仅支持通过前置检查的 iOS 27 设备，需要配对、隧道和 LocalDevVPN；暂不支持重置壁纸商店。"
         case .direct:
             return "通过配对隧道直写 PosterBoard 的容器，再只重启 PosterBoard 守护进程——不注销、不重启。支持 iOS 18.0–27.1 正式版及 27.2 beta 1 / 2；需要配对、隧道、LocalDevVPN，且设备保持解锁。刷新未确认时只提示，可手动注销。"
         case .airlift:
@@ -70,5 +72,5 @@ enum PosterBoardApplyMode: String, CaseIterable, Identifiable, Hashable {
     }
 
     /// Whether a reset can be honoured in this mode.
-    var supportsReset: Bool { self == .backup }
+    var supportsReset: Bool { false }
 }
