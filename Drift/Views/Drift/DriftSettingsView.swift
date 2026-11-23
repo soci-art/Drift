@@ -105,6 +105,16 @@ struct DriftSettingsView: View {
                 receipts = PosterBoardLocalReceipts.load()
                 refreshMergedRows()
                 refreshNotificationStatus()
+                // Orphan receipts (a superseded write whose store
+                // directory is gone) can only be cleared here:
+                // prune on proof, then show the merged list anew.
+                Task {
+                    await PosterBoardLocal.pruneOrphanedLocalReceipts {
+                        DriftEngine.shared.log($0)
+                    }
+                    receipts = PosterBoardLocalReceipts.load()
+                    refreshMergedRows()
+                }
             }
             .onChange(of: wirelessPair.pin) { _, _ in
                 refreshNotificationStatus()
