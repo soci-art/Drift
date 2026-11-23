@@ -201,23 +201,44 @@ enum ProtectiveBackup {
         }
     }
 
-    /// A host-side capacity snapshot for the volume holding the app's Documents
-    /// directory, where the backup roots live. It is useful diagnostic context,
-    /// but it is not the device's planned upload size and does not prove that a
-    /// zero-payload run failed with `MBErrorDomain/105`. Confirm that code or
-    /// `DLMessagePurgeDiskSpace` in the Rust log before attributing the failure
-    /// to insufficient host space.
-    static func freeSpaceDescription() -> String {
+    /// Heuristic warning line only; it is not an estimate of the device's
+    /// planned backup size and never blocks a run by itself.
+    static let lowSpaceWarningThresholdBytes: Int64 = 20 * 1024 * 1024 * 1024
+
+    /// Current available capacity on the volume that contains the backup root.
+    /// Prefer the same capacity API used by the MobileBackup2 delegate, then
+    /// fall back to the filesystem attributes API.
+    static func availableSpaceBytes() -> Int64? {
         let url = URL.documents
         if let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
            let bytes = values.volumeAvailableCapacityForImportantUsage {
-            return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+            return max(0, bytes)
         }
         if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: url.path),
            let bytes = attrs[.systemFreeSize] as? NSNumber {
-            return ByteCountFormatter.string(fromByteCount: bytes.int64Value, countStyle: .file)
+            return max(0, bytes.int64Value)
         }
-        return "unreadable"
+        return nil
+    }
+
+    static func freeSpaceDescription() -> String {
+        guard let bytes = availableSpaceBytes() else { return "无法读取" }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    /// Human-readable preflight notice. The device's planned upload is computed
+    /// during the MobileBackup2 session, so the host cannot provide an exact GB
+    /// requirement before starting. The 20 GiB line is a non-blocking heuristic.
+    static func preflightSpaceNotice() -> String {
+        guard let bytes = availableSpaceBytes() else {
+            return "空间预检：无法读取备份卷可用空间。主机无法提前获知设备规划的整场备份量；如果设备无法确认目的地空间，会拒绝开始备份。"
+        }
+        let free = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        let unknownPlan = "设备会按整场备份规划量检查空间，另需约 128 MiB 缓冲；该规划量开工前无法准确读取，当前余量不代表一定够用。"
+        if bytes <= lowSpaceWarningThresholdBytes {
+            return "空间风险预警：当前备份卷可用空间为 \(free)，低于 20 GiB 经验提醒线。该提醒线不是实际所需空间估算。\(unknownPlan)"
+        }
+        return "空间预检：当前备份卷可用空间为 \(free)。\(unknownPlan)"
     }
 
     /// Count what is left in the device's staging tree after the commit step.
