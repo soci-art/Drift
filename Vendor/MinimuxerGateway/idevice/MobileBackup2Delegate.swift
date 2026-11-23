@@ -690,14 +690,24 @@ private func mb2_get_free_disk_space(
 ) -> UInt64 {
     guard let c = context(ctx) else { return 0 }
     // The host-side backup root lives in the app's container, i.e. on the SAME
-    // volume as the device's own data — so the true answer is this volume's free
-    // space.  A hard-coded 1 TiB ("plenty of room") told the device there was
-    // room that may not exist; when the volume filled, the writes below failed
-    // and the payload silently went missing while the device kept streaming.
+    // volume as the device's own data. Report the actual available capacity.
+    // If the preferred API cannot answer, fall back to filesystem attributes;
+    // never invent 1 TiB of free space, and never turn a genuine zero into the
+    // same optimistic fallback. If both probes fail, report 0 (fail closed).
     let url = URL(fileURLWithPath: NSHomeDirectory())
     let capacity = (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
         .volumeAvailableCapacityForImportantUsage
-    let bytes = capacity.flatMap { $0 > 0 ? UInt64($0) : nil } ?? (UInt64(1) << 40)
+    let fallbackAttributes = try? FileManager.default.attributesOfFileSystem(forPath: url.path)
+    let fallbackBytes = (fallbackAttributes?[.systemFreeSize] as? NSNumber)?.int64Value
+    let bytes: UInt64
+    if let capacity {
+        bytes = UInt64(max(0, capacity))
+    } else if let fallbackBytes {
+        bytes = UInt64(max(0, fallbackBytes))
+    } else {
+        bytes = 0
+        c.reportEvent("disk-space probe failed; reporting 0 bytes to MobileBackup2 rather than inventing free capacity")
+    }
     c.reportDiskSpaceOnce(bytes)
     return bytes
 }

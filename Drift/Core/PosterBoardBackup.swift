@@ -181,6 +181,18 @@ enum PosterBoardBackup {
             delegateLog: { line in AppLog.write(line) }
             )
         }
+        } catch let refusal as IdeviceGateway.BackupDeviceRefusal {
+            let free = ProtectiveBackup.freeSpaceDescription()
+            log("PosterBoard: device refused before payload transfer — "
+                + "\(refusal.refusalText); host volume free space: \(free)")
+            if refusal.code == 105 {
+                throw DriftRestoreError(
+                    "设备明确返回 MBErrorDomain/105：备份空间不足。当前 Drift 备份卷可用空间：\(free)。"
+                    + "设备按整场备份规划量加约 128 MiB 缓冲检查空间；规划量在开工前无法准确读取，"
+                    + "因此不能给出可靠的所需 GB 数。请先释放 iPhone 本机存储空间后重试。"
+                    + "本次在备份拉取阶段已停止，未进入恢复写回。")
+            }
+            throw DriftRestoreError("设备拒绝开始备份（\(refusal.refusalText)）。本次未进入恢复写回。")
         } catch let refusal as IdeviceGateway.BackupCloseRefusal {
             deviceRefusal = refusal.refusalText
             log("PosterBoard: the device refused to register this pull at close "

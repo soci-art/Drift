@@ -3508,6 +3508,12 @@ public final class IdeviceGateway: BaseDeviceGateway, DeviceGatewayAPI {
                 // branch at all (it throws above), so a disconnect or
                 // timeout can never be reclassified.
                 let code = (dict["ErrorCode"] as? NSNumber)?.intValue ?? 0
+                // 105 is a pre-transfer capacity refusal. It must not be
+                // confused with the clean-close 205 path, where a complete
+                // payload tree can still be audited on the host.
+                if code == 105 {
+                    throw BackupDeviceRefusal(code: code, refusalText: refusal)
+                }
                 let accounting = ctx.closeAccounting()
                 if code == 205,
                    accounting.skipped == 0, accounting.failed == 0,
@@ -3555,6 +3561,19 @@ public struct BackupCloseRefusal: Error, LocalizedError {
     }
 }
 
+/// A device refusal that means the backup could not begin because the
+/// destination volume did not have enough free space for the planned upload.
+/// Unlike `BackupCloseRefusal`, this is never eligible for host-side
+/// reconciliation: no complete payload set exists to audit or restore.
+public struct BackupDeviceRefusal: Error, LocalizedError {
+    public let code: Int
+    public let refusalText: String
+
+    public var errorDescription: String? {
+        "The device refused to start the backup: \(refusalText)"
+    }
+}
+
     /// The device's own reason for refusing a `Backup`, or `nil` when it accepted.
     ///
     /// `ErrorCode` is absent or 0 on success, which is also how
@@ -3575,12 +3594,11 @@ public struct BackupCloseRefusal: Error, LocalizedError {
             ?? (response["Error"] as? String)
             ?? "the device gave no description"
         if code == 105 {
-            return "MBErrorDomain/105 — not enough free space for the backup it planned. "
-                + "The backup root \(backupRoot) is on the same volume as the device's own data, "
-                + "and the device needs its whole planned upload plus 128 MiB free before it will "
-                + "start (it asks the host to purge, then refuses when nothing was reclaimed). "
-                + "Free space in this app's container — the Rust log sink, an abandoned AFC media "
-                + "pull, or an old backup root — and try again. Device text: \(description)"
+            return "MBErrorDomain/105 — insufficient free space for the device's planned backup. "
+                + "The host reported free capacity for the volume containing \(backupRoot); "
+                + "the device requires the planned upload plus 128 MiB before transfer can begin. "
+                + "Clear storage on the iPhone's data volume and retry. The exact planned upload "
+                + "size is not available to the host before the backup session. Device text: \(description)"
         }
         return "MBErrorDomain/\(code) — \(description)"
     }
