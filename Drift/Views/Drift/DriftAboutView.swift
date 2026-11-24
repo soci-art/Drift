@@ -53,22 +53,11 @@ struct DriftAboutView: View {
                 tableRow(row)
                 if row.version != Self.tableRows.last?.version { Divider() }
             }
-            Text("✓ = 能用，— = 用不了。iOS 26.0 – 26.6.1 有证书、没证书都能用：带着能用的组就走用组的那条路，没有组就走不用组的那条路。其余系统要证书签名带能用的组，没有能用的组就用不了。")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("带「起」的行管到下一行开头之前；再往后的新系统，App 主页每条刷入方式都会当场显示能不能用。")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("iOS 26.7.3 起，壁纸写得进去，但系统不收录、刷了不生效（已实测），所以这一行都标用不了；其他同类工具目前也只支持到 iOS 26.7.2。")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("iOS 18.7.2 起，内核直刷用不了，只能走两条隧道通道。")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("内核直刷只支持 iOS 17.0–17.7.x 和 iOS 18.0–18.7.1，机型也要在支持表里；没有开关，选了就能用。")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("恢复刷只认 iOS 27，不要求证书、免费 ID 签名也能用；刷之前要先整机备份、关掉「查找」，详细步骤看「使用教程 → 恢复刷」。iOS 27.3 beta 2 起别的通道都用不了，只能走恢复刷。")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("刷完怎么生效：免注销直刷直接生效；注销直刷要注销一次；本机直刷、内核直刷要把壁纸界面从后台划掉；恢复刷要重启一次，走完设置流程后生效。")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("视频壁纸可以走任意一条通道：在主页选哪种刷入方式，就走哪种；走恢复刷时，先在视频页解码，再选已解码的视频刷入。")
-                .font(.caption).foregroundStyle(.secondary)
+            // No text under the table (Grace, 2026-11-24): the
+            // footnotes that used to sit here — the ✓/— legend, the
+            // kernel and restore notes, the effect and video notes —
+            // are all removed by her word; the card ends at the
+            // table's last row.
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
