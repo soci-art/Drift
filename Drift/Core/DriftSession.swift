@@ -1188,6 +1188,23 @@ enum DriftJudge {
             // the session layer, beside #314's 17-band closure, rather
             // than inside either channel.
             tunnelMissing = "设备系统是 iOS 26.0–26.1 正式版，隧道通道在这两版不开，请用本机直刷。"
+        } else if let lo = PosterBoard.compareVersion(identity.version, "26.7.3"), lo >= 0,
+                  let hi = PosterBoard.compareVersion(identity.version, "27.0"), hi < 0 {
+            // 26.7.3+ tunnel closure (Grace, 2026-11-24): on iOS
+            // 26.7.3 the tunnels still write the descriptor into
+            // the PosterBoard store and the write verifies on disk,
+            // but the system never enrolls it — field-verified on
+            // an iPhone 17 Pro (iOS 26.7.3 正式版, build 23H131):
+            // 18 attempts across 4 packs, both tunnel channels,
+            // after a full reboot and after full resprings, and
+            // the store census never moved (Collections stayed at
+            // 4, every post-write check 在册 0/1). No comparable
+            // tool claims past 26.7.2 either. The channels' own
+            // gates pass this band, so — like the 26.0–26.1
+            // closure above — the closure lives here at the
+            // session layer: past 26.7.2 the whole 26 band is
+            // closed to the tunnels until a route is proven.
+            tunnelMissing = "设备系统是 iOS 26.7.3 起，系统不收录隧道写进去的壁纸、刷了也不生效，隧道通道用不了。"
         } else if identity.buildVersion.isEmpty,
                   PosterBoard.compareVersion(identity.version, "27.2") == 0 {
             // #294 (Grace, 2026-11-13): the build number only decides

@@ -57,6 +57,8 @@ struct DriftAboutView: View {
                 .font(.caption).foregroundStyle(.secondary)
             Text("带「起」的行管到下一行开头之前；再往后的新系统，App 主页每条刷入方式都会当场显示能不能用。")
                 .font(.caption).foregroundStyle(.secondary)
+            Text("iOS 26.7.3 起，壁纸写得进去，但系统不收录、刷了不生效（已实测），所以这一行都标用不了；其他同类工具目前也只支持到 iOS 26.7.2。")
+                .font(.caption).foregroundStyle(.secondary)
             Text("iOS 18.7.2 起，内核直刷用不了，只能走两条隧道通道。")
                 .font(.caption).foregroundStyle(.secondary)
             Text("内核直刷只支持 iOS 17.0–17.7.x 和 iOS 18.0–18.7.1，机型也要在支持表里；没有开关，选了就能用。")
@@ -109,16 +111,19 @@ struct DriftAboutView: View {
         // Table rigor pass (Grace, 2026-11-24): the rows must match
         // the gates exactly, with no overlap and no gap — the tunnel
         // closure in DriftSession covers only 26.0 – 26.1, so 26.2 –
-        // 26.6.1 gets its tunnel ticks back on its own row; 26.7.3+
-        // keeps the tunnels but loses local (worse_query ends at
-        // 26.7.2), so it gets its own 「起」 row instead of falling
-        // off the table; and the 27.0 row stops at 27.1 so it no
-        // longer contradicts the dedicated 27.2.0 / 27.2.1 rows
-        // below it (the 27.2 正式版 builds are local-only).
+        // 26.6.1 gets its tunnel ticks back on its own row; and the
+        // 27.0 row stops at 27.1 so it no longer contradicts the
+        // dedicated 27.2.0 / 27.2.1 rows below it (the 27.2 正式版
+        // builds are local-only). The 26.7.3 起 row is all dashes:
+        // local ends at 26.7.2 (worse_query's own range), and the
+        // tunnels — whose gates would pass — are closed at the
+        // session layer because on 26.7.3 the write lands but the
+        // system never enrolls the wallpaper (field-verified
+        // 2026-11-24; see DriftSession's 26.7.3 closure).
         TableRow(version: "iOS 26.0 – 26.1 正式版", noRespring: false, respring: false, local: true, localNoCert: true),
         TableRow(version: "iOS 26.2 – 26.6.1 正式版", noRespring: true, respring: true, local: true, localNoCert: true),
         TableRow(version: "iOS 26.7 – 26.7.2 正式版", noRespring: true, respring: true, local: true),
-        TableRow(version: "iOS 26.7.3 起", noRespring: true, respring: true, local: false),
+        TableRow(version: "iOS 26.7.3 起", noRespring: false, respring: false, local: false),
         TableRow(version: "iOS 27.0 – 27.1 正式版", noRespring: true, respring: true, local: true, restore: true),
         TableRow(version: "iOS 27.2 beta 1 / beta 2", noRespring: true, respring: true, local: true, restore: true),
         TableRow(version: "iOS 27.2 beta 3 起", noRespring: false, respring: false, local: true, restore: true),
