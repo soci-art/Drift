@@ -616,11 +616,11 @@ struct DriftHomeView: View {
                 .driftGlassButton()
             }
             if manualPick == .kernel || judgement.useKernel {
-                NativeNote("内核直刷会把已选壁纸描述文件写入 PosterBoard 容器并逐项核验；写入后会打开 PosterBoard，可上滑结束它，也可使用下方「注销」方式生效。")
+                NativeNote("内核直刷写完会打开 PosterBoard，上滑关掉它就能生效，也可以用下面的「注销」。")
             } else if judgement.mode == .worseQuery {
-                NativeNote("本机直刷在本机写入，不需要配对文件，也不用开隧道。刷完先打开 PosterBoard 刷新集合，再从应用切换器上滑关闭它，系统重新拉起后壁纸生效。App 不会自动注销。")
+                NativeNote("本机直刷不用配对文件、不用开隧道。刷完打开 PosterBoard，再从应用切换器上滑关掉，它重开后壁纸就生效。")
             } else if !session.paired {
-                NativeNote("两条隧道通道都需要先导入配对文件；本机直刷不需要。iOS 26.0–26.6.1 不挑签名、不需要 App Group；其他支持版本需要当前进程带有可打开的 App Group。")
+                NativeNote("隧道通道要先导入配对文件，本机直刷不用。iOS 26.0–26.6.1 不挑签名、不用组；其他版本需要带能用的组。")
             } else if selection.tendies.isEmpty && !imports.isEmpty {
                 NativeNote("在上面的列表里点圆圈勾选要刷的包。")
             }
@@ -685,7 +685,7 @@ struct DriftHomeView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             if manualPick == .kernel || judgement.useKernel {
-                NativeNote("内核直刷写完后，用这两种办法生效：上滑结束 PosterBoard，或者注销。")
+                NativeNote("内核直刷写完后，上滑关掉 PosterBoard 或用注销生效。")
             } else {
                 NativeNote("隧道通道（免注销 / 注销直刷）刷完会自动处理生效，不用在这里操作。")
             }
