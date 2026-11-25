@@ -205,6 +205,14 @@ struct DriftSettingsView: View {
             } label: {
                 Label("关于此 App", systemImage: "info.circle")
             }
+            // Redesign (Grace, 2026-11-26): the 说明 page (which
+            // systems can use which route) lives here now — it used
+            // to be its own tab.
+            NavigationLink {
+                DriftAboutView()
+            } label: {
+                Label("说明", systemImage: "tablecells")
+            }
             // The 实验性功能 page that sat here (#329) was deleted
             // whole (Grace, 2026-11-22): once 内核直刷 and 恢复刷
             // graduated and their switches went, the page held only

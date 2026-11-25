@@ -13,12 +13,14 @@ import UIKit
 /// About page now; see AboutAppView.)
 struct DriftAboutView: View {
     var body: some View {
-        NavigationStack {
-            ZStack {
-                DriftBackground()
-                ScrollView {
-                    VStack(spacing: 14) {
-                        rangeTable
+        // Pushed from 设置 since the 2026-11-26 redesign — the host
+        // stack draws the bar; this page used to be a tab root with
+        // its own stack.
+        ZStack {
+            DriftBackground()
+            ScrollView {
+                VStack(spacing: 14) {
+                    rangeTable
                         // Collection #270 (Grace, 2026-11-13): the
                         // eight fact rows that used to follow the table
                         // are gone — the page ends with the table.
@@ -27,15 +29,14 @@ struct DriftAboutView: View {
                         // #295/#297 merge, and the AirCard-iOS/MIT
                         // attribution lives there and in the repo-root
                         // NOTICE.
-                    }
-                    .padding(16)
-                    .driftPageWidth()
                 }
+                .padding(16)
+                .driftPageWidth()
             }
-            .navigationTitle("说明")
-            .navigationBarTitleDisplayMode(.large)
-            .onAppear { AppLog.op("打开说明页") }
         }
+        .navigationTitle("说明")
+        .navigationBarTitleDisplayMode(.large)
+        .onAppear { AppLog.op("打开说明页") }
     }
 
     /// The coverage table (collection #237, Grace 2026-11-12: a real table

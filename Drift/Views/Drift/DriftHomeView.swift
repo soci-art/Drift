@@ -191,10 +191,15 @@ struct DriftHomeView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         headerCard
-                        tutorialEntryCard
                         if updateChecker.updateAvailable, let latest = updateChecker.latest {
                             updateHintCard(latest)
                         }
+                        // Redesign (Grace, 2026-11-26): the page reads
+                        // 状态 → 选壁纸 → 选方式 → 刷入. The tutorial
+                        // entry card is gone — 教程 is its own tab now.
+                        packsBar
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .driftCard()
                         judgeCard
                         actionFrame
                         activationCard
@@ -246,36 +251,6 @@ struct DriftHomeView: View {
     }
 
     // MARK: - Cards
-
-    /// The tutorial entry (collection #230, Grace 2026-11-12): in the gap
-    /// between the status card and the method card, nowhere else — the
-    /// setup wizard is unchanged and Settings carries no tutorial entry
-    /// (#239).
-    private var tutorialEntryCard: some View {
-        NavigationLink {
-            DriftTutorialView(states: DriftTutorialStates.current(
-                identity: identity, tunnelReady: tunnelReady))
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "book.fill")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
-                    .background(Color.accentColor,
-                                in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                // Grace (2026-11-12, on 3.0.11): no small print under
-                // the tutorial entry — the title alone.
-                Text("使用教程").font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold)).foregroundStyle(.tertiary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .driftCard()
-        }
-        .buttonStyle(.plain)
-    }
 
     private var headerCard: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -573,7 +548,6 @@ struct DriftHomeView: View {
     /// glass-unification round (#302, render ②, 2026-11-13).
     private var actionFrame: some View {
         VStack(spacing: 12) {
-            packsBar
             applySection
             managerBar
         }
