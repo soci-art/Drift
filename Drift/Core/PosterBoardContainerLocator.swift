@@ -65,7 +65,16 @@ enum PosterBoardContainerLocator {
         var candidates = 0
         var enumerationMilliseconds: Double = 0
 
-        while scanned < limit.maxInode {
+        // Walk both ends of the inode space, alternating a high segment and a
+        // low one. App data containers are created over the life of the
+        // device, so the target can be anywhere: on a 26.5 field log the
+        // 60-second ascending scan stopped at 22.4M of a 29.7M maximum
+        // without ever reaching it. New containers sit at the high end; old
+        // system ones at the low end. Alternating covers both without
+        // guessing which one this device is.
+        var low: UInt64 = 1
+        var high: UInt64 = limit.maxInode
+        while low <= high {
             if Date() >= deadline {
                 log("pathleak：达到本次定位时限，已扫描 \(scanned)/\(limit.maxInode) 个 inode")
                 return PathleakResult(foundPath: nil, available: true, timedOut: true,
@@ -74,8 +83,18 @@ enum PosterBoardContainerLocator {
                                       enumerationMilliseconds: enumerationMilliseconds)
             }
 
-            let start = scanned + 1
-            let end = scanned + min(segmentSize, limit.maxInode - scanned)
+            let fromHigh = segments % 2 == 0
+            let start: UInt64
+            let end: UInt64
+            if fromHigh {
+                end = high
+                start = end >= segmentSize ? max(low, end - segmentSize + 1) : low
+                high = start > 1 ? start - 1 : 0
+            } else {
+                start = low
+                end = min(high, low + segmentSize - 1)
+                low = end < UInt64.max ? end + 1 : UInt64.max
+            }
             let started = DispatchTime.now()
             let remaining = deadline.timeIntervalSinceNow
             guard remaining > 0 else {
@@ -85,8 +104,8 @@ enum PosterBoardContainerLocator {
                                       segments: segments, candidates: candidates,
                                       enumerationMilliseconds: enumerationMilliseconds)
             }
-            log(String(format: "[pathleak] 段 %d 开始：inode %llu–%llu，剩余 %.1f 秒",
-                       segments + 1, start, end, remaining))
+            log(String(format: "[pathleak] 段 %d 开始：inode %llu–%llu（%@），剩余 %.1f 秒",
+                       segments + 1, start, end, fromHigh ? "高段" : "低段", remaining))
 
             let resultBox = SegmentResultBox()
             let finished = DispatchSemaphore(value: 0)
@@ -108,7 +127,8 @@ enum PosterBoardContainerLocator {
             let leaked = resultBox.load() ?? []
             let elapsed = Double(DispatchTime.now().uptimeNanoseconds - started.uptimeNanoseconds) / 1_000_000
             enumerationMilliseconds += elapsed
-            scanned = end
+            let counted = end - start + 1
+            scanned = min(limit.maxInode, scanned + counted)
             segments += 1
             candidates += leaked.count
             log(String(format: "[pathleak] 段 %d 完成：inode %llu–%llu，本段 %d 个候选，累计 %d 个，耗时 %.0f ms",
