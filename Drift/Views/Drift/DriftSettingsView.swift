@@ -42,6 +42,14 @@ struct DriftSettingsView: View {
     @AppStorage(PosterBoardBackup.lowSpaceExperimentEnabledKey) private var lowSpaceExperimentEnabled = false
     @State private var cacheBreakdown: AppCache.Breakdown?
     @State private var confirmClearCache = false
+    /// Restore's retained PosterBoard copy (the first pre-apply baseline).
+    /// Measured off the main thread, like the cache breakdown above; the
+    /// cleanup sheet hangs off the root view for the same #293 reason.
+    @State private var baselinePresence: RestoreBaseline.Presence?
+    @State private var confirmClearBaseline = false
+    @State private var baselineClearing = false
+    @State private var showBaselineCleared = false
+    @State private var baselineClearedMessage = ""
     // #312 (Grace, 2026-11-13): the clear-cache outcome is a popup
     // now, not a standing line under the button — the same rule the
     // upload outcomes got in #277.
@@ -60,6 +68,7 @@ struct DriftSettingsView: View {
                 connectionSection
                 localRouteSection
                 lowSpaceExperimentSection
+                baselineSection
                 historySection
                 recordsSection
                 appSection
@@ -143,6 +152,18 @@ struct DriftSettingsView: View {
                               ])
             .driftActionSheet(isPresented: $showCacheCleared, title: "清除完成",
                               message: cacheClearedMessage,
+                              actions: [DriftSheetAction("知道了") {}])
+            .driftActionSheet(isPresented: $confirmClearBaseline, title: "清理恢复副本？",
+                              message: baselinePresence.map {
+                                "将删除当前 \(RestoreBaseline.format($0.bytes)) 的恢复刷副本（\($0.copies) 份）。它不会自动用来回滚，清理后这份留存数据就没了；下一次恢复刷拉取成功后会重新创建。只删副本，不动其他文件。"
+                              },
+                              actions: [
+                                DriftSheetAction("清理", destructive: true) {
+                                    Task { await clearBaseline() }
+                                },
+                              ])
+            .driftActionSheet(isPresented: $showBaselineCleared, title: "清理完成",
+                              message: baselineClearedMessage,
                               actions: [DriftSheetAction("知道了") {}])
             .driftActionSheet(isPresented: $confirmClearHistory, title: "清空全部刷入记录？",
                               message: "记录清空后无法恢复。此操作只清记录，不会删除设备上已刷入的壁纸——要删壁纸请用主页的「本机壁纸管理」。",
@@ -351,6 +372,46 @@ struct DriftSettingsView: View {
                 Text("实验模式不保证绕过所有设备限制。启用前请先完成整机备份；如果设备仍返回空间不足，程序会按失败处理，不会强行继续。")
                     .font(.caption).foregroundStyle(.orange)
             }
+        }
+    }
+
+    // MARK: - Retained restore baseline
+
+    private var baselineSection: some View {
+        Section("恢复刷副本") {
+            HStack {
+                Label("已留存的副本", systemImage: "externaldrive")
+                Spacer()
+                if let baselinePresence {
+                    if baselinePresence.isEmpty {
+                        Text("无").foregroundStyle(.secondary)
+                    } else {
+                        Text(baselinePresence.copies > 1
+                             ? "\(RestoreBaseline.format(baselinePresence.bytes))（\(baselinePresence.copies) 份）"
+                             : RestoreBaseline.format(baselinePresence.bytes))
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("…").foregroundStyle(.secondary)
+                }
+            }
+            if let baselinePresence, !baselinePresence.isEmpty {
+                Button {
+                    confirmClearBaseline = true
+                } label: {
+                    HStack {
+                        Label("清理恢复副本", systemImage: "trash")
+                        Spacer()
+                        if baselineClearing { ProgressView() }
+                    }
+                }
+                .disabled(baselineClearing || session.running)
+            }
+            Text("这是恢复刷第一次拉取成功时留下的 PosterBoard 数据（数据库和壁纸文件）。App 不会用它一键回滚。清理只删这份副本，不动抓取临时文件、恢复包、配对文件、回执和刷入记录；下一次恢复刷拉取成功后会重新创建。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .task {
+            baselinePresence = await Task.detached { RestoreBaseline.measure() }.value
         }
     }
 
@@ -732,6 +793,32 @@ struct DriftSettingsView: View {
             // export outcomes (#256).
             Text("出问题时点这里打包，把整包发出去就行，不用再一个个找文件。也可以点「上传日志」直接传给开发者，不用自己转发。")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// Delete the retained restore baseline off the main thread, then refresh
+    /// the measured row and report the outcome through the root popup.
+    private func clearBaseline() async {
+        guard !session.running else {
+            session.errorText = "正在刷入，先不要清理恢复副本。"
+            return
+        }
+        baselineClearing = true
+        defer { baselineClearing = false }
+        do {
+            let result = try await Task.detached { try RestoreBaseline.clear() }.value
+            baselinePresence = result.after
+            let freed = RestoreBaseline.format(result.freedBytes)
+            if result.after.isEmpty {
+                baselineClearedMessage = "省出约 \(freed)。恢复副本已删除；下一次恢复刷拉取成功后会重新创建。"
+            } else {
+                baselineClearedMessage = "清理了约 \(freed)，但还剩 \(RestoreBaseline.format(result.after.bytes)) 没删掉。请退出设置页再试一次。"
+            }
+            showBaselineCleared = true
+            AppLog.op("清理恢复副本：省出 \(freed)")
+        } catch {
+            AppLog.failure("清理恢复副本：失败 — \(error.localizedDescription)")
+            session.errorText = error.localizedDescription
         }
     }
 
