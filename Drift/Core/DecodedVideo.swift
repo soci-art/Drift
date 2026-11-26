@@ -233,7 +233,7 @@ final class DecodedVideoLibrary: ObservableObject {
         // Diagnosis (2026-11-26): the kept product's framing state in
         // the same words as the decode-start line, so a flash of this
         // item later can be matched to the decode that made it.
-        AppLog.info("解码完成入库：\(name)，成品带画面调整：\(meta.framed ? "是" : "否")")
+        AppLog.info("解码完成入库：\(name)，成品带画面调整：\(meta.framed == true ? "是" : "否")")
     }
 
     /// Delete the chosen items and their products.
