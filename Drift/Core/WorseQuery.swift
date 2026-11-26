@@ -255,14 +255,65 @@ enum WorseQueryEscape {
         return ""
     }
 
-    /// Resolve an app data container through LaunchServices' CSStore. This is
-    /// an additional cold-start source; callers still validate the returned
-    /// container with their own store identity / read-write checks.
-    static func launchServicesContainerPath(bundleID: String) -> String? {
-        guard backend(deviceVersion: processVersion, buildVersion: processBuildVersion) == .worseQuery,
-              let group = discoveredGroupIdentifier else { return nil }
+    /// Why the CSStore lookup returned (or did not return) a candidate.
+    /// Kept separate from the path so the app log can distinguish "no store",
+    /// "store read/authorization failed", "store parsed but no such bundle",
+    /// and "query never ran" instead of collapsing every nil into one line.
+    enum CSStoreLookup {
+        case path(String)
+        case unsupportedBackend
+        case noGroup
+        case invalidArguments
+        case storeNotFound
+        case storeReadFailed
+        case storeParseFailed
+        case bundleNotFound
+        case unknown(Int32)
+
+        var path: String? {
+            if case let .path(path) = self { return path }
+            return nil
+        }
+
+        var diagnostic: String {
+            switch self {
+            case let .path(path): return "候选 \(path)"
+            case .unsupportedBackend: return "后端不是 worseQuery，跳过查询"
+            case .noGroup: return "没有可用的 App Group，跳过查询"
+            case .invalidArguments: return "查询参数不完整"
+            case .storeNotFound: return "没有找到可读的 LaunchServices CSStore"
+            case .storeReadFailed: return "找到 CSStore，但读取或授权失败"
+            case .storeParseFailed: return "CSStore 读取成功，但解析失败"
+            case .bundleNotFound: return "CSStore 解析成功，但没有 com.apple.PosterBoard 的容器记录"
+            case let .unknown(code): return "未知状态 \(code)"
+            }
+        }
+    }
+
+
+    /// Resolve an app data container through LaunchServices' CSStore and say
+    /// why it failed. This is an additional cold-start source; callers still
+    /// validate the returned container with their own store identity /
+    /// read-write checks.
+    static func launchServicesContainerLookup(bundleID: String) -> CSStoreLookup {
+        guard backend(deviceVersion: processVersion, buildVersion: processBuildVersion) == .worseQuery else {
+            return .unsupportedBackend
+        }
+        guard let group = discoveredGroupIdentifier else { return .noGroup }
         let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
-        return wq_ls_container_path_for_bundle_id(bundleID, group, major == 26)
+        var status: Int32 = 0
+        let path = wq_ls_container_path_for_bundle_id_status(bundleID, group, major == 26, &status)
+        if let path { return .path(path) }
+        if status == Int32(WQLSStatus.invalidArguments.rawValue) { return .invalidArguments }
+        if status == Int32(WQLSStatus.storeNotFound.rawValue) { return .storeNotFound }
+        if status == Int32(WQLSStatus.storeReadFailed.rawValue) { return .storeReadFailed }
+        if status == Int32(WQLSStatus.storeParseFailed.rawValue) { return .storeParseFailed }
+        if status == Int32(WQLSStatus.bundleNotFound.rawValue) { return .bundleNotFound }
+        return .unknown(status)
+    }
+
+    static func launchServicesContainerPath(bundleID: String) -> String? {
+        launchServicesContainerLookup(bundleID: bundleID).path
     }
 
     // MARK: - Extension handles
