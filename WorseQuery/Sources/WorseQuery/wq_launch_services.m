@@ -560,39 +560,88 @@ static NSString *wq_ls_scan_for_store(NSString *group, BOOL preferAlternative)
     return nil;
 }
 
-static NSString *wq_ls_resolve_from_data(NSData *data, NSString *bundleID)
+static void wq_ls_record_status(int32_t *status, int32_t value)
+{
+    if (!status) return;
+    if (*status == WQLSStatusFound) return;
+    // StoreNotFound is the least specific failure. Keep the first specific
+    // one, so a later "scan found no store" cannot erase an earlier
+    // read/parse/bundle failure.
+    if (*status == WQLSStatusStoreNotFound) *status = value;
+}
+
+static NSString *wq_ls_resolve_from_data(NSData *data, NSString *bundleID,
+                                          int32_t *status)
 {
     NSDictionary *containers = nil;
-    if (!wq_parse_ls_store(data, NULL, NULL, &containers, NULL) || !containers.count) return nil;
+    if (!wq_parse_ls_store(data, NULL, NULL, &containers, NULL) || !containers.count) {
+        wq_ls_record_status(status, WQLSStatusStoreParseFailed);
+        return nil;
+    }
     for (NSString *path in containers) {
         if ([containers[path] isEqualToString:bundleID] &&
             [path hasPrefix:@"/private/var/mobile/Containers/Data/Application/"]) {
             NSString *uuid = path.lastPathComponent;
-            if ([[NSUUID alloc] initWithUUIDString:uuid]) return path;
+            if ([[NSUUID alloc] initWithUUIDString:uuid]) {
+                if (status) *status = WQLSStatusFound;
+                return path;
+            }
         }
     }
+    wq_ls_record_status(status, WQLSStatusBundleNotFound);
     return nil;
 }
 
 NSString *wq_ls_container_path_for_bundle_id(NSString *bundleID, NSString *appGroup,
                                               BOOL preferAlternativeFlags)
 {
+    return wq_ls_container_path_for_bundle_id_status(bundleID, appGroup,
+                                                     preferAlternativeFlags, NULL);
+}
+
+NSString *wq_ls_container_path_for_bundle_id_status(NSString *bundleID, NSString *appGroup,
+                                                     BOOL preferAlternativeFlags,
+                                                     int32_t *status)
+{
+    if (status) *status = WQLSStatusInvalidArguments;
     if (!bundleID.length || !appGroup.length) return nil;
+
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
     NSString *cached = [defaults stringForKey:kWQPosterBoardStorePathKey];
     NSString *path = cached;
+    int32_t failure = WQLSStatusStoreNotFound;
     NSData *data = path.length ? wq_ls_read_store(path, appGroup, preferAlternativeFlags, NULL) : nil;
-    NSString *container = data ? wq_ls_resolve_from_data(data, bundleID) : nil;
+    NSString *container = nil;
+    if (data) {
+        container = wq_ls_resolve_from_data(data, bundleID, &failure);
+    } else if (path.length) {
+        wq_ls_record_status(&failure, WQLSStatusStoreReadFailed);
+    }
 
     if (!container) {
         path = wq_ls_scan_for_store(appGroup, preferAlternativeFlags);
-        data = path ? wq_ls_read_store(path, appGroup, preferAlternativeFlags, NULL) : nil;
-        container = data ? wq_ls_resolve_from_data(data, bundleID) : nil;
+        if (!path) {
+            wq_ls_record_status(&failure, WQLSStatusStoreNotFound);
+        } else {
+            data = wq_ls_read_store(path, appGroup, preferAlternativeFlags, NULL);
+            if (!data) {
+                wq_ls_record_status(&failure, WQLSStatusStoreReadFailed);
+            } else {
+                // This store was read successfully; its resolve verdict
+                // (bundle found / parse failed / bundle absent) is the one
+                // that describes the final attempt, not a stale read failure
+                // from the cached path.
+                failure = WQLSStatusStoreNotFound;
+                container = wq_ls_resolve_from_data(data, bundleID, &failure);
+            }
+        }
     }
     if (container && path.length) {
         [defaults setObject:path forKey:kWQPosterBoardStorePathKey];
+        if (status) *status = WQLSStatusFound;
         NSLog(@"[Drift CSStore] %@ -> %@", bundleID, container);
         return container;
     }
+    if (status) *status = failure;
     return nil;
 }

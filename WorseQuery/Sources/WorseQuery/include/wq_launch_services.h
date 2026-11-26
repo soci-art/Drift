@@ -6,6 +6,7 @@
 //  WQLaunchServices parser. GPL-3.0-or-later.
 //
 #import <Foundation/Foundation.h>
+#import <stdint.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -17,5 +18,24 @@ NS_ASSUME_NONNULL_BEGIN
 NSString * _Nullable wq_ls_container_path_for_bundle_id(NSString *bundleID,
                                                         NSString *appGroup,
                                                         BOOL preferAlternativeFlags);
+
+/// Status codes for the diagnostic variant. `Found` means the returned path
+/// is a match; every other code explains why the path is nil. NS_ENUM keeps
+/// the values in one place: Swift reads the same cases instead of keeping a
+/// hand-synced copy.
+typedef NS_ENUM(int32_t, WQLSStatus) {
+    WQLSStatusFound = 0,
+    WQLSStatusInvalidArguments = 1,
+    WQLSStatusStoreNotFound = 2,
+    WQLSStatusStoreReadFailed = 3,
+    WQLSStatusStoreParseFailed = 4,
+    WQLSStatusBundleNotFound = 5,
+};
+
+/// Same query as above, but reports why it failed. `status` may be NULL.
+NSString * _Nullable wq_ls_container_path_for_bundle_id_status(NSString *bundleID,
+                                                              NSString *appGroup,
+                                                              BOOL preferAlternativeFlags,
+                                                              int32_t * _Nullable status);
 
 NS_ASSUME_NONNULL_END

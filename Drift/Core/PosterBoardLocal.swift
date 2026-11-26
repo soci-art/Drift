@@ -756,6 +756,21 @@ enum PosterBoardLocal {
     /// One cold-location scan at a time. A prewarm and a formal caller share
     /// the same run: the later caller waits, then finds the cached result.
     private enum LocationPurpose { case formal, prewarm }
+
+    /// A failed locate that knows whether the inode space was actually
+    /// covered. A full scan is a definitive miss; retrying it in the same
+    /// call only repeats the same walk.
+    private struct LocateMiss: Error {
+        let fullScan: Bool
+    }
+
+    private struct ProbeTotals {
+        var candidates = 0
+        var probed = 0
+        var consumed = 0
+        var identified = 0
+        var refused = 0
+    }
     private static let locationCondition = NSCondition()
     private static var locationRunning = false
     private static var prewarmResultPending = false
@@ -824,6 +839,19 @@ enum PosterBoardLocal {
                 let opened = try locateContainerOnce(deadline: deadline, log: log)
                 if round > 1 { log("本机定位：第 \(round) 轮命中") }
                 return opened
+            } catch let miss as LocateMiss {
+                lastFailure = DriftError("这次没找到壁纸商店。")
+                if miss.fullScan {
+                    log("本机定位：全盘已扫满，本次不再重开轮次")
+                    break
+                }
+                if Date() >= deadline {
+                    log("本机定位：达到 90 秒总时限，结束定位")
+                    break
+                }
+                if round < 3 {
+                    log("本机定位：第 \(round) 轮没有找到壁纸商店，自动开始第 \(round + 1) 轮（最多 3 轮）")
+                }
             } catch let error as DriftError where error.message.hasPrefix("这次没找到壁纸商店") {
                 lastFailure = error
                 if Date() >= deadline {
@@ -857,6 +885,7 @@ enum PosterBoardLocal {
             do {
                 let handle = try WorseQueryEscape.consume(path: cached, createDirectory: false)
                 if isPosterBoardContainer(atPath: cached) {
+                    PosterBoardContainerLocator.clearProgress()
                     log(String(format: "PosterBoard container: cached path verified（总定位 %.0f ms）",
                                millis(since: locateStart)))
                     return (cached, handle)
@@ -884,14 +913,18 @@ enum PosterBoardLocal {
         if !known.isEmpty {
             log("已知容器路径：\(known.count) 个（隧道缓存 / 旧回执）")
             var ignoredRechecks: [String] = []
+            var knownTotals = ProbeTotals()
             if let path = tryConsumePosterBoard(among: known, label: "已知路径",
-                                                deferredRechecks: &ignoredRechecks, log: log) {
+                                                deferredRechecks: &ignoredRechecks,
+                                                totals: &knownTotals, log: log) {
                 let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
                 cachedContainer = path
+                PosterBoardContainerLocator.clearProgress()
                 log(String(format: "PosterBoard container resolved from a known path: %@（handle %lld，总定位 %.0f ms）",
                            path, handle, millis(since: locateStart)))
                 return (path, handle)
             }
+            _ = knownTotals
             log("已知容器路径核对失败：商店目录不存在或不是目录（已知路径本应正确，此行诊断价值最高）")
         }
 
@@ -900,8 +933,9 @@ enum PosterBoardLocal {
         // content-identity validation and retain pathleak as the fallback.
         if Date() < deadline {
             log("尝试通过 LaunchServices CSStore 定位 PosterBoard 容器")
-            if let container = WorseQueryEscape.launchServicesContainerPath(bundleID: "com.apple.PosterBoard"),
-               isApplicationContainerPath(container) {
+            let lookup = WorseQueryEscape.launchServicesContainerLookup(bundleID: "com.apple.PosterBoard")
+            log("CSStore 查询结果：\(lookup.diagnostic)")
+            if let container = lookup.path, isApplicationContainerPath(container) {
                 log("CSStore 返回候选容器：\(container)，开始授权和商店目录身份核验")
                 do {
                     let probeHandle = try WorseQueryEscape.consume(path: container, createDirectory: false)
@@ -911,6 +945,7 @@ enum PosterBoardLocal {
                         do {
                             let handle = try WorseQueryEscape.consume(path: container, createDirectory: true)
                             cachedContainer = container
+                            PosterBoardContainerLocator.clearProgress()
                             log(String(format: "CSStore 命中 PosterBoard 容器：%@（handle %lld，总定位 %.0f ms）",
                                        container, handle, millis(since: locateStart)))
                             return (container, handle)
@@ -924,7 +959,7 @@ enum PosterBoardLocal {
                     log("CSStore 候选授权失败：\(error.localizedDescription)，回退 pathleak")
                 }
             } else {
-                log("CSStore 未返回可用的 PosterBoard 应用容器，回退 pathleak")
+                log("CSStore 未返回可用的 PosterBoard 应用容器（\(lookup.diagnostic)），回退 pathleak")
             }
             if Date() >= deadline {
                 log("CSStore 检查耗尽本轮定位时限，停止本轮扫描")
@@ -937,6 +972,7 @@ enum PosterBoardLocal {
         var recheckCandidates: [String] = []
         var periodicRecheckRounds = 0
         var nextPeriodicRecheck = Date().addingTimeInterval(8)
+        var pathleakTotals = ProbeTotals()
         let pathleak = PosterBoardContainerLocator.scanPathleak(
             deadline: deadline,
             log: log
@@ -944,6 +980,7 @@ enum PosterBoardLocal {
             if let found = tryConsumePosterBoard(among: leaked,
                                                  label: "pathleak 第 \(segment) 段",
                                                  deferredRechecks: &recheckCandidates,
+                                                 totals: &pathleakTotals,
                                                  log: log) {
                 return found
             }
@@ -963,6 +1000,7 @@ enum PosterBoardLocal {
             let found = tryConsumePosterBoard(among: candidates,
                                               label: "pathleak 周期补问第 \(periodicRecheckRounds) 轮（第 \(segment) 段后）",
                                               deferredRechecks: &repeatedCandidates,
+                                              totals: &pathleakTotals,
                                               log: log)
             nextPeriodicRecheck = Date().addingTimeInterval(8)
             if let found {
@@ -1006,20 +1044,24 @@ enum PosterBoardLocal {
             log("pathleak 终局补问第 \(finalRound) 轮：全盘扫描结束，候选 \(candidatesToRetry.count) 个，按收集顺序逐个复查")
             for (index, candidate) in candidatesToRetry.enumerated() {
                 log("pathleak 终局补问第 \(index + 1)/\(candidatesToRetry.count) 个：consume path=\(candidate) createDirectory=false")
+                pathleakTotals.probed += 1
                 let probeHandle: Int64
                 do {
                     probeHandle = try WorseQueryEscape.consume(path: candidate, createDirectory: false)
                 } catch {
+                    pathleakTotals.refused += 1
                     log("pathleak 终局补问结果：\(candidate) 本轮 consume 被拒（\(error.localizedDescription)）")
                     continue
                 }
 
+                pathleakTotals.consumed += 1
                 let identified = isPosterBoardContainer(atPath: candidate)
                 WorseQueryEscape.release(probeHandle)
                 guard identified else {
                     log("pathleak 终局补问结果：\(candidate) consume 成功，但身份核对未通过")
                     continue
                 }
+                pathleakTotals.identified += 1
 
                 log("pathleak 终局补问命中：第 \(finalRound) 轮、第 \(index + 1)/\(candidatesToRetry.count) 个候选：\(candidate)")
                 let handle = try WorseQueryEscape.consume(path: candidate, createDirectory: true)
@@ -1031,6 +1073,17 @@ enum PosterBoardLocal {
             log("pathleak 终局失败：总补问轮数 \(finalRound)，候选均未通过身份核对")
         } else {
             log("pathleak 终局失败：没有 consume 成功但身份核对未通过的候选；周期补问 0 轮")
+        }
+
+        if pathleak.available {
+            let percent = pathleak.coverage * 100
+            log(String(format: "[pathleak] 汇总：已扫 %llu/%llu（%.1f%%），段 %d，候选 %d；本次 consume 成功 %d，身份通过 %d，被拒 %d；枚举 %.0f ms",
+                       pathleak.scannedInodes, pathleak.maxInode, percent,
+                       pathleak.segments, pathleak.candidates,
+                       pathleakTotals.consumed, pathleakTotals.identified,
+                       pathleakTotals.refused, pathleak.enumerationMilliseconds))
+        } else {
+            log("[pathleak] 汇总：inode 上限探测失败，未进行全盘扫")
         }
 
         // 3. The root extension is an optional accelerator, never a gate.
@@ -1048,6 +1101,7 @@ enum PosterBoardLocal {
             if let path = firstPosterBoardContainer(among: listed) {
                 let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
                 cachedContainer = path
+                PosterBoardContainerLocator.clearProgress()
                 log(String(format: "PosterBoard container resolved by root listing: %@（handle %lld，总定位 %.0f ms）",
                            path, handle, millis(since: locateStart)))
                 return (path, handle)
@@ -1057,8 +1111,30 @@ enum PosterBoardLocal {
             log("根目录扩展不可用（\(rootFailure)）——pathleak 结果仍可继续使用")
         }
 
+        if !pathleak.available {
+            log("定位失败：inode 上限探测失败，未进行全盘扫；无法判断是否覆盖全盘")
+        } else if pathleak.timedOut {
+            log(String(format: "定位失败：预算耗尽，只扫了 %.1f%%（%llu/%llu），候选 %d（本次可探测 %d），consume 成功 %d，身份通过 %d，被拒 %d；不是全盘扫满",
+                       pathleak.coverage * 100, pathleak.scannedInodes, pathleak.maxInode,
+                       pathleak.candidates, pathleakTotals.candidates,
+                       pathleakTotals.consumed, pathleakTotals.identified,
+                       pathleakTotals.refused))
+        } else if pathleak.coverage >= 0.999 {
+            if pathleakTotals.consumed > 0 && pathleakTotals.identified == 0 {
+                log("定位失败：全盘扫满 100%，候选 \(pathleak.candidates)（本次可探测 \(pathleakTotals.candidates)），consume 成功 \(pathleakTotals.consumed) 个但身份核对 0 个——扫到了但没认出（store 路径/权限），不是没扫到")
+            } else if pathleakTotals.consumed == 0 {
+                log("定位失败：全盘扫满 100%，候选 \(pathleak.candidates)（本次可探测 \(pathleakTotals.candidates)），没有任何 consume 成功的候选——更可能是目标不存在或扫描/权限没覆盖到")
+            } else {
+                log("定位失败：全盘扫满 100%，候选 \(pathleak.candidates)（本次可探测 \(pathleakTotals.candidates)），consume 成功 \(pathleakTotals.consumed)，身份通过 \(pathleakTotals.identified)，没有找到 PosterBoard 容器")
+            }
+        } else {
+            log(String(format: "定位失败：扫描未完成，覆盖 %.1f%%（%llu/%llu），候选 %d，consume 成功 %d，身份通过 %d",
+                       pathleak.coverage * 100, pathleak.scannedInodes, pathleak.maxInode,
+                       pathleak.candidates, pathleakTotals.consumed, pathleakTotals.identified))
+        }
         log(String(format: "容器定位失败：总耗时 %.0f ms", millis(since: locateStart)))
-        throw DriftError("这次没找到壁纸商店。")
+        throw LocateMiss(fullScan: pathleak.available && !pathleak.timedOut
+            && pathleak.coverage >= 0.999)
     }
 
     /// Probe candidates in parallel once; retain successful consumes whose
@@ -1066,6 +1142,7 @@ enum PosterBoardLocal {
     private static func tryConsumePosterBoard(among candidates: [String],
                                               label: String,
                                               deferredRechecks: inout [String],
+                                              totals: inout ProbeTotals,
                                               log: @escaping @Sendable (String) -> Void) -> String? {
         let started = DispatchTime.now()
         var unique: [String] = []
@@ -1146,6 +1223,12 @@ enum PosterBoardLocal {
                 deferredRechecks.append(candidate)
             }
         }
+
+        totals.candidates += unique.count
+        totals.probed += probed
+        totals.consumed += consumed
+        totals.identified += identified
+        totals.refused += refused
 
         let elapsed = millis(since: started)
         let average = probed > 0 ? elapsed / Double(probed) : 0
