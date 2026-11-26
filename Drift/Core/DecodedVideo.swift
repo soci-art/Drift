@@ -167,6 +167,20 @@ final class DecodedVideoLibrary: ObservableObject {
         decodingName = name
         defer { decodingName = nil }
 
+        // Diagnosis (2026-11-26): log the framing THIS decode carries,
+        // at the moment it starts. The decode bakes the selection as it
+        // stands now — an adjustment made while a long decode runs
+        // cannot enter its product — and before this line the log
+        // could not show which side of an adjustment a decode fell on.
+        if let framing = selection.framing, !framing.isDefault {
+            AppLog.op("开始解码：\(name)（带入画面调整：缩放 ×"
+                + "\(String(format: "%.3f", framing.scale))、偏移 ("
+                + "\(String(format: "%.1f", framing.offsetX)), "
+                + "\(String(format: "%.1f", framing.offsetY)))）")
+        } else {
+            AppLog.op("开始解码：\(name)（没有带入画面调整，按默认居中）")
+        }
+
         let fm = FileManager.default
         let id = "\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString.prefix(8))"
         let directory = Self.root.appendingPathComponent(id, isDirectory: true)
@@ -216,6 +230,10 @@ final class DecodedVideoLibrary: ObservableObject {
         reload()
         DriftEngine.shared.log("Decoded video kept: \(name) (\(meta.byteCount) bytes, "
             + "\(frameCount.map { "\($0) frame(s)" } ?? "live photo"))")
+        // Diagnosis (2026-11-26): the kept product's framing state in
+        // the same words as the decode-start line, so a flash of this
+        // item later can be matched to the decode that made it.
+        AppLog.info("解码完成入库：\(name)，成品带画面调整：\(meta.framed ? "是" : "否")")
     }
 
     /// Delete the chosen items and their products.
