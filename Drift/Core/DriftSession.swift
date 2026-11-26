@@ -667,15 +667,26 @@ final class DriftSession: ObservableObject {
         guard !InFlightCall.shared.hasLiveRun else {
             return (false, "已有一轮刷入正在进行")
         }
-        guard !selection.tendies.isEmpty else {
-            return (false, "先在「壁纸包」里选择要写入的 .tendies 包。")
+        // Packs and video wallpapers both ride this writer (Grace,
+        // 2026-11-19: video is open to every non-restore channel, and
+        // the pages keep the two payloads apart). The video reaches the
+        // writer as a generated directory further down — the same
+        // shape the local channel hands its writer. A tree sync once
+        // restored the old packs-only refusal here while the judge and
+        // the writer stayed open; this is the open shape again.
+        let hasVideo = selection.video != nil
+            || selection.preGeneratedVideoDirectory != nil
+        guard !selection.tendies.isEmpty || hasVideo else {
+            return (false, "先选择要写入的壁纸包或视频。")
         }
-        guard selection.video == nil,
-              selection.preGeneratedVideoDirectory == nil,
-              !selection.fullReset,
-              selection.resetModes.isEmpty else {
-            return (false, "内核直刷当前只支持已选的 .tendies 描述文件，不处理视频或重置任务。")
+        guard !selection.fullReset, selection.resetModes.isEmpty else {
+            return (false, "内核直刷不处理壁纸商店重置任务。")
         }
+        // What the history records call this run: the pack names, plus
+        // the video's name when one rides along.
+        let payloadName = (selection.tendies.map(\.name)
+            + (selection.videoDisplayName.map { ["视频：\($0)"] } ?? []))
+            .joined(separator: "、")
         let premise = KernelDirectPremise.evaluate(version: WorseQueryEscape.processVersion)
         guard premise.ready else {
             return (false, "内核直刷现在用不了：\(premise.reason)。")
@@ -704,7 +715,7 @@ final class DriftSession: ObservableObject {
 
         DriftEngine.shared.log("内核直刷：开始（本机 \(KernelDirectPremise.modelIdentifier)，"
             + "iOS \(WorseQueryEscape.processVersion)，构建 \(WorseQueryEscape.processBuildVersion)，"
-            + "设备读数 \(identity.describe)，包数 \(selection.tendies.count)）")
+            + "设备读数 \(identity.describe)，包数 \(selection.tendies.count)，视频：\(selection.videoDisplayName ?? "无")）")
 
         let report = await KernelDirectProbe.run(log: { line in
             DriftEngine.shared.log(line)
@@ -727,7 +738,7 @@ final class DriftSession: ObservableObject {
                 device: identity.describe,
                 model: identity.productType,
                 ios: WorseQueryEscape.processVersion,
-                packName: selection.tendies.map(\.name).joined(separator: "、"),
+                packName: payloadName,
                 packFiles: selection.tendies.map { $0.url.lastPathComponent },
                 logSliceText: RunLog.shared.recordSnapshot()
             )
@@ -757,7 +768,7 @@ final class DriftSession: ObservableObject {
         if !skippedPacks.isEmpty {
             DriftEngine.shared.log("[内核直刷] 防重复刷：\(skippedPacks.joined(separator: "、")) 已在商店里，本轮跳过")
         }
-        if writeSelection.tendies.isEmpty {
+        if writeSelection.tendies.isEmpty && !hasVideo {
             ApplyHistory.record(
                 mode: "内核直刷",
                 success: true,
@@ -774,6 +785,37 @@ final class DriftSession: ObservableObject {
             return (true, "选的包都已经在壁纸商店里了，不用重复刷。")
         }
 
+        // Stage the video (if any) into a scratch directory, exactly
+        // like the local channel does: the writer takes the generated
+        // tree through its generatedVideoDirectory door and writes it
+        // in the same pass as the packs. The selection handed to the
+        // writer has the video fields cleared — the writer guards on
+        // them — while the display name stays for its source naming.
+        var generatedVideoDirectory: URL?
+        if hasVideo {
+            flashStage = "正在准备视频壁纸"
+            let directory = PosterBoard.workDirectory
+                .appendingPathComponent("kernel-video-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.removeItem(at: directory)
+            do {
+                try FileManager.default.createDirectory(
+                    at: directory, withIntermediateDirectories: true)
+                try await PosterBoardVideo.generate(
+                    selection: selection, outputDirectory: directory,
+                    log: { DriftEngine.shared.log($0) })
+                generatedVideoDirectory = directory
+            } catch {
+                try? FileManager.default.removeItem(at: directory)
+                let message = error.localizedDescription
+                DriftEngine.shared.log("[内核直刷] 视频准备失败：\(message)")
+                return (false, "视频准备失败：\(message)")
+            }
+        }
+        var writerSelection = writeSelection
+        writerSelection.video = nil
+        writerSelection.thumbnail = nil
+        writerSelection.preGeneratedVideoDirectory = nil
+
         flashStage = "内核读写已建立，正在写入 PosterBoard 描述文件"
         DriftEngine.shared.log("[内核直刷] 探针通过，进入正式写入阶段")
         let writerStarted = Date()
@@ -784,11 +826,12 @@ final class DriftSession: ObservableObject {
                     do {
                         DriftEngine.shared.log("[内核直刷] KernelDirectWriter.apply() 已启动")
                         let result = try KernelDirectWriter.apply(
-                            selection: writeSelection,
+                            selection: writerSelection,
                             containerPath: containerPath,
                             storePath: storePath,
                             structureVersions: report.structureVersions,
                             deviceVersion: WorseQueryEscape.processVersion,
+                            generatedVideoDirectory: generatedVideoDirectory,
                             log: { DriftEngine.shared.log($0) },
                             progress: { value in
                                 DriftEngine.shared.log(String(format: "[内核写入] 进度 %.0f%%", value))
@@ -807,6 +850,9 @@ final class DriftSession: ObservableObject {
                         continuation.resume(throwing: error)
                     }
                 }
+            }
+            if let generatedVideoDirectory {
+                try? FileManager.default.removeItem(at: generatedVideoDirectory)
             }
             let verification = outcome.verification
             DriftEngine.shared.log("内核直刷写入完成：\(outcome.installedCount) 个描述符；\(verification.summary)")
@@ -849,7 +895,7 @@ final class DriftSession: ObservableObject {
                 channel: "内核直刷",
                 provider: verification.providersSeen.sorted().joined(separator: "、"),
                 verification: verification.summary,
-                packName: selection.tendies.map(\.name).joined(separator: "、"),
+                packName: payloadName,
                 packFiles: selection.tendies.map { $0.url.lastPathComponent },
                 logSliceText: RunLog.shared.recordSnapshot()
             )
@@ -859,6 +905,9 @@ final class DriftSession: ObservableObject {
             let skipNote = skippedPacks.isEmpty ? "" : "另有 \(skippedPacks.count) 个包已在商店里，本轮跳过：\(skippedPacks.joined(separator: "、"))。"
             return (true, "内核直刷已写入 \(outcome.installedCount) 个描述符，写后核验：\(verification.summary)。\(skipNote)\(refreshHint) 也可以使用下方「注销」方式生效。")
         } catch {
+            if let generatedVideoDirectory {
+                try? FileManager.default.removeItem(at: generatedVideoDirectory)
+            }
             let message = error.localizedDescription
             DriftEngine.shared.log("内核直刷写入失败：\(message)")
             // #319: the order asks for the dump once the probe has passed even
@@ -875,7 +924,7 @@ final class DriftSession: ObservableObject {
                 device: identity.describe,
                 model: identity.productType,
                 ios: WorseQueryEscape.processVersion,
-                packName: selection.tendies.map(\.name).joined(separator: "、"),
+                packName: payloadName,
                 packFiles: selection.tendies.map { $0.url.lastPathComponent },
                 logSliceText: RunLog.shared.recordSnapshot()
             )
