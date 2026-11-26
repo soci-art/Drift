@@ -19,6 +19,29 @@ enum PosterBoardCalculationMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// A composition decode that failed before any frame was consumed. Only this
+/// kind of failure may fall back to the slower per-frame generator; a failure
+/// after frames have been written would duplicate them.
+private struct CompositionUnavailable: Error {
+    let message: String
+}
+
+/// The screen a video document is built for. The video page's framing box,
+/// the descriptor skeleton and the caml all use one of these, so the box the
+/// user adjusts and the geometry written into the product cannot be measured
+/// with two different rulers.
+struct PosterBoardScreenMetrics: Sendable, Equatable {
+    let width: Int
+    let height: Int
+    let scale: Int
+    /// `iphone` or `ipad`; the descriptor's `logicalScreenClass` suffix.
+    let idiom: String
+
+    var logicalScreenClass: String {
+        "\(width)w-\(height)h@\(scale)x~\(idiom)"
+    }
+}
+
 /// How the user framed the video inside the screen-shaped box on
 /// the video page (Grace, 2026-11-23): the box is the device screen,
 /// the video moves and zooms behind it, and what is inside the box
@@ -33,6 +56,11 @@ struct PosterBoardFraming: Equatable {
     var scale: Double = 1
     var offsetX: Double = 0
     var offsetY: Double = 0
+    /// The screen the box was measured against. Carried so a decode
+    /// that happens after the device rotated still writes the box's
+    /// ruler, not the current screen's. Older framings have nil and
+    /// fall back to the decode-time screen.
+    var document: PosterBoardScreenMetrics?
 
     var isDefault: Bool { scale == 1 && offsetX == 0 && offsetY == 0 }
 }
@@ -114,6 +142,32 @@ enum PosterBoardVideo {
                          outputDirectory: URL,
                          log: @escaping @Sendable (String) -> Void) async throws {
         if let preGenerated = selection.preGeneratedVideoDirectory {
+            let current = await MainActor.run {
+                Self.screenMetrics(log: log)
+            }
+            // A small mismatch (an old 390-wide product on a 393-wide phone)
+            // is harmless; the iPad case is a 3× document and must be rebuilt.
+            // Compare the product's actual document, not just its class name,
+            // so an update does not make every old decoded video unflashable.
+            let storedSizes = Self.productDocumentSizes(at: preGenerated)
+            if !storedSizes.isEmpty {
+                let toleranceW = max(8, current.width / 10)
+                let toleranceH = max(8, current.height / 10)
+                for stored in storedSizes {
+                    if abs(stored.width - current.width) > toleranceW
+                        || abs(stored.height - current.height) > toleranceH {
+                        throw DriftError("这个已解码的视频有一层是按 \(stored.width)×\(stored.height) 生成的，"
+                            + "当前屏幕是 \(current.width)×\(current.height)；请重新解码后再刷，"
+                            + "否则锁屏会把画面缩放裁切。")
+                    }
+                }
+                if storedSizes.contains(where: {
+                    $0.width != current.width || $0.height != current.height
+                }) {
+                    log("  → pre-decoded document differs slightly from the current "
+                        + "\(current.width)×\(current.height); keeping it")
+                }
+            }
             log("  → video: staging the pre-decoded product of "
                 + "\(selection.preGeneratedVideoName ?? "Video")")
             let fm = FileManager.default
@@ -131,9 +185,15 @@ enum PosterBoardVideo {
     static func generate(plan: PosterBoardVideoPlan,
                          outputDirectory: URL,
                          log: @escaping @Sendable (String) -> Void) async throws {
+        // Capture the screen before leaving the main actor. The descriptor
+        // skeleton and the caml document are built from the same metrics,
+        // and a decode that starts after a rotation must not re-read a
+        // different screen halfway through.
+        let metrics = await MainActor.run { Self.screenMetrics(log: log) }
         try await Task.detached(priority: .utility) {
             if plan.loop {
-                try await generateLoop(plan: plan, outputDirectory: outputDirectory, log: log)
+                try await generateLoop(plan: plan, metrics: metrics,
+                                       outputDirectory: outputDirectory, log: log)
             } else {
                 try await generateLivePhoto(plan: plan, outputDirectory: outputDirectory, log: log)
             }
@@ -142,21 +202,124 @@ enum PosterBoardVideo {
 
     // MARK: - CoreAnimation loop
 
+    /// The phone-shaped class the bundled skeleton was authored at.
+    private static let legacyScreenClass = "390w-844h@3x~iphone"
+
+    /// Write the bundled loop skeleton with this device's screen class.
+    ///
+    /// The skeleton is a 390×844 iPhone tree: the wallpaper directory and
+    /// the three `.ca` directories carry the class in their names, `Wallpaper.plist`
+    /// and `userInfo` name the same files, and each `.ca`'s `index.xml` / `main.caml`
+    /// declare 390×844. On an iPad the frames were correctly built at 1210×834
+    /// points while the descriptor still claimed a 390×844 canvas, so the system
+    /// scaled the landscape document into a portrait phone canvas. This rewrites
+    /// every one of those size declarations from the same metrics the caml uses.
+    private static func writeVideoLoopSkeleton(into root: URL,
+                                               metrics: PosterBoardScreenMetrics) throws {
+        let fm = FileManager.default
+        let screenClass = metrics.logicalScreenClass
+        for (relative, data) in PosterBoardResources.videoLoopDescriptor.sorted(by: { $0.key < $1.key }) {
+            let newRelative = relative.replacingOccurrences(of: legacyScreenClass,
+                                                            with: screenClass)
+            var newData = data
+            if relative.hasSuffix("/index.xml") {
+                newData = try rewriteIndex(data, metrics: metrics)
+            } else if relative.hasSuffix("/main.caml") {
+                newData = try rewriteRootCAML(data, metrics: metrics)
+            } else if relative.hasSuffix("Wallpaper.plist") || relative.hasSuffix("userInfo") {
+                newData = try replaceScreenClass(in: data, with: screenClass)
+            }
+            let destination = URL(fileURLWithPath: root.path + "/" + newRelative)
+            try fm.createDirectory(at: destination.deletingLastPathComponent(),
+                                   withIntermediateDirectories: true)
+            try newData.write(to: destination)
+        }
+    }
+
+    private static func rewriteIndex(_ data: Data,
+                                     metrics: PosterBoardScreenMetrics) throws -> Data {
+        guard var text = String(data: data, encoding: .utf8) else {
+            throw DriftError("视频描述符的 index.xml 读不出来。")
+        }
+        text = text.replacingOccurrences(of: "<real>390</real>",
+                                         with: "<real>\(metrics.width)</real>")
+        text = text.replacingOccurrences(of: "<real>844</real>",
+                                         with: "<real>\(metrics.height)</real>")
+        return Data(text.utf8)
+    }
+
+    private static func rewriteRootCAML(_ data: Data,
+                                        metrics: PosterBoardScreenMetrics) throws -> Data {
+        guard var text = String(data: data, encoding: .utf8) else {
+            throw DriftError("视频描述符的 main.caml 读不出来。")
+        }
+        text = text.replacingOccurrences(of: "bounds=\"0 0 390 844\"",
+                                         with: "bounds=\"0 0 \(metrics.width) \(metrics.height)\"")
+        text = text.replacingOccurrences(of: "position=\"195 422\"",
+                                         with: "position=\"\(Self.half(metrics.width)) \(Self.half(metrics.height))\"")
+        return Data(text.utf8)
+    }
+
+    /// The centre in points, without turning an even 195 into 195.0 —
+    /// the 390×844 regression compares the bundled skeleton byte for byte.
+    private static func half(_ value: Int) -> String {
+        value % 2 == 0 ? "\(value / 2)" : String(format: "%.1f", Double(value) / 2)
+    }
+
+    private static func replaceScreenClass(in data: Data, with screenClass: String) throws -> Data {
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw DriftError("视频描述符的尺寸声明读不出来。")
+        }
+        return Data(text.replacingOccurrences(of: legacyScreenClass,
+                                              with: screenClass).utf8)
+    }
+
+    /// The document sizes a stored loop product's layers were built for,
+    /// read from every `.ca/index.xml`. Live-photo products have no such
+    /// files and return an empty array. All layers are checked: an old iPad
+    /// product can have the chosen layer at the device size while the two
+    /// empty layers still declare 390×844.
+    static func productDocumentSizes(at directory: URL) -> [(width: Int, height: Int)] {
+        guard let walker = FileManager.default.enumerator(
+            at: directory, includingPropertiesForKeys: nil) else {
+            return []
+        }
+        var sizes: [(width: Int, height: Int)] = []
+        for case let url as URL in walker where url.lastPathComponent == "index.xml" {
+            guard let data = try? Data(contentsOf: url),
+                  let plist = try? PropertyListSerialization.propertyList(
+                    from: data, options: [], format: nil),
+                  let dict = plist as? [String: Any],
+                  let width = dict["documentWidth"] as? NSNumber,
+                  let height = dict["documentHeight"] as? NSNumber else {
+                continue
+            }
+            sizes.append((Int(width.doubleValue.rounded()), Int(height.doubleValue.rounded())))
+        }
+        return sizes
+    }
+
     /// `create_video_loop_files`.
     private static func generateLoop(plan: PosterBoardVideoPlan,
+                                     metrics capturedMetrics: PosterBoardScreenMetrics,
                                      outputDirectory: URL,
                                      log: @escaping @Sendable (String) -> Void) async throws {
+        // The framing box's ruler wins when it carries one: the user
+        // adjusted against that screen, and a later rotation must not
+        // silently move the document out from under those offsets.
+        let metrics = plan.framing?.document ?? capturedMetrics
         let root = outputDirectory.appendingPathComponent("descriptor/VideoCAML", conformingTo: .data)
-        try write(PosterBoardResources.videoLoopDescriptor, into: root)
+        try writeVideoLoopSkeleton(into: root, metrics: metrics)
 
         // The reference's path is fixed: the descriptor skeleton's own wallpaper
         // directory, whose `.ca` is what gets replaced.
+        let screenClass = metrics.logicalScreenClass
         let wallpaper = root.appendingPathComponent(
-            "versions/1/contents/9183.Custom-390w-844h@3x~iphone.wallpaper", conformingTo: .data)
+            "versions/1/contents/9183.Custom-\(screenClass).wallpaper", conformingTo: .data)
         let floating = wallpaper.appendingPathComponent(
-            "9183.Custom_Floating-390w-844h@3x~iphone.ca", conformingTo: .data)
+            "9183.Custom_Floating-\(screenClass).ca", conformingTo: .data)
         let background = wallpaper.appendingPathComponent(
-            "9183.Custom_Background-390w-844h@3x~iphone.ca", conformingTo: .data)
+            "9183.Custom_Background-\(screenClass).ca", conformingTo: .data)
 
         let ca: URL
         if plan.foreground {
@@ -172,6 +335,7 @@ enum PosterBoardVideo {
         log("  → video loop: decoding \(plan.name) into \(ca.lastPathComponent)")
         try await writeCAML(video: plan.video,
                             caDirectory: ca,
+                            metrics: metrics,
                             framing: plan.framing,
                             calculationMode: plan.calculationMode.rawValue,
                             reverse: plan.reverse,
@@ -181,6 +345,7 @@ enum PosterBoardVideo {
     /// `create_caml`: decode every frame, then write the frame list around them.
     private static func writeCAML(video: URL,
                                   caDirectory: URL,
+                                  metrics: PosterBoardScreenMetrics,
                                   framing: PosterBoardFraming?,
                                   calculationMode: String,
                                   reverse: Bool,
@@ -189,26 +354,35 @@ enum PosterBoardVideo {
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw DriftError("\(video.lastPathComponent) 没有视频轨道。")
         }
-        // `naturalSize`, **not** the size after `preferredTransform`: the frames
-        // below come out of a reader in their stored orientation, and OpenCV's
-        // decoder — the reference's — does not apply the transform either. The
-        // caml's frame bounds has to match the JPEGs it points at.
+        // The frames are decoded and encoded in their **display** orientation:
+        // the video page's framing box and lock-screen preview both apply
+        // `preferredTransform`, so a rotated video must not reach the Lock
+        // Screen sideways. A non-identity transform is applied by the reader
+        // composition below; an identity one keeps the old track-output path.
         let naturalSize = try await track.load(.naturalSize)
         let transform = try await track.load(.preferredTransform)
-        let width = Int(abs(naturalSize.width.rounded()))
-        let height = Int(abs(naturalSize.height.rounded()))
+        let displayRect = Self.displayRect(naturalSize: naturalSize, transform: transform)
+        let width = max(1, Int(abs(displayRect.width).rounded()))
+        let height = max(1, Int(abs(displayRect.height).rounded()))
+        // A rotation transform usually carries a translation that puts the
+        // rotated frame at a negative origin. The composition's canvas starts
+        // at 0,0, so without normalising that origin the whole frame lands
+        // outside the render size and the video is black.
+        let displayTransform = transform.concatenating(
+            CGAffineTransform(translationX: -displayRect.minX, y: -displayRect.minY))
         guard width > 0, height > 0 else {
             throw DriftError("\(video.lastPathComponent) 报告了一个 "
                 + "\(width)×\(height) 的帧——没有可解码的内容。")
         }
         if transform != .identity {
-            log("  ⚠️ \(video.lastPathComponent) carries a rotation transform; frames are "
-                + "decoded in their stored orientation, exactly as the reference's decoder "
-                + "produces them, so the wallpaper may be rotated on the Lock Screen.")
+            log("  → \(video.lastPathComponent) carries a rotation transform; "
+                + "frames are decoded in display orientation "
+                + "(\(width)×\(height)) so the Lock Screen matches the preview.")
         }
 
         let fps = try await framesPerSecond(of: track)
-        let seconds = CMTimeGetSeconds(try await asset.load(.duration))
+        let assetDuration = try await asset.load(.duration)
+        let seconds = CMTimeGetSeconds(assetDuration)
         let estimate = max(1, Int((seconds * fps).rounded()))
         guard estimate <= frameLimit else {
             throw DriftError("\(video.lastPathComponent) 大约有 \(estimate) 帧；"
@@ -227,9 +401,8 @@ enum PosterBoardVideo {
         // `cover` scales the frames to fill the document; the reference's own
         // default `bounds_scale` is 1.0 and its offsets are 0, so the defaults
         // reproduce it exactly, and a caller wanting travel passes more.
-        let screen = Self.screenSize(log: log)
-        let docWidth = screen.width
-        let docHeight = screen.height
+        let docWidth = metrics.width
+        let docHeight = metrics.height
         let cover = max(Double(docWidth) / Double(width), Double(docHeight) / Double(height))
         // The user's framing rides on the centred cover: their zoom
         // multiplies it, their drag moves the layer's centre by the
@@ -264,7 +437,10 @@ enum PosterBoardVideo {
                                                    duration: duration,
                                                    reverse: reverse ? 1 : 0)
         var written = 0
-        try decodeFrames(asset: asset, track: track) { frame in
+        try await decodeFrames(asset: asset, track: track,
+                               displaySize: (width: width, height: height),
+                               transform: displayTransform,
+                               fps: fps, duration: assetDuration, log: log) { frame in
             guard written < frameLimit else { return false }
             let jpeg = try Self.jpeg(frame)
             try jpeg.write(to: assets.appendingPathComponent("\(written).jpg"))
@@ -289,19 +465,33 @@ enum PosterBoardVideo {
     }
 
     /// The device screen in points, for the video page's framing
-    /// box. Deliberately the same numbers `screenSize` writes into
-    /// the document: the box the user adjusts and the geometry the
+    /// box. Deliberately the same numbers the descriptor skeleton
+    /// and caml write: the box the user adjusts and the geometry the
     /// decode writes are measured with one ruler, so the two cannot
     /// drift apart.
     static func deviceScreenPoints() -> (width: Int, height: Int) {
-        screenSize { _ in }
+        let metrics = deviceScreenMetrics()
+        return (metrics.width, metrics.height)
     }
 
     /// The same screen's scale, so the framing page can name the
     /// box in pixels (points × scale) the way the user knows their
     /// screen.
     static func deviceScreenScale() -> Double {
-        Double(activeScreen()?.scale ?? 1)
+        Double(deviceScreenMetrics().scale)
+    }
+
+    /// The screen metrics every video document is built from.
+    static func deviceScreenMetrics() -> PosterBoardScreenMetrics {
+        screenMetrics { _ in }
+    }
+
+    /// The display size after a video's rotation transform. The caml
+    /// frame bounds and the JPEGs both use this, so a rotated video
+    /// does not reach the Lock Screen sideways.
+    private static func displayRect(naturalSize: CGSize,
+                                    transform: CGAffineTransform) -> CGRect {
+        CGRect(origin: .zero, size: naturalSize).applying(transform)
     }
 
     /// The document size, in points: the device's own screen, which is the one
@@ -314,25 +504,23 @@ enum PosterBoardVideo {
     /// a build that cannot reach a scene has no better answer than the one it
     /// uses. The fallback is logged, because it silently changes the document
     /// every frame is laid out in.
-    private static func screenSize(log: @escaping @Sendable (String) -> Void)
-        -> (width: Int, height: Int) {
-        guard let bounds = activeScreenBounds(), !bounds.isEmpty else {
+    private static func screenMetrics(log: @escaping @Sendable (String) -> Void)
+        -> PosterBoardScreenMetrics {
+        guard let screen = activeScreen(), !screen.bounds.isEmpty else {
             log("  ⚠️ no window scene is reachable; falling back to the reference's "
-                + "390x844 document. The frames will be laid out for a screen this "
-                + "device does not have.")
-            return (390, 844)
+                + "390x844@3x~iphone document. The frames will be laid out for a screen "
+                + "this device does not have.")
+            return PosterBoardScreenMetrics(width: 390, height: 844, scale: 3, idiom: "iphone")
         }
+        let bounds = screen.bounds
         let width = max(1, Int(bounds.width.rounded()))
         let height = max(1, Int(bounds.height.rounded()))
-        log("  → document \(width)×\(height) points "
+        let scale = max(1, Int(screen.scale.rounded()))
+        let idiom = UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"
+        log("  → document \(width)×\(height) points @\(scale)x~\(idiom) "
             + "(the device screen; the reference assumes a 390x844 iPhone)")
-        return (width, height)
-    }
-
-    /// The bounds of a screen this app is actually on, or nil when no scene can
-    /// be reached (a unit-test host, a background extension).
-    private static func activeScreenBounds() -> CGRect? {
-        activeScreen()?.bounds
+        return PosterBoardScreenMetrics(width: width, height: height,
+                                        scale: scale, idiom: idiom)
     }
 
     /// The display of the foreground scene — the one screen every
@@ -520,7 +708,34 @@ enum PosterBoardVideo {
     /// The callback returns `false` to stop early.
     private static func decodeFrames(asset: AVURLAsset,
                                      track: AVAssetTrack,
-                                     consume: (CGImage) throws -> Bool) throws {
+                                     displaySize: (width: Int, height: Int),
+                                     transform: CGAffineTransform,
+                                     fps: Double,
+                                     duration: CMTime,
+                                     log: @escaping @Sendable (String) -> Void,
+                                     consume: (CGImage) throws -> Bool) async throws {
+        if transform == .identity {
+            try decodeTrack(asset: asset, track: track, consume: consume)
+            return
+        }
+        do {
+            try decodeComposition(asset: asset, track: track,
+                                  displaySize: displaySize, transform: transform,
+                                  fps: fps, duration: duration, consume: consume)
+        } catch let unavailable as CompositionUnavailable {
+            // Only a setup failure may fall back: `decodeComposition` has
+            // consumed nothing at that point. A write/read error after frames
+            // were emitted must propagate, or the fallback would write frame
+            // 0 again over the already-written files and double the caml list.
+            log("  ⚠️ 旋转视频的合成解码不可用（\(unavailable.message)），"
+                + "回退到逐帧生成器（会慢很多）")
+            try await decodeWithGenerator(asset: asset, fps: fps, duration: duration,
+                                          consume: consume)
+        }
+    }
+
+    private static func decodeTrack(asset: AVURLAsset, track: AVAssetTrack,
+                                    consume: (CGImage) throws -> Bool) throws {
         let reader = try AVAssetReader(asset: asset)
         let output = AVAssetReaderTrackOutput(
             track: track,
@@ -546,6 +761,88 @@ enum PosterBoardVideo {
         if reader.status == .failed {
             throw DriftError("帧解码失败："
                 + (reader.error?.localizedDescription ?? "没有给出原因"))
+        }
+    }
+
+    private static func decodeComposition(asset: AVURLAsset, track: AVAssetTrack,
+                                          displaySize: (width: Int, height: Int),
+                                          transform: CGAffineTransform,
+                                          fps: Double, duration: CMTime,
+                                          consume: (CGImage) throws -> Bool) throws {
+        let reader: AVAssetReader
+        do {
+            reader = try AVAssetReader(asset: asset)
+        } catch {
+            throw CompositionUnavailable(message: error.localizedDescription)
+        }
+        let settings: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        ]
+        // The track's stored pixels are unrotated. A video composition
+        // renders them through the preferred transform at the display
+        // size, which is exactly what the framing box and lock preview
+        // show; the old track-output path would flash them sideways.
+        let composition = AVMutableVideoComposition()
+        composition.renderSize = CGSize(width: CGFloat(displaySize.width),
+                                        height: CGFloat(displaySize.height))
+        composition.frameDuration = CMTime(seconds: 1.0 / max(1.0, fps),
+                                            preferredTimescale: 600)
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
+        let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+        layer.setTransform(transform, at: .zero)
+        instruction.layerInstructions = [layer]
+        composition.instructions = [instruction]
+        let output = AVAssetReaderVideoCompositionOutput(
+            videoTracks: [track],
+            videoSettings: settings)
+        output.videoComposition = composition
+        output.alwaysCopiesSampleData = false
+        guard reader.canAdd(output) else {
+            throw CompositionUnavailable(message: "composition output was refused")
+        }
+        reader.add(output)
+        guard reader.startReading() else {
+            throw CompositionUnavailable(message: reader.error?.localizedDescription
+                ?? "reader refused to start")
+        }
+        while let sample = output.copyNextSampleBuffer() {
+            defer { CMSampleBufferInvalidate(sample) }
+            guard let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
+            var image: CGImage?
+            guard VTCreateCGImageFromCVPixelBuffer(buffer, options: nil, imageOut: &image) == noErr,
+                  let image else { continue }
+            if try !consume(image) { break }
+        }
+        if reader.status == .reading { reader.cancelReading() }
+        if reader.status == .failed {
+            throw DriftError("帧解码失败："
+                + (reader.error?.localizedDescription ?? "没有给出原因"))
+        }
+    }
+
+    /// Last-resort path for a rotated video whose composition output is
+    /// refused: `AVAssetImageGenerator` applies the preferred transform
+    /// itself, at the cost of seeking to every frame.
+    private static func decodeWithGenerator(asset: AVURLAsset, fps: Double,
+                                            duration: CMTime,
+                                            consume: (CGImage) throws -> Bool) async throws {
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let total = max(1, Int((CMTimeGetSeconds(duration) * fps).rounded()))
+        for index in 0..<total {
+            let time = CMTime(seconds: Double(index) / max(1.0, fps),
+                              preferredTimescale: 600)
+            do {
+                let frame = try await generator.image(at: time)
+                if try !consume(frame.image) { break }
+            } catch {
+                // A seek can fail on a damaged frame; keep going so one
+                // bad sample does not lose the whole video.
+                continue
+            }
         }
     }
 

@@ -96,6 +96,8 @@
 		<string>_remotepairing-pairable-host._tcp</string>
 		<string>_remotepairing-pairable-host._tcp.</string>
 	</array>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>从相册选取视频时读取原视频，避免系统把 4K 转成 1080p 兼容版。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>把赞赏码图片存到相册，方便用微信扫一扫识别。</string>
 	<key>NSLocalNetworkUsageDescription</key>

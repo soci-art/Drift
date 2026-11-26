@@ -814,10 +814,10 @@ enum PosterBoardLocal {
 
     private static func locateContainer(log: @escaping @Sendable (String) -> Void) throws -> (path: String, handle: Int64) {
         var lastFailure: DriftError?
-        let deadline = Date().addingTimeInterval(60)
+        let deadline = Date().addingTimeInterval(90)
         for round in 1...3 {
             guard Date() < deadline else {
-                log("本机定位：达到 60 秒总时限，停止后续扫描轮次")
+                log("本机定位：达到 90 秒总时限，停止后续扫描轮次")
                 break
             }
             do {
@@ -827,7 +827,7 @@ enum PosterBoardLocal {
             } catch let error as DriftError where error.message.hasPrefix("这次没找到壁纸商店") {
                 lastFailure = error
                 if Date() >= deadline {
-                    log("本机定位：达到 60 秒总时限，结束定位")
+                    log("本机定位：达到 90 秒总时限，结束定位")
                     break
                 }
                 if round < 3 {
@@ -972,8 +972,11 @@ enum PosterBoardLocal {
             return found
         }
         if pathleak.timedOut {
-            log("pathleak 终局：达到本机定位 60 秒总时限，已停止扫描；周期补问 \(periodicRecheckRounds) 轮")
-            throw DriftError("这次没找到壁纸商店。")
+            log("pathleak 终局：达到本机定位 90 秒总时限，已停止扫描；继续尝试根目录扩展；周期补问 \(periodicRecheckRounds) 轮")
+            // The root extension is the last cheap source before failing.
+            // It used to be unreachable on a timeout because this branch
+            // threw; on iOS 26.5 the log shows exactly that (no root-listing
+            // line after segment 113). Fall through instead and let it try.
         }
         if let path = pathleak.foundPath {
             let handle = try WorseQueryEscape.consume(path: path, createDirectory: true)
@@ -992,7 +995,12 @@ enum PosterBoardLocal {
         }
 
         // Keep the existing end-of-scan supplementary pass as the final round.
-        if !recheckCandidates.isEmpty {
+        // On a timeout the budget is already spent: this pass has no deadline
+        // of its own and can run for minutes over every collected candidate,
+        // so go straight to the cheap root-listing fallback instead.
+        if pathleak.timedOut {
+            log("pathleak 终局：已超时，跳过终局补问，直接尝试根目录扩展")
+        } else if !recheckCandidates.isEmpty {
             let candidatesToRetry = recheckCandidates
             let finalRound = periodicRecheckRounds + 1
             log("pathleak 终局补问第 \(finalRound) 轮：全盘扫描结束，候选 \(candidatesToRetry.count) 个，按收集顺序逐个复查")
@@ -1072,6 +1080,7 @@ enum PosterBoardLocal {
         var consumed = 0
         var refused = 0
         var recheckPaths = Set<String>()
+        var unidentifiedSamples: [String] = []
         var identified = 0
         var probed = 0
         let semaphore = DispatchSemaphore(value: probeConcurrency)
@@ -1115,6 +1124,9 @@ enum PosterBoardLocal {
                     } else {
                         lock.lock()
                         recheckPaths.insert(candidate)
+                        if unidentifiedSamples.count < 5 {
+                            unidentifiedSamples.append(candidate)
+                        }
                         lock.unlock()
                     }
                 } catch {
@@ -1142,6 +1154,10 @@ enum PosterBoardLocal {
                    average, elapsed))
         if refused > 0 {
             log("\(label)：\(refused) 个候选容器扩展被拒绝，继续尝试其余路径")
+        }
+        if !unidentifiedSamples.isEmpty {
+            log("\(label)：consume 成功但身份核对未通过的样例如下，用来判断是没扫到目标还是 store 路径/权限不符："
+                + unidentifiedSamples.joined(separator: ", "))
         }
         return found
     }

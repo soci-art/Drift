@@ -26,10 +26,12 @@ struct VideoFramingView: View {
     @Environment(\.dismiss) private var dismiss
 
     /// The screen the box is shaped by — the same numbers the
-    /// decode writes into the document.
-    private let docW: Int = PosterBoardVideo.deviceScreenPoints().width
-    private let docH: Int = PosterBoardVideo.deviceScreenPoints().height
-    private let screenScale: Double = PosterBoardVideo.deviceScreenScale()
+    /// descriptor skeleton and caml write. Carried into the framing
+    /// so a decode after a rotation still uses this ruler.
+    private let metrics: PosterBoardScreenMetrics = PosterBoardVideo.deviceScreenMetrics()
+    private var docW: Int { metrics.width }
+    private var docH: Int { metrics.height }
+    private var screenScale: Double { Double(metrics.scale) }
 
     /// The video's display size (after its rotation transform),
     /// loaded on appear; the box is inert until it lands.
@@ -179,7 +181,8 @@ struct VideoFramingView: View {
                     Button("完成") {
                         onDone(PosterBoardFraming(scale: scale,
                                                   offsetX: offsetDoc.width,
-                                                  offsetY: offsetDoc.height))
+                                                  offsetY: offsetDoc.height,
+                                                  document: metrics))
                         leave()
                     }
                     .font(.body.weight(.semibold))
