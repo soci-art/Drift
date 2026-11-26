@@ -129,6 +129,71 @@ struct RestoreFingerprint {
     }
 }
 
+/// The pre-write-back space check.
+///
+/// The restore payload bytes are already on disk when this runs, so the
+/// number compared here is not "does the package fit" — it is the room
+/// the device needs to copy/stage the package while applying it.
+/// `RestoreDontCopyBackup` is false (copy=true), so one full copy is
+/// assumed; the factor is two for the staging/atomic-write peak that is not
+/// otherwise measured. `packageBytes` covers payload files only, so the fixed
+/// margin also covers `Manifest.db` and the three backup plists. The live
+/// free-space API is the strict `systemFreeSize`, not
+/// `volumeAvailableCapacityForImportantUsage` (the latter includes reclaimable
+/// space and can overstate what is writable).
+enum RestoreSpaceGate {
+    static let copyFactor: Int64 = 2
+    static let marginBytes: Int64 = 256 * 1024 * 1024
+
+    static func requiredBytes(packageBytes: Int64) throws -> Int64 {
+        guard packageBytes >= 0 else {
+            throw DriftRestoreError("恢复包大小是负数，本次没有写回。")
+        }
+        let (doubled, overflow) = packageBytes.multipliedReportingOverflow(by: copyFactor)
+        guard !overflow else {
+            throw DriftRestoreError("恢复包大小超出可计算范围，本次没有写回。")
+        }
+        let (required, additionOverflow) = doubled.addingReportingOverflow(marginBytes)
+        guard !additionOverflow else {
+            throw DriftRestoreError("恢复包所需的写回空间超出可计算范围，本次没有写回。")
+        }
+        return required
+    }
+
+    /// Strict free space on the volume that holds the backup root. The
+    /// important-usage capacity used elsewhere counts purgeable space and is
+    /// not a safe basis for a "do not start" gate.
+    static func strictFreeSpaceBytes() -> Int64? {
+        guard let attributes = try? FileManager.default.attributesOfFileSystem(
+            forPath: URL.documents.path),
+              let bytes = attributes[.systemFreeSize] as? NSNumber else {
+            return nil
+        }
+        return max(Int64(0), bytes.int64Value)
+    }
+
+    static func evaluate(packageBytes: Int64) throws {
+        let required = try requiredBytes(packageBytes: packageBytes)
+        guard let available = strictFreeSpaceBytes() else {
+            AppLog.write("restore space gate: cannot read systemFreeSize; "
+                + "refusing the write-back (packageBytes=\(packageBytes), "
+                + "requiredBytes=\(required))")
+            throw DriftRestoreError("读不到设备剩余空间，为了安全本次没有写回。请确认系统状态正常后重新刷入。")
+        }
+        AppLog.write("restore space gate: packageBytes=\(packageBytes), "
+            + "copyFactor=\(copyFactor), marginBytes=\(marginBytes), "
+            + "requiredBytes=\(required), availableBytes=\(available), "
+            + "source=systemFreeSize")
+        guard available >= required else {
+            let need = ByteCountFormatter.string(fromByteCount: required, countStyle: .file)
+            let have = ByteCountFormatter.string(fromByteCount: available, countStyle: .file)
+            let shortfall = ByteCountFormatter.string(
+                fromByteCount: required - available, countStyle: .file)
+            throw DriftRestoreError("设备空间不足，本次没有写回。写回需要约 \(need) 可用空间，当前可用只有 \(have)，还差约 \(shortfall)；请先清出空间，再重新刷入。")
+        }
+    }
+}
+
 /// What a dry run hands back: enough for the home page's dry-run card
 /// and for the history entry the write-back eventually records.
 struct RestoreDryRunReport {
@@ -793,10 +858,34 @@ final class DriftRestoreService {
 
     // MARK: - Write-back
 
+    /// Whether a gateway error string names a specific device error code.
+    ///
+    /// `raw.contains("105")` is not enough: the restore error text also carries
+    /// `after taking <n> file(s)`, so a file count can contain the digits of the
+    /// code. Every spelling is matched with a right boundary so `105` does not
+    /// match `1050`/`1051`.
+    private static func mentionsDeviceCode(_ raw: String, _ code: Int) -> Bool {
+        for phrase in ["error code \(code)", "MBErrorDomain/\(code)",
+                       "ErrorCode \(code)", "Error code \(code)"] {
+            guard let range = raw.range(of: phrase) else { continue }
+            if range.upperBound == raw.endIndex { return true }
+            if !raw[range.upperBound].isNumber { return true }
+        }
+        return false
+    }
+
     func writeBack(onProgress: (@Sendable (Double) -> Void)? = nil) async throws {
         guard let prepared else {
             throw DriftRestoreError("还没有准备好的恢复包。")
         }
+        // Space gate before the dry run is consumed: if it refuses, the
+        // restore has not started and nothing on the device has changed.
+        // The check is deliberately before `self.prepared = nil`: the refusal
+        // itself does not consume the dry run. The current one-flow UI discards
+        // the service on any write-back error and starts a new dry run, so a
+        // retry without re-pulling would also need an engine/UI path; this
+        // ordering keeps that option open.
+        try RestoreSpaceGate.evaluate(packageBytes: prepared.report.packageBytes)
         // Whatever happens from here, this dry run is spent: a package
         // is written back at most once, and a failed or refused
         // write-back is followed by a fresh dry run, never a retry on
@@ -839,6 +928,17 @@ final class DriftRestoreService {
             }
         } catch {
             let raw = error.localizedDescription
+            // 105 is the device's "not enough space" code. Match a full code
+            // token, never a bare "105": the same error string carries
+            // "after taking <n> file(s)", so a file count containing 105
+            // would be misread as a space refusal. 105 can arrive before or
+            // after files are applied, so the wording must not claim the
+            // device is unchanged.
+            if Self.mentionsDeviceCode(raw, 105) {
+                AppLog.write("restore write-back: device reported insufficient space "
+                    + "(105); the outcome may be partial")
+                throw DriftRestoreError("设备在写回阶段报告空间不足，写回没有完成。恢复可能已经应用了一部分：请重启后检查壁纸；如果没有生效，先用电脑整机备份恢复，清出空间后再重新刷入。")
+            }
             // The one refusal with a known user-side cause: Find My is
             // still on. There is no programmatic check for it anywhere
             // in the stack, so the device's 211 is where it surfaces.
