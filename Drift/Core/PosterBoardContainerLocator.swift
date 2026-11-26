@@ -11,6 +11,105 @@ enum PosterBoardContainerLocator {
     static let applicationsRoot = "/private/var/mobile/Containers/Data/Application"
     private static let segmentSize: UInt64 = 200_000
 
+    private static let progressKey = "drift.posterboard.pathleak.progress.v1"
+    private static let progressSchema = 2
+
+    /// A cold scan can outlive one locate attempt (timeout, app relaunch,
+    /// prewarm). High/low alternation needs two frontiers, an explicit next
+    /// direction, and (when the probe's upper bound grows) a separate
+    /// high-side tail that is scanned before the old frontiers.
+    private struct PathleakProgress: Codable {
+        var schema: Int
+        var maxInode: UInt64
+        var low: UInt64
+        var high: UInt64
+        var scanned: UInt64
+        var segments: Int
+        var candidates: Int
+        var phaseHigh: Bool
+        var tailLow: UInt64?
+        var tailHigh: UInt64?
+    }
+
+    private static func loadProgress(maxInode: UInt64,
+                                     log: (String) -> Void) -> PathleakProgress? {
+        guard let data = UserDefaults.standard.data(forKey: progressKey) else { return nil }
+        guard var progress = try? JSONDecoder().decode(PathleakProgress.self, from: data) else {
+            clearProgress()
+            log("[pathleak] 进度损坏，旧进度清零，从头扫")
+            return nil
+        }
+        guard progress.schema == progressSchema else {
+            clearProgress()
+            log("[pathleak] 扫描算法版本变化（旧 \(progress.schema)，新 \(progressSchema)），旧进度清零")
+            return nil
+        }
+        // Validate against the bound the progress was written for, before
+        // replacing it with the new (possibly larger) probe bound.
+        guard progress.low >= 1,
+              progress.low <= progress.high,
+              progress.high <= progress.maxInode,
+              progress.scanned <= progress.maxInode,
+              progress.segments >= 0,
+              progress.candidates >= 0 else {
+            clearProgress()
+            log("[pathleak] 进度范围不合法，旧进度清零，从头扫")
+            return nil
+        }
+        if maxInode < progress.maxInode {
+            clearProgress()
+            log("[pathleak] maxInode 变小（旧 \(progress.maxInode)，新 \(maxInode)），旧进度清零，从头扫")
+            return nil
+        }
+        if maxInode > progress.maxInode {
+            if progress.tailLow != nil || progress.tailHigh != nil {
+                // Growing while a tail is still unfinished would need a
+                // second disjoint tail; restart instead of double-counting.
+                clearProgress()
+                log("[pathleak] maxInode 变大且旧尾部未扫完，旧进度清零，从头扫")
+                return nil
+            }
+            let oldMax = progress.maxInode
+            progress.maxInode = maxInode
+            progress.tailLow = oldMax + 1
+            progress.tailHigh = maxInode
+            log("[pathleak] maxInode 变大（旧 \(oldMax)，新 \(maxInode)），先补扫新增高段，再续旧进度")
+        }
+        if progress.tailLow == nil || progress.tailHigh == nil {
+            guard progress.tailLow == nil && progress.tailHigh == nil else {
+                clearProgress()
+                log("[pathleak] 尾部进度不完整，旧进度清零，从头扫")
+                return nil
+            }
+        } else if let low = progress.tailLow, let high = progress.tailHigh {
+            guard low >= 1, low <= high, high <= progress.maxInode,
+                  low > progress.high else {
+                clearProgress()
+                log("[pathleak] 尾部进度范围不合法，旧进度清零，从头扫")
+                return nil
+            }
+        }
+        return progress
+    }
+
+    private static func saveProgress(maxInode: UInt64, low: UInt64, high: UInt64,
+                                     scanned: UInt64, segments: Int, candidates: Int,
+                                     phaseHigh: Bool, tailLow: UInt64?, tailHigh: UInt64?) {
+        let progress = PathleakProgress(schema: progressSchema, maxInode: maxInode,
+                                        low: low, high: high, scanned: scanned,
+                                        segments: segments, candidates: candidates,
+                                        phaseHigh: phaseHigh, tailLow: tailLow, tailHigh: tailHigh)
+        guard let data = try? JSONEncoder().encode(progress) else { return }
+        UserDefaults.standard.set(data, forKey: progressKey)
+    }
+
+    /// Called when any source finds the container (cached, known, CSStore,
+    /// root) so a later scan starts from zero rather than resuming a stale
+    /// attempt.
+    static func clearProgress() {
+        UserDefaults.standard.removeObject(forKey: progressKey)
+    }
+
     struct PathleakResult {
         let foundPath: String?
         let available: Bool
@@ -20,6 +119,11 @@ enum PosterBoardContainerLocator {
         let segments: Int
         let candidates: Int
         let enumerationMilliseconds: Double
+
+        var coverage: Double {
+            guard maxInode > 0 else { return 0 }
+            return min(1.0, Double(scannedInodes) / Double(maxInode))
+        }
     }
 
     private final class SegmentResultBox: @unchecked Sendable {
@@ -72,35 +176,78 @@ enum PosterBoardContainerLocator {
         // without ever reaching it. New containers sit at the high end; old
         // system ones at the low end. Alternating covers both without
         // guessing which one this device is.
+        var scanMax = limit.maxInode
         var low: UInt64 = 1
-        var high: UInt64 = limit.maxInode
-        while low <= high {
+        var high: UInt64 = scanMax
+        var phaseHigh = true
+        var tailLow: UInt64?
+        var tailHigh: UInt64?
+        if let progress = loadProgress(maxInode: scanMax, log: log) {
+            scanMax = progress.maxInode
+            low = progress.low
+            high = progress.high
+            scanned = progress.scanned
+            segments = progress.segments
+            candidates = progress.candidates
+            phaseHigh = progress.phaseHigh
+            tailLow = progress.tailLow
+            tailHigh = progress.tailHigh
+            let percent = scanMax > 0
+                ? Double(scanned) / Double(scanMax) * 100 : 0
+            log(String(format: "[pathleak] 续扫：low=%llu high=%llu，已扫 %llu/%llu（%.1f%%），段 %d，候选 %d，下一段%@",
+                       low, high, scanned, scanMax, percent, segments, candidates,
+                       tailLow != nil ? "补扫新增高段" : (phaseHigh ? "高段" : "低段")))
+        } else {
+            log(String(format: "[pathleak] 新扫：maxInode=%llu，从高低两端开始", scanMax))
+        }
+        while low <= high || (tailLow != nil && tailHigh != nil) {
             if Date() >= deadline {
-                log("pathleak：达到本次定位时限，已扫描 \(scanned)/\(limit.maxInode) 个 inode")
+                log("pathleak：达到本次定位时限，已扫描 \(scanned)/\(scanMax) 个 inode")
                 return PathleakResult(foundPath: nil, available: true, timedOut: true,
-                                      maxInode: limit.maxInode, scannedInodes: scanned,
+                                      maxInode: scanMax, scannedInodes: scanned,
                                       segments: segments, candidates: candidates,
                                       enumerationMilliseconds: enumerationMilliseconds)
             }
 
-            let fromHigh = segments % 2 == 0
+            let fromHigh: Bool
             let start: UInt64
             let end: UInt64
-            if fromHigh {
+            if let floor = tailLow, let tailEnd = tailHigh {
+                // Scan the range added by a larger probe upper bound first;
+                // it sits entirely above the old frontier, so it cannot
+                // double-count the normal high/low ranges.
+                fromHigh = true
+                end = tailEnd
+                start = end >= segmentSize ? max(floor, end - segmentSize + 1) : floor
+                if start > 1 {
+                    let next = start - 1
+                    if next >= floor {
+                        tailHigh = next
+                    } else {
+                        tailLow = nil
+                        tailHigh = nil
+                    }
+                } else {
+                    tailLow = nil
+                    tailHigh = nil
+                }
+            } else if phaseHigh {
                 end = high
                 start = end >= segmentSize ? max(low, end - segmentSize + 1) : low
                 high = start > 1 ? start - 1 : 0
+                phaseHigh = false
             } else {
                 start = low
                 end = min(high, low + segmentSize - 1)
                 low = end < UInt64.max ? end + 1 : UInt64.max
+                phaseHigh = true
             }
             let started = DispatchTime.now()
             let remaining = deadline.timeIntervalSinceNow
             guard remaining > 0 else {
                 log("[pathleak] 段 \(segments + 1) 尚未开始：总时限已耗尽")
                 return PathleakResult(foundPath: nil, available: true, timedOut: true,
-                                      maxInode: limit.maxInode, scannedInodes: scanned,
+                                      maxInode: scanMax, scannedInodes: scanned,
                                       segments: segments, candidates: candidates,
                                       enumerationMilliseconds: enumerationMilliseconds)
             }
@@ -120,7 +267,7 @@ enum PosterBoardContainerLocator {
                 log(String(format: "[pathleak] 段 %d 超时：inode %llu–%llu，等待 %.0f ms；底层枚举线程无法强制终止，本轮停止继续扫描",
                            segments + 1, start, end, elapsed))
                 return PathleakResult(foundPath: nil, available: true, timedOut: true,
-                                      maxInode: limit.maxInode, scannedInodes: scanned,
+                                      maxInode: scanMax, scannedInodes: scanned,
                                       segments: segments, candidates: candidates,
                                       enumerationMilliseconds: enumerationMilliseconds + elapsed)
             }
@@ -128,22 +275,35 @@ enum PosterBoardContainerLocator {
             let elapsed = Double(DispatchTime.now().uptimeNanoseconds - started.uptimeNanoseconds) / 1_000_000
             enumerationMilliseconds += elapsed
             let counted = end - start + 1
-            scanned = min(limit.maxInode, scanned + counted)
+            scanned = min(scanMax, scanned + counted)
             segments += 1
             candidates += leaked.count
             log(String(format: "[pathleak] 段 %d 完成：inode %llu–%llu，本段 %d 个候选，累计 %d 个，耗时 %.0f ms",
                        segments, start, end, leaked.count, candidates, elapsed))
 
             if let found = inspect(leaked, segments) {
+                clearProgress()
+                log("[pathleak] 已找到容器，扫描进度清零")
                 return PathleakResult(foundPath: found, available: true, timedOut: false,
-                                      maxInode: limit.maxInode, scannedInodes: scanned,
+                                      maxInode: scanMax, scannedInodes: scanned,
                                       segments: segments, candidates: candidates,
                                       enumerationMilliseconds: enumerationMilliseconds)
             }
+            if low <= high || (tailLow != nil && tailHigh != nil) {
+                saveProgress(maxInode: scanMax, low: low, high: high,
+                             scanned: scanned, segments: segments, candidates: candidates,
+                             phaseHigh: phaseHigh, tailLow: tailLow, tailHigh: tailHigh)
+            }
         }
 
+        // Reaching here means the whole inode space was covered. The next
+        // attempt must start from zero so a container that appears later can
+        // be found; the progress checkpoint is not a permanent "done" marker.
+        clearProgress()
+        log(String(format: "[pathleak] 全量扫完：%llu/%llu 个 inode，段 %d，候选 %d；进度清零，下次从头扫",
+                   scanned, scanMax, segments, candidates))
         return PathleakResult(foundPath: nil, available: true, timedOut: false,
-                              maxInode: limit.maxInode, scannedInodes: scanned,
+                              maxInode: scanMax, scannedInodes: scanned,
                               segments: segments, candidates: candidates,
                               enumerationMilliseconds: enumerationMilliseconds)
     }

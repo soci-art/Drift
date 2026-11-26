@@ -579,6 +579,7 @@ enum KernelDirectProbe {
                 if let store = storeIn(container: container) {
                     log(String(format: "[容器定位] 缓存命中，耗时 %.2f 秒", Date().timeIntervalSince(cacheStarted)))
                     log("[内核探针] 5/5 找法一命中：\(container)")
+                    PosterBoardContainerLocator.clearProgress()
                     return (LocatedStore(container: container,
                                          store: store,
                                          structureVersions: structureVersions(in: store)), false)
@@ -600,6 +601,7 @@ enum KernelDirectProbe {
                let store = storeIn(container: container) {
                 log("[内核探针] CSStore 命中 PosterBoard 容器：\\(container)")
                 PosterBoardLocal.cachedContainer = container
+                PosterBoardContainerLocator.clearProgress()
                 return (LocatedStore(container: container, store: store,
                                      structureVersions: structureVersions(in: store)), false)
             }
@@ -639,6 +641,7 @@ enum KernelDirectProbe {
                 + "扫描 \(pathleak.scannedInodes)/\(pathleak.maxInode) 个 inode，"
                 + "候选 \(pathleak.candidates) 个，枚举耗时 "
                 + String(format: "%.0f ms", pathleak.enumerationMilliseconds))
+            PosterBoardContainerLocator.clearProgress()
             return (LocatedStore(container: container, store: store,
                                  structureVersions: structureVersions(in: store)), false)
         }
@@ -674,6 +677,7 @@ enum KernelDirectProbe {
             if let store = storeIn(container: container) {
                 log("[内核探针] 5/5 找法二命中（容器管理查询）：\(container)")
                 PosterBoardLocal.cachedContainer = container
+                PosterBoardContainerLocator.clearProgress()
                 return (LocatedStore(container: container,
                                      store: store,
                                      structureVersions: structureVersions(in: store)), false)
@@ -692,6 +696,7 @@ enum KernelDirectProbe {
             if let store = storeIn(container: container) {
                 log("[内核探针] 5/5 找法三命中（商店目录扫描）：\(container)")
                 PosterBoardLocal.cachedContainer = container
+                PosterBoardContainerLocator.clearProgress()
                 return (LocatedStore(container: container,
                                      store: store,
                                      structureVersions: structureVersions(in: store)), false)
