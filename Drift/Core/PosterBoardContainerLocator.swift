@@ -232,11 +232,13 @@ enum PosterBoardContainerLocator {
                     tailHigh = nil
                 }
             } else if phaseHigh {
+                fromHigh = true
                 end = high
                 start = end >= segmentSize ? max(low, end - segmentSize + 1) : low
                 high = start > 1 ? start - 1 : 0
                 phaseHigh = false
             } else {
+                fromHigh = false
                 start = low
                 end = min(high, low + segmentSize - 1)
                 low = end < UInt64.max ? end + 1 : UInt64.max
