@@ -1,6 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import AVFoundation
+import Photos
 import PhotosUI
 
 /// The video-wallpaper page: one video (+ its freeze frame, picked from
@@ -434,13 +435,99 @@ struct DriftVideoView: View {
         }
     }
 
-    /// A video picked from Photos: the system hands over a temporary
-    /// file that disappears when the callback returns, so stage a copy
-    /// first, then run it through the same import path as a file pick.
+    /// A video picked from Photos. Prefer the original asset resource:
+    /// `loadFileRepresentation` with the generic movie type can hand
+    /// back a system-transcoded 1080p copy (the 4K-in, 1080p-out case), so
+    /// the primary route asks Photos for the original file. If the asset
+    /// identifier or the read authorization is unavailable, fall back to
+    /// the item provider with `.current` and the video's own type.
+    @MainActor
     private func importFromPhotos(_ result: PHPickerResult) {
         importingPhotos = false
+        if let identifier = result.assetIdentifier {
+            Task { await importOriginalVideo(assetIdentifier: identifier, fallback: result) }
+        } else {
+            loadPhotoVideo(result)
+        }
+    }
+
+    /// The original-resource route. `PHAssetResourceManager` writes the asset's
+    /// own video file (not a compatible transcode) to a temporary path.
+    @MainActor
+    private func importOriginalVideo(assetIdentifier: String, fallback: PHPickerResult) async {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        var authorized = status == .authorized || status == .limited
+        if status == .notDetermined {
+            let granted = await withCheckedContinuation { (continuation: CheckedContinuation<PHAuthorizationStatus, Never>) in
+                PHPhotoLibrary.requestAuthorization(for: .readWrite) {
+                    continuation.resume(returning: $0)
+                }
+            }
+            authorized = granted == .authorized || granted == .limited
+        }
+        guard authorized else {
+            DriftEngine.shared.log("Photos: 相册读取权限不可用，回退到系统提供的版本（可能被转码）")
+            loadPhotoVideo(fallback)
+            return
+        }
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: [assetIdentifier], options: nil)
+        guard let asset = assets.firstObject else {
+            DriftEngine.shared.log("Photos: 找不到相册资源 \(assetIdentifier)，回退到系统提供的版本")
+            loadPhotoVideo(fallback)
+            return
+        }
+        let resources = PHAssetResource.assetResources(for: asset)
+        // `.video` is the asset's current video resource. `.fullSizeVideo`
+        // is the pre-adjustment original, which for an edited/cropped asset
+        // is longer and can hit the 400-frame cap; use it only as a fallback.
+        guard let resource = resources.first(where: { $0.type == .video })
+                ?? resources.first(where: { $0.type == .fullSizeVideo }) else {
+            DriftEngine.shared.log("Photos: 相册资源没有视频原片，回退到系统提供的版本")
+            loadPhotoVideo(fallback)
+            return
+        }
+        let filename = resource.originalFilename
+        let base = (filename as NSString).deletingPathExtension
+        let ext = (filename as NSString).pathExtension
+        let staging = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(base.isEmpty ? "photo-video" : base).\(ext.isEmpty ? "mov" : ext)")
+        try? FileManager.default.removeItem(at: staging)
+        let options = PHAssetResourceRequestOptions()
+        options.isNetworkAccessAllowed = true
+        do {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                PHAssetResourceManager.default().writeData(
+                    for: resource, toFile: staging, options: options) { error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume()
+                    }
+                }
+            }
+        } catch {
+            DriftEngine.shared.log("Photos: 读取原片失败（\(error.localizedDescription)），回退到系统提供的版本")
+            loadPhotoVideo(fallback)
+            return
+        }
+        DriftEngine.shared.log("Photos: 使用原片 \(filename)（\(resource.type.rawValue)）")
+        importPicked([staging], into: PosterBoard.videoDirectory) { url in
+            selection.video = url
+            selection.thumbnail = nil
+            selection.framing = nil
+        }
+    }
+
+    /// Fallback: the item provider's current representation. Ask for a
+    /// concrete movie type rather than `public.movie`, which is the generic
+    /// request that lets the system pick a compatible (transcoded) copy.
+    @MainActor
+    private func loadPhotoVideo(_ result: PHPickerResult) {
         let provider = result.itemProvider
-        let typeIdentifier = UTType.movie.identifier
+        let typeIdentifier = provider.registeredTypeIdentifiers.first {
+            guard let type = UTType($0) else { return false }
+            return type.conforms(to: .movie)
+        } ?? UTType.movie.identifier
         guard provider.hasItemConformingToTypeIdentifier(typeIdentifier) else {
             session.errorText = "这段视频读不出来，换一段试试。"
             return
@@ -523,9 +610,13 @@ private struct PhotoVideoPicker: UIViewControllerRepresentable {
     var onCancel: () -> Void
 
     func makeUIViewController(context: Context) -> PHPickerViewController {
-        var configuration = PHPickerConfiguration()
+        var configuration = PHPickerConfiguration(photoLibrary: .shared())
         configuration.filter = .videos
         configuration.selectionLimit = 1
+        // Current, not compatible: a 4K source must not arrive as the
+        // system's 1080p compatibility transcode. The original-asset
+        // route above is the primary; this keeps the fallback honest too.
+        configuration.preferredAssetRepresentationMode = .current
         let controller = PHPickerViewController(configuration: configuration)
         controller.delegate = context.coordinator
         return controller

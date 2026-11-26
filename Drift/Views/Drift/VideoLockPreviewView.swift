@@ -28,8 +28,12 @@ struct VideoLockPreviewView: View {
         DispatchQueue.main.async { dismiss() }
     }
 
-    private let docW: Int = PosterBoardVideo.deviceScreenPoints().width
-    private let docH: Int = PosterBoardVideo.deviceScreenPoints().height
+    private var docW: Int {
+        (framing?.document ?? PosterBoardVideo.deviceScreenMetrics()).width
+    }
+    private var docH: Int {
+        (framing?.document ?? PosterBoardVideo.deviceScreenMetrics()).height
+    }
 
     var body: some View {
         GeometryReader { geo in
