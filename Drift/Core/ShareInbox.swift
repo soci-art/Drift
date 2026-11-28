@@ -49,8 +49,8 @@ enum ShareInbox {
         let endMarker = Data("</plist>".utf8)
         let end = (data as NSData).range(
             of: endMarker, options: [],
-            range: NSRange(location: start.lowerBound,
-                           length: data.count - start.lowerBound))
+            in: NSRange(location: start.lowerBound,
+                        length: data.count - start.lowerBound))
         guard end.location != NSNotFound else { return [] }
         let plistData = data[start.lowerBound..<(end.location + end.length)]
         guard let object = try? PropertyListSerialization.propertyList(
