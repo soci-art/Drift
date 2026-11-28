@@ -784,10 +784,10 @@ enum PosterBoardVideo {
                                   displaySize: displaySize, transform: transform,
                                   fps: fps, duration: duration, consume: counting)
         } catch let unavailable as CompositionUnavailable {
-            // Only a setup failure may fall back: `decodeComposition` has
-            // consumed nothing at that point. A write/read error after frames
-            // were emitted must propagate, or the fallback would write frame
-            // 0 again over the already-written files and double the caml list.
+            // A setup failure falls back from frame 0: `decodeComposition`
+            // has consumed nothing at that point. A reader failure after
+            // frames were emitted lands in the DecodeFailure catch below
+            // and resumes from the break point instead of restarting.
             log("  ⚠️ 旋转视频的合成解码不可用（\(unavailable.message)），"
                 + "回退到逐帧生成器（会慢很多）")
             try await decodeWithGenerator(asset: asset, fps: fps, duration: duration,
@@ -800,26 +800,31 @@ enum PosterBoardVideo {
         }
     }
 
-    /// A reader failure with no frames on disk yet is not the
-    /// end: the generator takes a completely different route
-    /// (per-frame seeks, damaged frames skipped) and decodes
-    /// many files the sequential reader refuses — the social-app
-    /// .mp4s of the 2026-11-28 iPad cases among them, most
-    /// likely. With frames already written the failure stands
-    /// as reported, in full.
+    /// A reader failure is not the end, at the start or midway:
+    /// the generator takes a completely different route
+    /// (per-frame seeks, damaged frames skipped), so it can
+    /// either take over from frame 0 or — the 2026-11-28 iPad
+    /// [H264-4K] case, AVFoundationErrorDomain -11819 part-way
+    /// through — resume exactly where the reader died. It writes
+    /// through the same counting consumer, so the frames already
+    /// on disk keep their numbers and nothing is written twice;
+    /// the frames it cannot get are simply missing from the
+    /// sequence, which stays valid, just shorter.
     private static func fallBackToGenerator(_ failure: DecodeFailure,
                                             consumed: Int,
                                             asset: AVURLAsset,
                                             fps: Double, duration: CMTime,
                                             log: @escaping @Sendable (String) -> Void,
                                             consume: (CGImage) throws -> Bool) async throws {
-        guard consumed == 0 else {
-            throw DriftError("帧解码失败：\(failure.message)")
+        if consumed == 0 {
+            log("  ⚠️ 逐帧读取失败（\(failure.message)），还没解出帧，"
+                + "回退到逐帧生成器（会慢很多）")
+        } else {
+            log("  ⚠️ 逐帧读取中途失败（\(failure.message)），已解出 \(consumed) 帧，"
+                + "从断点接着用逐帧生成器续解（会慢一些）")
         }
-        log("  ⚠️ 逐帧读取失败（\(failure.message)），还没解出帧，"
-            + "回退到逐帧生成器（会慢很多）")
         try await decodeWithGenerator(asset: asset, fps: fps, duration: duration,
-                                      consume: consume)
+                                      startingAt: consumed, consume: consume)
     }
 
     private static func decodeTrack(asset: AVURLAsset, track: AVAssetTrack,
@@ -911,18 +916,22 @@ enum PosterBoardVideo {
         }
     }
 
-    /// Last-resort path for a rotated video whose composition output is
-    /// refused: `AVAssetImageGenerator` applies the preferred transform
-    /// itself, at the cost of seeking to every frame.
+    /// Last-resort path: `AVAssetImageGenerator` applies the
+    /// preferred transform itself and skips frames it cannot
+    /// decode, at the cost of seeking to every frame. Serves the
+    /// composition setup refusal (from frame 0), a reader that
+    /// fails before its first frame, and — via `startingAt` — a
+    /// reader that dies midway, resuming at the break point.
     private static func decodeWithGenerator(asset: AVURLAsset, fps: Double,
                                             duration: CMTime,
+                                            startingAt startIndex: Int = 0,
                                             consume: (CGImage) throws -> Bool) async throws {
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
         let total = max(1, Int((CMTimeGetSeconds(duration) * fps).rounded()))
-        for index in 0..<total {
+        for index in startIndex..<total {
             let time = CMTime(seconds: Double(index) / max(1.0, fps),
                               preferredTimescale: 600)
             do {
