@@ -35,6 +35,23 @@ struct VideoLockPreviewView: View {
         (framing?.document ?? PosterBoardVideo.deviceScreenMetrics()).height
     }
 
+    /// The lock face's clock is NOT proportional to the screen:
+    /// the width formula below matches a phone (≈92 pt at 390
+    /// wide, the real size), but on an 1180-wide iPad it yields
+    /// ≈277 pt while the real iPad lock clock measures ≈130 pt
+    /// (Grace's field case, 2026-11-28 — the preview's clock
+    /// stood 2.1× the real one). On iPad the face therefore uses
+    /// the measured real sizes, clock and date alike.
+    private var isPad: Bool {
+        (framing?.document ?? PosterBoardVideo.deviceScreenMetrics()).idiom == "ipad"
+    }
+    private func clockFontSize(in size: CGSize) -> Double {
+        isPad ? 130 : size.width * 0.235
+    }
+    private func dateFontSize(in size: CGSize) -> Double {
+        isPad ? 21 : size.width * 0.049
+    }
+
     var body: some View {
         GeometryReader { geo in
             ZStack {
@@ -113,10 +130,10 @@ struct VideoLockPreviewView: View {
                     .foregroundStyle(.white)
                     .padding(.bottom, 10)
                 Text(dateText)
-                    .font(.system(size: size.width * 0.049, weight: .medium))
+                    .font(.system(size: dateFontSize(in: size), weight: .medium))
                     .foregroundStyle(.white)
                 Text("\(hourText):\(String(format: "%02d", minute))")
-                    .font(.system(size: size.width * 0.235, weight: .bold))
+                    .font(.system(size: clockFontSize(in: size), weight: .bold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
