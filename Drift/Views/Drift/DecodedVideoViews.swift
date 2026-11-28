@@ -169,9 +169,10 @@ struct DecodedVideoListView: View {
     }
 }
 
-/// The flash picker: decoded videos chosen with checkboxes (up
-/// to `maxBatch` at a time, Grace 2026-11-28), and the flash
-/// button at the very bottom under a line naming what will go in.
+/// The flash picker: decoded videos chosen with checkboxes (no
+/// count limit — Grace first set a cap of ten, then lifted it the
+/// same evening, 2026-11-28), and the flash button at the very
+/// bottom under a line naming what will go in.
 /// A batch runs the video page's single-item run once per picked
 /// item, in list order — same judgement, same dispatch per item —
 /// except that nothing decodes on the way; one item's failure does
@@ -185,9 +186,6 @@ struct DecodedVideoPickerView: View {
     @ObservedObject private var tunnelMonitor = TunnelMonitor.shared
     @ObservedObject private var library = DecodedVideoLibrary.shared
     @AppStorage(DriftJudge.manualKey) private var manualPickRaw: String?
-
-    /// How many videos one tap may flash at most.
-    private let maxBatch = 10
 
     @State private var pickedIDs: Set<String> = []
     @State private var statusLine: String?
@@ -282,13 +280,10 @@ struct DecodedVideoPickerView: View {
                           ])
     }
 
-    /// Checkbox tap: add or remove the item, refusing an eleventh
-    /// pick with the cap named on the status line.
+    /// Checkbox tap: add or remove the item.
     private func togglePick(_ item: DecodedVideoItem) {
         if pickedIDs.contains(item.id) {
             pickedIDs.remove(item.id)
-        } else if pickedIDs.count >= maxBatch {
-            statusLine = "一次最多刷 \(maxBatch) 个，已经选满了。"
         } else {
             pickedIDs.insert(item.id)
         }
