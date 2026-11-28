@@ -709,7 +709,7 @@ enum PosterBoardImports {
 
     /// One archive entry's bytes. Only ever called on plist and
     /// index files — small by construction.
-    private static func entryData(_ entry: Archive.Entry, in archive: Archive) -> Data? {
+    private static func entryData(_ entry: Entry, in archive: Archive) -> Data? {
         var data = Data()
         do {
             _ = try archive.extract(entry) { data.append($0) }
