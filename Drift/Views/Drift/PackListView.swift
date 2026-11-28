@@ -72,6 +72,12 @@ struct PackListView: View {
     @State private var deepRepairTarget: PosterBoardTendie?
     @State private var previewPack: PosterBoardTendie?
     @State private var legacyURLs: Set<URL> = []
+    @State private var capNote: String?
+
+    /// How many packs one flash may carry at most — the same cap
+    /// the decoded-video picker puts on a batch (Grace, 2026-11-28:
+    /// 一次最多 10 张，视频和壁纸包都算).
+    private let maxSelection = 10
 
     private var identity: DeviceIdentity { identityMonitor.current }
 
@@ -98,6 +104,12 @@ struct PackListView: View {
                                         AppLog.op("壁纸包页：看 \(row.pack.name) 的大图")
                                     })
                             .onTapGesture { toggle(row.pack) }
+                    }
+                    if let capNote {
+                        Text(capNote)
+                            .font(.caption).foregroundStyle(.orange)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 4)
                     }
                 }
                 .padding(16)
@@ -469,9 +481,18 @@ struct PackListView: View {
     private func toggle(_ pack: PosterBoardTendie) {
         if let index = selection.tendies.firstIndex(where: { $0.url == pack.url }) {
             selection.tendies.remove(at: index)
+            capNote = nil
             AppLog.op("壁纸包页：取消勾选 \(pack.name)")
             return
         }
+        // The batch cap, checked before the legacy question so a
+        // full selection never asks about a pack it cannot take.
+        guard selection.tendies.count < maxSelection else {
+            capNote = "一次最多刷 \(maxSelection) 个壁纸包，已经选满了。先刷这批、或取消几个再选。"
+            AppLog.op("壁纸包页：已选满 \(maxSelection) 个，拒绝再勾选 \(pack.name)")
+            return
+        }
+        capNote = nil
         if let prompt = pack.legacyConvertPrompt(
             deviceVersion: identity.version.isEmpty
                 ? WorseQueryEscape.processVersion : identity.version) {

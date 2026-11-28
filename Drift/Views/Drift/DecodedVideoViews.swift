@@ -169,12 +169,16 @@ struct DecodedVideoListView: View {
     }
 }
 
-/// The flash picker: one decoded video, chosen with a radio, and
-/// the flash button at the very bottom under a line naming what
-/// will go in. The run itself is the video page's run with the
-/// item's selection — same judgement, same dispatch — except that
-/// nothing decodes on the way. A restore flash asks first, with the
-/// shared confirmation, like the wallpaper page.
+/// The flash picker: decoded videos chosen with checkboxes (up
+/// to `maxBatch` at a time, Grace 2026-11-28), and the flash
+/// button at the very bottom under a line naming what will go in.
+/// A batch runs the video page's single-item run once per picked
+/// item, in list order — same judgement, same dispatch per item —
+/// except that nothing decodes on the way; one item's failure does
+/// not stop the rest, and the end of the batch reports the tally.
+/// The restore route batches too (Grace, 2026-11-28): one shared
+/// confirmation up front covers the batch, and each item then
+/// pulls its own backup in turn, like the wallpaper page asks.
 struct DecodedVideoPickerView: View {
     @EnvironmentObject private var session: DriftSession
     @EnvironmentObject private var identityMonitor: DeviceIdentityMonitor
@@ -182,15 +186,21 @@ struct DecodedVideoPickerView: View {
     @ObservedObject private var library = DecodedVideoLibrary.shared
     @AppStorage(DriftJudge.manualKey) private var manualPickRaw: String?
 
-    @State private var pickedID: String?
+    /// How many videos one tap may flash at most.
+    private let maxBatch = 10
+
+    @State private var pickedIDs: Set<String> = []
     @State private var statusLine: String?
     @State private var confirmRestore = false
     @State private var staleIDs: Set<String> = []
+    @State private var batchRunning = false
+    @State private var batchCancelRequested = false
 
     private var identity: DeviceIdentity { identityMonitor.current }
     private var manualPick: DriftMethodPick { DriftMethodPick.fromStored(manualPickRaw) }
-    private var pickedItem: DecodedVideoItem? {
-        library.items.first { $0.id == pickedID }
+    /// The picked items in list order — the order they flash in.
+    private var pickedItems: [DecodedVideoItem] {
+        library.items.filter { pickedIDs.contains($0.id) }
     }
 
     var body: some View {
@@ -212,13 +222,13 @@ struct DecodedVideoPickerView: View {
                 }
                 ForEach(library.items) { item in
                     Button {
-                        pickedID = item.id
+                        togglePick(item)
                     } label: {
                         HStack(spacing: 12) {
-                            Image(systemName: pickedID == item.id
-                                  ? "largecircle.fill.circle" : "circle")
+                            Image(systemName: pickedIDs.contains(item.id)
+                                  ? "checkmark.circle.fill" : "circle")
                                 .font(.title3)
-                                .foregroundStyle(pickedID == item.id ? Color.accentColor : .secondary)
+                                .foregroundStyle(pickedIDs.contains(item.id) ? Color.accentColor : .secondary)
                             DecodedVideoThumb(item: item)
                             DecodedVideoRowText(item: item,
                                                 stale: staleIDs.contains(item.id))
@@ -234,19 +244,27 @@ struct DecodedVideoPickerView: View {
                     Text(statusLine).font(.subheadline).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                if let pickedItem {
-                    Text("将刷入：\(pickedItem.name)（\(pickedItem.optionsSummary)）")
+                if pickedItems.count == 1, let only = pickedItems.first {
+                    Text("将刷入：\(only.name)（\(only.optionsSummary)）")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if pickedItems.count > 1 {
+                    Text("将刷入：\(pickedItems.count) 个视频（按列表顺序逐个刷，锁屏显示最后刷的那个，其余在壁纸商店里随时能切）")
                         .font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                NativePrimaryButton(title: session.running ? "刷入中…" : "刷入",
+                NativePrimaryButton(title: session.running ? "刷入中…"
+                                    : (pickedItems.count > 1 ? "刷入所选（\(pickedItems.count) 个）" : "刷入"),
                                     systemImage: "film",
                                     running: session.running,
-                                    disabled: pickedItem == nil || session.running) {
+                                    disabled: pickedItems.isEmpty || session.running) {
                     tapFlash()
                 }
                 if session.running {
-                    Button("取消") { session.cancelRun() }.driftGlassButton()
+                    Button("取消") {
+                        if batchRunning { batchCancelRequested = true }
+                        session.cancelRun()
+                    }.driftGlassButton()
                 }
             }
             .padding(12)
@@ -260,16 +278,31 @@ struct DecodedVideoPickerView: View {
                           title: DriftRestoreGate.confirmationTitle,
                           message: DriftRestoreGate.confirmationMessage,
                           actions: [
-                            DriftSheetAction("确定刷入", destructive: true) { performRun() },
+                            DriftSheetAction("确定刷入", destructive: true) { performBatch() },
                           ])
     }
 
-    /// The tap: judge first, and a restore answer asks before
-    /// anything runs — the same confirmation the wallpaper page
-    /// shows, at the same moment (before the pull starts).
+    /// Checkbox tap: add or remove the item, refusing an eleventh
+    /// pick with the cap named on the status line.
+    private func togglePick(_ item: DecodedVideoItem) {
+        if pickedIDs.contains(item.id) {
+            pickedIDs.remove(item.id)
+        } else if pickedIDs.count >= maxBatch {
+            statusLine = "一次最多刷 \(maxBatch) 个，已经选满了。"
+        } else {
+            pickedIDs.insert(item.id)
+        }
+    }
+
+    /// The tap: judge first (on the first picked item — the
+    /// judgement is about the device and the channels, not the
+    /// payload), and a restore answer asks before anything runs —
+    /// the same confirmation the wallpaper page shows, at the same
+    /// moment (before the pull starts). One confirmation covers the
+    /// whole batch; each item then pulls its own backup in turn.
     private func tapFlash() {
-        guard let pickedItem else { return }
-        let judged = DriftJudge.judge(identity: identity, selection: pickedItem.makeSelection(),
+        guard let first = pickedItems.first else { return }
+        let judged = DriftJudge.judge(identity: identity, selection: first.makeSelection(),
                                       pick: manualPick,
                                       tunnelReady: tunnelMonitor.status == .ready)
         if judged.isBlocked {
@@ -280,39 +313,85 @@ struct DecodedVideoPickerView: View {
             confirmRestore = true
             return
         }
-        performRun()
+        performBatch()
     }
 
-    /// The video page's run, carried on the item's selection
-    /// (re-judged on the current state, kernel dispatched directly,
-    /// everything else through the session funnel).
-    private func performRun() {
-        guard let pickedItem else { return }
-        let videoSelection = pickedItem.makeSelection()
+    /// Run the batch: the single-item run below, once per picked
+    /// item in list order. A single pick keeps the old behaviour
+    /// exactly (the outcome lands on the status line, or the error
+    /// popup). A batch reports progress per item, keeps going past
+    /// a failure, and ends with a tally; cancelling stops the
+    /// current item's run and ends the batch there.
+    private func performBatch() {
+        let items = pickedItems
+        guard !items.isEmpty else { return }
+        if items.count == 1 {
+            Task { await runOne(items[0], reportIndividually: true) }
+            return
+        }
+        batchRunning = true
+        batchCancelRequested = false
         Task {
-            var checked = DriftJudge.judge(
-                identity: identity, selection: videoSelection, pick: manualPick,
-                tunnelReady: tunnelMonitor.status == .ready)
-            if checked.isBlocked || checked.mode != .worseQuery {
-                if session.paired { await session.refreshIdentity() }
-                checked = DriftJudge.judge(
-                    identity: identity, selection: videoSelection, pick: manualPick,
-                    tunnelReady: tunnelMonitor.status == .ready)
+            var succeeded = 0
+            var failures: [String] = []
+            for (index, item) in items.enumerated() {
+                if batchCancelRequested { break }
+                statusLine = "正在刷第 \(index + 1)/\(items.count) 个：\(item.name)"
+                let outcome = await runOne(item, reportIndividually: false)
+                if outcome.ok { succeeded += 1 }
+                else { failures.append("\(item.name)：\(outcome.message)") }
             }
-            guard !checked.isBlocked else {
-                session.errorText = checked.blockedReason
-                return
-            }
-            if checked.useKernel {
-                let outcome = await session.runKernelApply(identity: identity, selection: videoSelection)
-                if outcome.ok { statusLine = outcome.message }
-                else { statusLine = nil; session.errorText = outcome.message }
+            batchRunning = false
+            if batchCancelRequested {
+                statusLine = "已取消：刷好了 \(succeeded) 个，剩下的没刷。"
+            } else if failures.isEmpty {
+                statusLine = "刷完了：\(succeeded) 个视频全部刷入。"
+            } else if succeeded == 0 {
+                statusLine = nil
+                session.errorText = failures.joined(separator: "\n")
             } else {
-                let outcome = await session.run(selection: videoSelection, mode: checked.mode,
-                                                pick: manualPick, identity: identity)
-                if outcome.ok { statusLine = outcome.message }
-                else { statusLine = nil; session.errorText = outcome.message }
+                statusLine = "刷完了：成功 \(succeeded) 个，失败 \(failures.count) 个。"
+                session.errorText = failures.joined(separator: "\n")
             }
         }
+    }
+
+    /// The video page's run, carried on one item's selection
+    /// (re-judged on the current state, kernel dispatched directly,
+    /// everything else through the session funnel). Returns the
+    /// outcome; with `reportIndividually` it also lands on the
+    /// status line / error popup the way the single run always has.
+    @discardableResult
+    private func runOne(_ item: DecodedVideoItem,
+                        reportIndividually: Bool) async -> (ok: Bool, message: String) {
+        let videoSelection = item.makeSelection()
+        var checked = DriftJudge.judge(
+            identity: identity, selection: videoSelection, pick: manualPick,
+            tunnelReady: tunnelMonitor.status == .ready)
+        if checked.isBlocked || checked.mode != .worseQuery {
+            if session.paired { await session.refreshIdentity() }
+            checked = DriftJudge.judge(
+                identity: identity, selection: videoSelection, pick: manualPick,
+                tunnelReady: tunnelMonitor.status == .ready)
+        }
+        guard !checked.isBlocked else {
+            if reportIndividually { session.errorText = checked.blockedReason }
+            return (false, checked.blockedReason ?? "现在刷不了。")
+        }
+        // `run` also returns the effect grade; the kernel run does
+        // not. Normalise both to the pair this page reports on.
+        let outcome: (ok: Bool, message: String)
+        if checked.useKernel {
+            outcome = await session.runKernelApply(identity: identity, selection: videoSelection)
+        } else {
+            let ran = await session.run(selection: videoSelection, mode: checked.mode,
+                                        pick: manualPick, identity: identity)
+            outcome = (ok: ran.ok, message: ran.message)
+        }
+        if reportIndividually {
+            if outcome.ok { statusLine = outcome.message }
+            else { statusLine = nil; session.errorText = outcome.message }
+        }
+        return outcome
     }
 }
