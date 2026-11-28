@@ -130,6 +130,13 @@ struct VideoFramingView: View {
                         .onEnded { _ in
                             offsetDoc = effOffset
                             dragDoc = .zero
+                            // Diagnosis (2026-11-26): what each gesture
+                            // actually committed, so a swallowed drag or
+                            // pinch is visible in the log instead of
+                            // looking like the user never adjusted.
+                            AppLog.info("调整落定（拖动）：偏移 ("
+                                + "\(String(format: "%.1f", offsetDoc.width)), "
+                                + "\(String(format: "%.1f", offsetDoc.height)))")
                         })
                 .simultaneousGesture(
                     MagnifyGesture()
@@ -141,11 +148,18 @@ struct VideoFramingView: View {
                             scale = effScale
                             offsetDoc = clamped(offsetDoc, scale: scale)
                             pinch = 1
+                            AppLog.info("调整落定（缩放）：缩放 ×"
+                                + "\(String(format: "%.3f", scale))、偏移 ("
+                                + "\(String(format: "%.1f", offsetDoc.width)), "
+                                + "\(String(format: "%.1f", offsetDoc.height)))")
                         })
             }
             VStack {
                 HStack {
-                    Button("取消") { leave() }
+                    Button("取消") {
+                        AppLog.op("调整画面取消，本次改动不保存")
+                        leave()
+                    }
                         .foregroundStyle(.white)
                     Spacer()
                     Text("调整画面").font(.headline).foregroundStyle(.white)
@@ -166,6 +180,7 @@ struct VideoFramingView: View {
                     .padding(.top, 8)
                 HStack(spacing: 12) {
                     Button("还原居中") {
+                        AppLog.op("调整画面还原居中")
                         withAnimation(.easeInOut(duration: 0.25)) {
                             scale = 1
                             offsetDoc = .zero
@@ -179,6 +194,21 @@ struct VideoFramingView: View {
                         .strokeBorder(Color.white.opacity(0.6), lineWidth: 1))
                     Spacer()
                     Button("完成") {
+                        // Diagnosis (2026-11-26): log the handed-back
+                        // values AND the live gesture values side by
+                        // side. 完成 passes the committed ones; if a
+                        // drag or pinch never folded in, the two
+                        // disagree here and the loss point is named
+                        // instead of guessed.
+                        AppLog.op("调整画面点完成：交回 "
+                            + Self.describe(PosterBoardFraming(
+                                scale: scale,
+                                offsetX: offsetDoc.width,
+                                offsetY: offsetDoc.height))
+                            + "；当时手势实时值 缩放 ×"
+                            + "\(String(format: "%.3f", effScale))、偏移 ("
+                            + "\(String(format: "%.1f", effOffset.width)), "
+                            + "\(String(format: "%.1f", effOffset.height)))")
                         onDone(PosterBoardFraming(scale: scale,
                                                   offsetX: offsetDoc.width,
                                                   offsetY: offsetDoc.height,
@@ -196,6 +226,24 @@ struct VideoFramingView: View {
             }
         }
         .task { await loadDisplaySize() }
+        .onAppear {
+            // Diagnosis (2026-11-26): the framing page used to leave
+            // no trace in the log at all, so an "adjustments don't
+            // take effect" report could not be reconstructed after
+            // the fact. Record what the page opened with; the
+            // gesture and 完成 lines below complete the sequence.
+            AppLog.op("打开调整画面：\(videoURL.lastPathComponent)"
+                + "（进来时：\(Self.describe(initial))）")
+        }
+    }
+
+    /// One-line rendering of a framing for the log lines above.
+    private static func describe(_ framing: PosterBoardFraming?) -> String {
+        guard let framing else { return "无调整" }
+        if framing.isDefault { return "默认（缩放 ×1.000、偏移 (0.0, 0.0)）" }
+        return "缩放 ×\(String(format: "%.3f", framing.scale))、偏移 ("
+            + "\(String(format: "%.1f", framing.offsetX)), "
+            + "\(String(format: "%.1f", framing.offsetY)))"
     }
 
     private var pixelText: String {

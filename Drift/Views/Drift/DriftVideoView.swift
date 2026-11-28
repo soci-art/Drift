@@ -110,6 +110,14 @@ struct DriftVideoView: View {
                 if let video = selection.video {
                     VideoFramingView(videoURL: video, initial: selection.framing) { framing in
                         selection.framing = framing
+                        // Diagnosis (2026-11-26): the value the page is
+                        // now holding, so the decode-start line can be
+                        // checked against what the framing page handed
+                        // back.
+                        AppLog.info("视频页已记下画面调整：缩放 ×"
+                            + "\(String(format: "%.3f", framing.scale))、偏移 ("
+                            + "\(String(format: "%.1f", framing.offsetX)), "
+                            + "\(String(format: "%.1f", framing.offsetY)))")
                     }
                 }
             }
