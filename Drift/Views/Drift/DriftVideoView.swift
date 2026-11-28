@@ -35,6 +35,11 @@ struct DriftVideoView: View {
             : nil
     }
     @State private var showPicker = false
+    /// The two "turn a system effect on" confirmations (Grace,
+    /// 2026-11-28): flipping 景深 / 动态 on presents its sheet
+    /// first; the switch only lands on 打开.
+    @State private var confirmingDepthEffect = false
+    @State private var confirmingMotionEffect = false
     @ObservedObject private var library = DecodedVideoLibrary.shared
 
     private var identity: DeviceIdentity { identityMonitor.current }
@@ -44,6 +49,26 @@ struct DriftVideoView: View {
     private var canDecode: Bool {
         selection.video != nil && !session.running && !library.isDecoding
             && (selection.loop || selection.thumbnail != nil)
+    }
+
+    /// Turning a system effect ON goes through its explanation
+    /// sheet first (Grace, 2026-11-28): the binding refuses the
+    /// flip and presents the sheet; the switch lands only when
+    /// the sheet's 打开 runs. Turning off is immediate.
+    private var depthEffectBinding: Binding<Bool> {
+        Binding(get: { selection.depthEffect },
+                set: { newValue in
+                    if newValue { confirmingDepthEffect = true }
+                    else { selection.depthEffect = false }
+                })
+    }
+
+    private var motionEffectBinding: Binding<Bool> {
+        Binding(get: { selection.motionEffect },
+                set: { newValue in
+                    if newValue { confirmingMotionEffect = true }
+                    else { selection.motionEffect = false }
+                })
     }
 
     /// The home judgement for a video-only selection: which channel
@@ -65,8 +90,8 @@ struct DriftVideoView: View {
                         introCard
                         filesCard
                         framingCard
-                        decodeCard
                         optionsCard
+                        decodeCard
                         applyCard
                         // Collection #289 (Grace, 2026-11-13): no log
                         // card on the video page either — same ruling
@@ -265,7 +290,7 @@ struct DriftVideoView: View {
                 }
                 .driftGlassProminentButton()
                 .disabled(!canDecode)
-                Text("按下面的播放选项解码，改了选项要重新解码。")
+                Text("按上面的播放选项解码，改了选项要重新解码。")
                     .font(.caption).foregroundStyle(.secondary)
                 if let decodeNote {
                     Text(decodeNote).font(.caption).foregroundStyle(.secondary)
@@ -358,6 +383,24 @@ struct DriftVideoView: View {
                 Text("开着：视频盖到最前面，锁屏上的时钟会被视频挡住。关掉：时钟正常显示在视频上面。")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            VStack(alignment: .leading, spacing: 3) {
+                Toggle("景深效果", isOn: depthEffectBinding)
+                Text("关着：画面照原样贴在锁屏上，和预览一致。开着：锁屏的时间能被画面里的主体挡住一部分，系统也会自己挪动、缩放画面，锁屏的样子可能和预览不完全一样。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .driftActionSheet(isPresented: $confirmingDepthEffect,
+                              title: "打开景深效果",
+                              message: "打开后，锁屏的时间可能会被画面里的主体挡住一部分，系统也会自己挪动、缩放画面，锁屏的样子可能和预览不完全一样。",
+                              actions: [DriftSheetAction("打开") { selection.depthEffect = true }])
+            VStack(alignment: .leading, spacing: 3) {
+                Toggle("动态效果", isOn: motionEffectBinding)
+                Text("关着：画面不动，和预览一致。开着：晃动手机时画面会跟着轻轻移位；为了移位不露边，系统会先把画面放大一点，锁屏的样子可能和预览不完全一样。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .driftActionSheet(isPresented: $confirmingMotionEffect,
+                              title: "打开动态效果",
+                              message: "打开后，晃动手机时锁屏画面会跟着轻轻移位；为了移位时不露边，系统会先把画面放大一点，锁屏的样子可能和预览不完全一样。",
+                              actions: [DriftSheetAction("打开") { selection.motionEffect = true }])
             VStack(alignment: .leading, spacing: 3) {
                 Picker("帧计算", selection: $selection.calculationMode) {
                     ForEach(PosterBoardCalculationMode.allCases) { mode in

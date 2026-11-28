@@ -79,6 +79,13 @@ struct PosterBoardVideoPlan {
     /// hides the clock.
     var foreground = false
     var calculationMode: PosterBoardCalculationMode = .linear
+    /// The video page's depth / motion switches (Grace, 2026-11-28):
+    /// written into the loop descriptor's rendering configuration
+    /// at decode. The live-photo shape carries no such file, so —
+    /// like `reverse` and `foreground` — these only bite on the
+    /// looping shape.
+    var depthEffect = false
+    var motionEffect = false
     /// The user's framing from the video page's box, or nil for the
     /// reference's centred cover. Only the caml loop has geometry of
     /// ours to write it into; the live-photo shape is laid out by
@@ -215,7 +222,9 @@ enum PosterBoardVideo {
     /// scaled the landscape document into a portrait phone canvas. This rewrites
     /// every one of those size declarations from the same metrics the caml uses.
     private static func writeVideoLoopSkeleton(into root: URL,
-                                               metrics: PosterBoardScreenMetrics) throws {
+                                               metrics: PosterBoardScreenMetrics,
+                                               depthEffect: Bool,
+                                               motionEffect: Bool) throws {
         let fm = FileManager.default
         let screenClass = metrics.logicalScreenClass
         for (relative, data) in PosterBoardResources.videoLoopDescriptor.sorted(by: { $0.key < $1.key }) {
@@ -226,6 +235,14 @@ enum PosterBoardVideo {
                 newData = try rewriteIndex(data, metrics: metrics)
             } else if relative.hasSuffix("/main.caml") {
                 newData = try rewriteRootCAML(data, metrics: metrics)
+            } else if relative == "versions/1/com.apple.posterkit.provider.instance.renderingConfiguration.plist" {
+                // The bundled copy allows both system effects. The
+                // page's switches decide instead (Grace, 2026-11-28):
+                // an effect that is off is written as disabled, so
+                // the system leaves the picture as decoded.
+                newData = try PosterBoardConverter.renderingConfigurationData(
+                    depthEffectDisabled: !depthEffect,
+                    motionEffectsDisabled: !motionEffect)
             } else if relative.hasSuffix("Wallpaper.plist") || relative.hasSuffix("userInfo") {
                 newData = try replaceScreenClass(in: data, with: screenClass)
             }
@@ -309,7 +326,10 @@ enum PosterBoardVideo {
         // silently move the document out from under those offsets.
         let metrics = plan.framing?.document ?? capturedMetrics
         let root = outputDirectory.appendingPathComponent("descriptor/VideoCAML", conformingTo: .data)
-        try writeVideoLoopSkeleton(into: root, metrics: metrics)
+        try writeVideoLoopSkeleton(into: root, metrics: metrics,
+                                   depthEffect: plan.depthEffect,
+                                   motionEffect: plan.motionEffect)
+        log("  → 渲染配置：景深 \(plan.depthEffect ? "开" : "关")、动态 \(plan.motionEffect ? "开" : "关")")
 
         // The reference's path is fixed: the descriptor skeleton's own wallpaper
         // directory, whose `.ca` is what gets replaced.

@@ -253,6 +253,18 @@ struct PosterBoardSelection {
     var foreground = false
     var calculationMode: PosterBoardCalculationMode = .linear
 
+    /// Whether the system may process the lock-screen picture
+    /// (video page switches, Grace, 2026-11-28): the depth effect
+    /// (the clock slipping behind the subject, with the system
+    /// free to shift and scale planes) and the motion effect
+    /// (parallax travel, which the system feeds by rendering the
+    /// picture oversized). Both default OFF — off means the
+    /// picture reaches the Lock Screen as decoded, matching the
+    /// preview. They are written into the product's rendering
+    /// configuration at decode time, like the options above.
+    var depthEffect = false
+    var motionEffect = false
+
     /// A reset is a one-shot instruction, so it is deliberately **not** persisted: a
     /// "Full Reset" that survived a launch would be a loaded gun. Upstream holds it in
     /// memory for the same reason.
@@ -283,6 +295,8 @@ struct PosterBoardSelection {
                                     reverse: reverse,
                                     foreground: foreground,
                                     calculationMode: calculationMode,
+                                    depthEffect: depthEffect,
+                                    motionEffect: motionEffect,
                                     framing: framing)
     }
 

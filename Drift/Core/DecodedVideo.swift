@@ -29,6 +29,11 @@ struct DecodedVideoItem: Identifiable, Equatable {
     /// The decode carried a user framing from the video page's box
     /// (Grace, 2026-11-23): the product's geometry is the box's.
     let framed: Bool
+    /// The decode's depth / motion switches (Grace, 2026-11-28),
+    /// recorded like the other options so a listed product says
+    /// what it carries.
+    let depthEffect: Bool
+    let motionEffect: Bool
     /// Decoded frame count for a loop; nil for the live-photo shape.
     let frameCount: Int?
     /// Frame size in pixels (0 when it could not be read back).
@@ -60,6 +65,8 @@ struct DecodedVideoItem: Identifiable, Equatable {
         if reverse { parts.append("倒放") }
         if foreground { parts.append("前景层") }
         if framed { parts.append("已调整画面") }
+        if depthEffect { parts.append("景深效果") }
+        if motionEffect { parts.append("动态效果") }
         return parts.joined(separator: " · ")
     }
 
@@ -79,6 +86,8 @@ struct DecodedVideoItem: Identifiable, Equatable {
         selection.reverse = reverse
         selection.foreground = foreground
         selection.calculationMode = calculationMode
+        selection.depthEffect = depthEffect
+        selection.motionEffect = motionEffect
         return selection
     }
 }
@@ -113,6 +122,10 @@ final class DecodedVideoLibrary: ObservableObject {
         /// existed have no such key, and a missing key must read as
         /// "not framed", never as an unreadable item.
         var framed: Bool?
+        /// Same reasoning: metas written before the depth / motion
+        /// switches existed read as both off.
+        var depthEffect: Bool?
+        var motionEffect: Bool?
         var frameCount: Int?
         var width: Int
         var height: Int
@@ -147,6 +160,8 @@ final class DecodedVideoLibrary: ObservableObject {
                 foreground: meta.foreground,
                 calculationMode: PosterBoardCalculationMode(rawValue: meta.calculationMode) ?? .linear,
                 framed: meta.framed ?? false,
+                depthEffect: meta.depthEffect ?? false,
+                motionEffect: meta.motionEffect ?? false,
                 frameCount: meta.frameCount,
                 width: meta.width,
                 height: meta.height,
@@ -217,6 +232,8 @@ final class DecodedVideoLibrary: ObservableObject {
                         foreground: selection.foreground,
                         calculationMode: selection.calculationMode.rawValue,
                         framed: selection.framing.map { !$0.isDefault } ?? false,
+                        depthEffect: selection.depthEffect,
+                        motionEffect: selection.motionEffect,
                         frameCount: frameCount,
                         width: width,
                         height: height,
@@ -233,7 +250,8 @@ final class DecodedVideoLibrary: ObservableObject {
         // Diagnosis (2026-11-26): the kept product's framing state in
         // the same words as the decode-start line, so a flash of this
         // item later can be matched to the decode that made it.
-        AppLog.info("解码完成入库：\(name)，成品带画面调整：\(meta.framed == true ? "是" : "否")")
+        AppLog.info("解码完成入库：\(name)，成品带画面调整：\(meta.framed == true ? "是" : "否")"
+            + "，景深：\(meta.depthEffect == true ? "开" : "关")、动态：\(meta.motionEffect == true ? "开" : "关")")
     }
 
     /// Delete the chosen items and their products.
