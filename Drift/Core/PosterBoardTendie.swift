@@ -355,7 +355,23 @@ struct PosterBoardTendie: Identifiable, Hashable {
             // (some zips carry both `a/` and `a/b`), and the reference's
             // `extractall` merges them.
             if entry.type == .directory, fm.fileExists(atPath: target.path) { continue }
+            // ZIP entries can carry read-only POSIX modes. ZIPFoundation
+            // applies them to the extracted directory after creating it; on
+            // a pack whose `descriptors/` entry is 0555/0444 the next child
+            // then fails with "no permission to save … in descriptors". The
+            // archive is untrusted input: make the stage writable again
+            // before extracting the next entry.
+            let parent = target.deletingLastPathComponent()
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: parent.path)
             _ = try archive.extract(entry, to: target)
+            switch entry.type {
+            case .directory:
+                try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: target.path)
+            case .file:
+                try? fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: target.path)
+            case .symlink:
+                break
+            }
         }
     }
 }

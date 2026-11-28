@@ -883,14 +883,20 @@ enum PosterBoardLocal {
         if !cached.isEmpty {
             log("consume 容器缓存：\(cached)（createDirectory: false，探测）")
             do {
-                let handle = try WorseQueryEscape.consume(path: cached, createDirectory: false)
+                let probeHandle = try WorseQueryEscape.consume(path: cached, createDirectory: false)
                 if isPosterBoardContainer(atPath: cached) {
+                    // The probe only needed to read. Drop it and re-consume
+                    // with createDirectory:true for the write run, matching the
+                    // known/CSStore paths instead of handing a read-probe
+                    // extension to install().
+                    WorseQueryEscape.release(probeHandle)
+                    let handle = try WorseQueryEscape.consume(path: cached, createDirectory: true)
                     PosterBoardContainerLocator.clearProgress()
                     log(String(format: "PosterBoard container: cached path verified（总定位 %.0f ms）",
                                millis(since: locateStart)))
                     return (cached, handle)
                 }
-                WorseQueryEscape.release(handle)
+                WorseQueryEscape.release(probeHandle)
                 log("缓存 consume 成功但内容核对不是 PosterBoard——清掉缓存换路")
                 cachedContainer = ""
             } catch {
