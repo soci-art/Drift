@@ -1263,6 +1263,19 @@ extension PosterBoardConverter {
                                          requiringSecureCoding: true)
     }
 
+    /// The same archive with the two effects set as the caller
+    /// wants — the video page's depth / motion switches (Grace,
+    /// 2026-11-28), where an effect that is off must be written
+    /// as disabled so the system leaves the picture as decoded.
+    static func renderingConfigurationData(depthEffectDisabled: Bool,
+                                           motionEffectsDisabled: Bool) throws -> Data {
+        let config = RenderingConfigurationArchive()
+        config.depthEffectDisabled = depthEffectDisabled
+        config.motionEffectsDisabled = motionEffectsDisabled
+        return try NSKeyedArchiver.archivedData(withRootObject: config,
+                                                requiringSecureCoding: true)
+    }
+
     /// The `PRPosterConfigurableOptions` archive, depth enabled.
     ///
     /// This one is load-bearing where the bundled copy is not: upstream ships its
