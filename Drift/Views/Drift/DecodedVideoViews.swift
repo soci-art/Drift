@@ -32,6 +32,11 @@ private struct DecodedVideoThumb: View {
 
 private struct DecodedVideoRowText: View {
     let item: DecodedVideoItem
+    /// The product was decoded for another screen size and the flash
+    /// gate would refuse it — say so on the row itself (Grace,
+    /// 2026-11-28) instead of letting a same-name stale item pass
+    /// for the fresh one until it is tapped.
+    var stale: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -41,6 +46,11 @@ private struct DecodedVideoRowText: View {
                 .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             Text("\(item.sizeText) · \(Self.dateText(item.decodedAt)) 解码")
                 .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            if stale {
+                Text("尺寸对不上，刷不了，要重新解码")
+                    .font(.caption.weight(.medium)).foregroundStyle(.orange)
+                    .lineLimit(1)
+            }
         }
     }
 
@@ -60,6 +70,7 @@ struct DecodedVideoListView: View {
     @ObservedObject private var library = DecodedVideoLibrary.shared
     @State private var selectedIDs: Set<String> = []
     @State private var confirmingDelete = false
+    @State private var staleIDs: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -95,14 +106,24 @@ struct DecodedVideoListView: View {
                                 .font(.title3)
                                 .foregroundStyle(selectedIDs.contains(item.id) ? Color.accentColor : .secondary)
                             DecodedVideoThumb(item: item)
-                            DecodedVideoRowText(item: item)
+                            DecodedVideoRowText(item: item,
+                                                stale: staleIDs.contains(item.id))
                             Spacer()
-                            Text("就绪")
-                                .font(.caption2.weight(.semibold))
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(Color.green.opacity(0.14),
-                                            in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                                .foregroundStyle(.green)
+                            if staleIDs.contains(item.id) {
+                                Text("尺寸对不上")
+                                    .font(.caption2.weight(.semibold))
+                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(Color.orange.opacity(0.14),
+                                                in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                                    .foregroundStyle(.orange)
+                            } else {
+                                Text("就绪")
+                                    .font(.caption2.weight(.semibold))
+                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(Color.green.opacity(0.14),
+                                                in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                                    .foregroundStyle(.green)
+                            }
                         }
                     }
                     .buttonStyle(.plain)
@@ -133,6 +154,9 @@ struct DecodedVideoListView: View {
         }
         .navigationTitle("已解码的视频")
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: library.items.map(\.id)) {
+            staleIDs = await library.staleItemIDs()
+        }
         .driftActionSheet(isPresented: $confirmingDelete,
                           title: "删除所选视频？",
                           message: "删掉后要重新解码才能再刷。确定删除选中的 \(selectedIDs.count) 个？",
@@ -161,6 +185,7 @@ struct DecodedVideoPickerView: View {
     @State private var pickedID: String?
     @State private var statusLine: String?
     @State private var confirmRestore = false
+    @State private var staleIDs: Set<String> = []
 
     private var identity: DeviceIdentity { identityMonitor.current }
     private var manualPick: DriftMethodPick { DriftMethodPick.fromStored(manualPickRaw) }
@@ -195,7 +220,8 @@ struct DecodedVideoPickerView: View {
                                 .font(.title3)
                                 .foregroundStyle(pickedID == item.id ? Color.accentColor : .secondary)
                             DecodedVideoThumb(item: item)
-                            DecodedVideoRowText(item: item)
+                            DecodedVideoRowText(item: item,
+                                                stale: staleIDs.contains(item.id))
                             Spacer()
                         }
                     }
@@ -227,6 +253,9 @@ struct DecodedVideoPickerView: View {
         }
         .navigationTitle("选择已解码的视频")
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: library.items.map(\.id)) {
+            staleIDs = await library.staleItemIDs()
+        }
         .driftActionSheet(isPresented: $confirmRestore,
                           title: DriftRestoreGate.confirmationTitle,
                           message: DriftRestoreGate.confirmationMessage,

@@ -243,6 +243,9 @@ targets:
       # PNGs stay in layout/ because xtool.yml's iconPath points at them; that
       # build does not read this file.
     dependencies:
+      # The share extension: an app-extension target the app depends
+      # on is embedded into PlugIns/ by the build automatically.
+      - target: DriftShareExtension
       - package: Minimuxer
         product: Minimuxer
       # The app unpacks `.tendies` wallpaper packs itself, and a `.tendies` is a
@@ -296,6 +299,32 @@ targets:
           - "@executable_path/Frameworks"
         ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES
         PROVISIONING_PROFILE_SPECIFIER: ""
+
+  # The share extension (SHARE-EXTENSION-SPEC.md). Thin by design: it
+  # copies a shared .tendies/.zip into the App Group inbox and the app
+  # imports it on next launch — no unpacking in the extension, whose
+  # memory ceiling a big pack would blow through. `ShareInbox.swift`
+  # is compiled into both targets: it is the one piece of logic the
+  # two processes must agree on. The source-sync script only ever
+  # reconciles the `Drift` target, so this target's list is stable.
+  DriftShareExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareExtension
+      - path: Drift/Core/ShareInbox.swift
+    settings:
+      base:
+        # The project-wide settings point INFOPLIST_FILE, the bundle
+        # id and the entitlements at the app; the extension needs its
+        # own set. Its Info.plist version fields ride the same
+        # project variables as the app's, so the appex always matches
+        # the app — an appex without version fields is refused at
+        # install after signing.
+        INFOPLIST_FILE: ShareExtension/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.sociart.drift.ShareExtension
+        PRODUCT_NAME: DriftShareExtension
+        CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
 
 schemes:
   Drift:

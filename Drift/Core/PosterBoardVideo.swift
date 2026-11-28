@@ -338,6 +338,23 @@ enum PosterBoardVideo {
         return sizes
     }
 
+    /// Whether a stored product's documents disagree with the current
+    /// screen beyond the flash gate's tolerance — the same comparison
+    /// `generate` refuses on, exposed so the decoded-video list can
+    /// mark such an item up front (Grace, 2026-11-28: a user tapped a
+    /// stale same-name item three times and was refused three times
+    /// before picking the re-decoded one). Live-photo products carry
+    /// no documents and never mismatch.
+    static func productMismatchesCurrentScreen(at directory: URL) async -> Bool {
+        let current = await MainActor.run { Self.deviceScreenMetrics() }
+        let toleranceW = max(8, current.width / 10)
+        let toleranceH = max(8, current.height / 10)
+        return productDocumentSizes(at: directory).contains {
+            abs($0.width - current.width) > toleranceW
+                || abs($0.height - current.height) > toleranceH
+        }
+    }
+
     /// `create_video_loop_files`.
     private static func generateLoop(plan: PosterBoardVideoPlan,
                                      metrics capturedMetrics: PosterBoardScreenMetrics,
@@ -445,7 +462,26 @@ enum PosterBoardVideo {
         // reproduce it exactly, and a caller wanting travel passes more.
         let docWidth = metrics.width
         let docHeight = metrics.height
-        let cover = max(Double(docWidth) / Double(width), Double(docHeight) / Double(height))
+        // Frames are stored at the document's own pixel size at most
+        // (Grace, 2026-11-28): a frame larger than the screen can
+        // never be shown sharper than the screen, but the lock-screen
+        // renderer still has to lift every one of its pixels — the
+        // field case was a 304-frame 4K loop stored at 1.1 GB whose
+        // lock screen spun on it forever. The downscale is uniform,
+        // so the aspect — and with it `cover`, the framing and the
+        // preview — is unchanged; only the stored pixels shrink, and
+        // the layer's bounds below name the stored size so the
+        // document stays honest about what it carries.
+        let frameScale = min(1, Double(docWidth * metrics.scale) / Double(width),
+                             Double(docHeight * metrics.scale) / Double(height))
+        let frameWidth = max(1, Int((Double(width) * frameScale).rounded()))
+        let frameHeight = max(1, Int((Double(height) * frameScale).rounded()))
+        if frameScale < 1 {
+            log("  → frames capped to the screen's pixels: "
+                + "\(width)×\(height) → \(frameWidth)×\(frameHeight)")
+        }
+        let cover = max(Double(docWidth) / Double(frameWidth),
+                        Double(docHeight) / Double(frameHeight))
         // The user's framing rides on the centred cover: their zoom
         // multiplies it, their drag moves the layer's centre by the
         // offsets they left in the box. The caml measures the centre
@@ -471,7 +507,7 @@ enum PosterBoardVideo {
         try? FileManager.default.removeItem(at: assets)
         try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
 
-        var caml = PosterBoardTemplates.camlHeader(width: width, height: height,
+        var caml = PosterBoardTemplates.camlHeader(width: frameWidth, height: frameHeight,
                                                    docWidth: docWidth, docHeight: docHeight,
                                                    centerX: centerX, centerY: centerY,
                                                    layerScale: layerScale, layerName: layerName,
@@ -484,7 +520,12 @@ enum PosterBoardVideo {
                                transform: displayTransform,
                                fps: fps, duration: assetDuration, log: log) { frame in
             guard written < frameLimit else { return false }
-            let jpeg = try Self.jpeg(frame)
+            // Every decode route (track reader, composition,
+            // generator, resumed generator) lands in this one
+            // consumer, so the pixel cap above is applied here, once.
+            let stored = Self.scaled(frame, toWidth: frameWidth,
+                                     height: frameHeight) ?? frame
+            let jpeg = try Self.jpeg(stored)
             try jpeg.write(to: assets.appendingPathComponent("\(written).jpg"))
             caml += PosterBoardTemplates.camlFrame(index: written)
             written += 1
@@ -496,11 +537,25 @@ enum PosterBoardVideo {
         caml += PosterBoardTemplates.camlFooter()
         try caml.write(to: caDirectory.appendingPathComponent("main.caml"),
                        atomically: true, encoding: .utf8)
-        try PosterBoardTemplates.camlIndex(docWidth: docWidth, docHeight: docHeight,
-                                           layerName: layerName)
-            .write(to: caDirectory.appendingPathComponent("index.xml"),
-                   atomically: true, encoding: .utf8)
-        log("  → \(written) frame(s), \(width)×\(height) frames in a \(docWidth)×\(docHeight) "
+        // The generated index declares `scalesToFitInPlayer` on, which
+        // lets the player rescale the whole document to fit its view.
+        // On iPad that fit comes out at the display's scale factor (the
+        // field case measured ≈2.03× on a @2x iPad Air): the lock screen
+        // shows the video zoomed well past the preview's cover, while
+        // packs — whose index.xml declares no fit at all — and the
+        // reference's own iPad video skeleton (fit off, pixel units)
+        // display correctly. Turn the fit off for the video layer so
+        // the document renders at its declared size; the template
+        // itself stays untouched (it is generated from the reference),
+        // so the deviation lives here where the reason is written down.
+        let indexText = PosterBoardTemplates.camlIndex(
+            docWidth: docWidth, docHeight: docHeight, layerName: layerName)
+            .replacingOccurrences(of: "<key>scalesToFitInPlayer</key>\n\t<true/>",
+                                  with: "<key>scalesToFitInPlayer</key>\n\t<false/>")
+        try indexText.write(to: caDirectory.appendingPathComponent("index.xml"),
+                            atomically: true, encoding: .utf8)
+        log("  → index.xml: scalesToFitInPlayer off (iPad zoom fix attempt)")
+        log("  → \(written) frame(s), \(frameWidth)×\(frameHeight) frames in a \(docWidth)×\(docHeight) "
             + "document, layer \(layerName) at scale \(String(format: "%.4f", layerScale)), "
             + "\(String(format: "%.2f", fps)) fps, "
             + "duration \(String(format: "%.3f", duration)) s")
@@ -540,15 +595,27 @@ enum PosterBoardVideo {
     /// number the background and foreground packages were built for.
     ///
     /// Read from a `UIScreen` reached through a window scene rather than
-    /// `UIScreen.main` — deprecated in iOS 26, and this app targets 26. Falls
-    /// back to the reference's own 390x844 default (a 6.1" iPhone) rather than
-    /// guessing: the reference is a desktop app that has to assume a screen, and
-    /// a build that cannot reach a scene has no better answer than the one it
-    /// uses. The fallback is logged, because it silently changes the document
-    /// every frame is laid out in.
+    /// `UIScreen.main` — deprecated in iOS 26, and this app targets 26. When
+    /// no scene is reachable the device's own main screen is still a truer
+    /// ruler than any assumed size (it is what the deep-repair canvas falls
+    /// back to as well); the reference's own 390x844 default (a 6.1" iPhone)
+    /// is only the last resort, for a moment when no screen at all can be
+    /// seen. The fallbacks are logged, because they silently change the
+    /// document every frame is laid out in.
     private static func screenMetrics(log: @escaping @Sendable (String) -> Void)
         -> PosterBoardScreenMetrics {
         guard let screen = activeScreen(), !screen.bounds.isEmpty else {
+            if !UIScreen.main.bounds.isEmpty {
+                let bounds = UIScreen.main.bounds
+                let width = max(1, Int(bounds.width.rounded()))
+                let height = max(1, Int(bounds.height.rounded()))
+                let scale = max(1, Int(UIScreen.main.scale.rounded()))
+                let idiom = UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"
+                log("  ⚠️ no window scene is reachable; using the main screen's "
+                    + "\(width)x\(height)@\(scale)x~\(idiom) document instead.")
+                return PosterBoardScreenMetrics(width: width, height: height,
+                                                scale: scale, idiom: idiom)
+            }
             log("  ⚠️ no window scene is reachable; falling back to the reference's "
                 + "390x844@3x~iphone document. The frames will be laid out for a screen "
                 + "this device does not have.")
@@ -605,15 +672,48 @@ enum PosterBoardVideo {
     // MARK: - Live photo
 
     /// `create_live_photo_files`.
+    /// The reference template's baked-in identities, read out of
+    /// `PosterBoardResources.livePhotoDescriptor` (a generated file,
+    /// not edited here): the descriptor identifier lives in the
+    /// descriptor's own `.identifier` file and in
+    /// `DescriptorModel.plist`; the contents identifier names the
+    /// contents folder and is referenced by the same model. Written
+    /// raw, every product would carry both — and the system enrols
+    /// descriptors by identifier, so a second live photo could never
+    /// displace the first (field case, 2026-11-28: three different
+    /// videos flashed, the lock screen kept showing the first one's
+    /// still). Each product therefore gets fresh identifiers,
+    /// substituted at write time; a UUID string is always 36 bytes,
+    /// so the substitution preserves length and is safe inside the
+    /// template's binary plists as well.
+    private static let templateDescriptorIdentifier =
+        "88D1F444-E2B3-43C4-BB15-790C67EDEA56"
+    private static let templateContentsIdentifier =
+        "0EFB6A0F-7052-4D24-8859-AB22BADF2E93"
+
     private static func generateLivePhoto(plan: PosterBoardVideoPlan,
                                           outputDirectory: URL,
                                           log: @escaping @Sendable (String) -> Void) async throws {
         let root = outputDirectory.appendingPathComponent(
             "video-descriptor/\(PosterBoardResources.livePhotoIdentifier)", conformingTo: .data)
-        try write(PosterBoardResources.livePhotoDescriptor, into: root)
+        let descriptorIdentifier = UUID().uuidString
+        let contentsIdentifier = UUID().uuidString
+        var files: [String: Data] = [:]
+        for (path, data) in PosterBoardResources.livePhotoDescriptor {
+            let newPath = path.replacingOccurrences(
+                of: Self.templateContentsIdentifier, with: contentsIdentifier)
+            var newData = Self.replacing(Self.templateDescriptorIdentifier,
+                                         with: descriptorIdentifier, in: data)
+            newData = Self.replacing(Self.templateContentsIdentifier,
+                                     with: contentsIdentifier, in: newData)
+            files[newPath] = newData
+        }
+        try write(files, into: root)
+        log("  → live photo: fresh descriptor identity \(descriptorIdentifier) "
+            + "(products made from the raw template all share one)")
 
         let contents = root.appendingPathComponent(
-            "versions/0/contents/0EFB6A0F-7052-4D24-8859-AB22BADF2E93", conformingTo: .data)
+            "versions/0/contents/\(contentsIdentifier)", conformingTo: .data)
         let layerStack = contents.appendingPathComponent("output.layerStack", conformingTo: .data)
         let segmentation = contents.appendingPathComponent("input.segmentation", conformingTo: .data)
 
@@ -945,6 +1045,24 @@ enum PosterBoardVideo {
         }
     }
 
+    /// A frame drawn at the size it will be stored at. Drawing into
+    /// a bitmap context of the target size is the whole downscale —
+    /// no filter knobs of our own; a frame already at the target
+    /// size passes through untouched.
+    private static func scaled(_ image: CGImage, toWidth width: Int,
+                               height: Int) -> CGImage? {
+        guard image.width != width || image.height != height else { return image }
+        let space = image.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0, space: space,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
+    }
+
     private static func jpeg(_ image: CGImage) throws -> Data {
         guard let data = UIImage(cgImage: image).jpegData(compressionQuality: jpegQuality) else {
             throw DriftError("解码后的某一帧无法编码为 JPEG。")
@@ -987,6 +1105,32 @@ enum PosterBoardVideo {
     }
 
     // MARK: - Small helpers
+
+    /// Length-preserving byte substitution: every occurrence of one
+    /// UUID string for another, inside template data that may be a
+    /// binary plist — where a string round-trip would corrupt the
+    /// payload and a length change would invalidate every offset
+    /// after it. Both strings must be the same byte count (UUID
+    /// strings always are); anything else returns the data untouched.
+    private static func replacing(_ needle: String, with replacement: String,
+                                  in data: Data) -> Data {
+        let needleBytes = [UInt8](needle.utf8)
+        let replacementBytes = [UInt8](replacement.utf8)
+        guard needleBytes.count == replacementBytes.count,
+              data.count >= needleBytes.count else { return data }
+        var bytes = [UInt8](data)
+        var index = 0
+        while index + needleBytes.count <= bytes.count {
+            if Array(bytes[index..<(index + needleBytes.count)]) == needleBytes {
+                bytes.replaceSubrange(index..<(index + needleBytes.count),
+                                      with: replacementBytes)
+                index += needleBytes.count
+            } else {
+                index += 1
+            }
+        }
+        return Data(bytes)
+    }
 
     /// Write an embedded resource tree under `root`.
     private static func write(_ files: [String: Data], into root: URL) throws {

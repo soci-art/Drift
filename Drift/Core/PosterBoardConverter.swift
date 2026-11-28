@@ -505,8 +505,11 @@ enum PosterBoardConverter {
     }
 
     /// A static single-image CAML for a plane whose states the renderer traps on.
+    /// The size is the caller's to state: the defaults this used to
+    /// carry were a phone's, and a caller who forgot them stamped a
+    /// phone-sized plane into whatever descriptor it was flattening.
     static func flattenPlane(role: String, planeDir: URL,
-                             width: Double = 393.0, height: Double = 852.0) -> String {
+                             width: Double, height: Double) -> String {
         guard let image = pickPlaneImage(planeDir) else {
             return emptyPlaneCAML(role: role, width: width, height: height)
         }
@@ -631,6 +634,29 @@ enum PosterBoardConverter {
     /// external `<scriptObject>` from every plane. Called for already-modern
     /// descriptors too: a third-party pack can publish its layers and still carry
     /// a script that crashes.
+    /// The document size a descriptor's own layers declare — the
+    /// first `.ca/index.xml` under it that names one. When a pack
+    /// declares no `logicalScreenClass`, the document the flattened
+    /// plane will actually live in is a truer canvas for it than any
+    /// assumed size (Grace, 2026-11-28: the assumed phone size below
+    /// stamped a phone plane into iPad descriptors).
+    private static func descriptorDocumentSize(_ descriptorDir: URL)
+        -> (width: Int, height: Int)? {
+        guard let enumerator = FileManager.default.enumerator(
+            at: descriptorDir, includingPropertiesForKeys: nil) else { return nil }
+        for case let url as URL in enumerator {
+            guard url.path.contains(".ca/"),
+                  url.lastPathComponent == "index.xml" else { continue }
+            let index = readPlist(url)
+            if let width = number(index["documentWidth"]),
+               let height = number(index["documentHeight"]),
+               width > 0, height > 0 {
+                return (Int(width.rounded()), Int(height.rounded()))
+            }
+        }
+        return nil
+    }
+
     @discardableResult
     static func flattenUnsupportedPlanes(_ descriptorDir: URL) -> [URL] {
         guard let wallpaperDir = findWallpaperDir(descriptorDir) else { return [] }
@@ -639,8 +665,19 @@ enum PosterBoardConverter {
         // The reference's fallback here is 393x852@3 while `convertDescriptor`'s is
         // 390x844@3. Both are reproduced: they disagree upstream, and picking one
         // would silently change the document size of a pack whose
-        // `logicalScreenClass` is missing.
-        let screen = parsed ?? (393, 852, 3)
+        // `logicalScreenClass` is missing. A descriptor that declares
+        // no class still declares its own document in its layers, and
+        // that document now wins over both constants; the upstream
+        // fallback remains for a descriptor that declares nothing
+        // anywhere.
+        let screen: (width: Int, height: Int, scale: Int)
+        if let parsed {
+            screen = parsed
+        } else if let document = descriptorDocumentSize(descriptorDir) {
+            screen = (document.width, document.height, 3)
+        } else {
+            screen = (393, 852, 3)
+        }
 
         var written: [URL] = []
         for planeDir in planeDirs(wallpaperDir) {
@@ -681,7 +718,17 @@ enum PosterBoardConverter {
         guard let wallpaperDir = findWallpaperDir(descriptorDir) else { return false }
         let parsed = parseLogicalScreenClass(
             readPlist(wallpaperDir.appendingPathComponent("Wallpaper.plist"))["logicalScreenClass"] as? String)
-        let screen = parsed ?? (393, 852, 3)
+        // Same canvas rule as `flattenUnsupportedPlanes`: declared
+        // class, then the descriptor's own document, then the
+        // upstream phone fallback.
+        let screen: (width: Int, height: Int, scale: Int)
+        if let parsed {
+            screen = parsed
+        } else if let document = descriptorDocumentSize(descriptorDir) {
+            screen = (document.width, document.height, 3)
+        } else {
+            screen = (393, 852, 3)
+        }
         for planeDir in planeDirs(wallpaperDir) {
             guard planeRole(planeDir.path) == "Floating" else { continue }
             let mainCAML = planeDir.appendingPathComponent("main.caml")
