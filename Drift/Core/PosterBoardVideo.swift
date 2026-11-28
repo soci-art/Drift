@@ -672,15 +672,48 @@ enum PosterBoardVideo {
     // MARK: - Live photo
 
     /// `create_live_photo_files`.
+    /// The reference template's baked-in identities, read out of
+    /// `PosterBoardResources.livePhotoDescriptor` (a generated file,
+    /// not edited here): the descriptor identifier lives in the
+    /// descriptor's own `.identifier` file and in
+    /// `DescriptorModel.plist`; the contents identifier names the
+    /// contents folder and is referenced by the same model. Written
+    /// raw, every product would carry both — and the system enrols
+    /// descriptors by identifier, so a second live photo could never
+    /// displace the first (field case, 2026-11-28: three different
+    /// videos flashed, the lock screen kept showing the first one's
+    /// still). Each product therefore gets fresh identifiers,
+    /// substituted at write time; a UUID string is always 36 bytes,
+    /// so the substitution preserves length and is safe inside the
+    /// template's binary plists as well.
+    private static let templateDescriptorIdentifier =
+        "88D1F444-E2B3-43C4-BB15-790C67EDEA56"
+    private static let templateContentsIdentifier =
+        "0EFB6A0F-7052-4D24-8859-AB22BADF2E93"
+
     private static func generateLivePhoto(plan: PosterBoardVideoPlan,
                                           outputDirectory: URL,
                                           log: @escaping @Sendable (String) -> Void) async throws {
         let root = outputDirectory.appendingPathComponent(
             "video-descriptor/\(PosterBoardResources.livePhotoIdentifier)", conformingTo: .data)
-        try write(PosterBoardResources.livePhotoDescriptor, into: root)
+        let descriptorIdentifier = UUID().uuidString
+        let contentsIdentifier = UUID().uuidString
+        var files: [String: Data] = [:]
+        for (path, data) in PosterBoardResources.livePhotoDescriptor {
+            let newPath = path.replacingOccurrences(
+                of: Self.templateContentsIdentifier, with: contentsIdentifier)
+            var newData = Self.replacing(Self.templateDescriptorIdentifier,
+                                         with: descriptorIdentifier, in: data)
+            newData = Self.replacing(Self.templateContentsIdentifier,
+                                     with: contentsIdentifier, in: newData)
+            files[newPath] = newData
+        }
+        try write(files, into: root)
+        log("  → live photo: fresh descriptor identity \(descriptorIdentifier) "
+            + "(products made from the raw template all share one)")
 
         let contents = root.appendingPathComponent(
-            "versions/0/contents/0EFB6A0F-7052-4D24-8859-AB22BADF2E93", conformingTo: .data)
+            "versions/0/contents/\(contentsIdentifier)", conformingTo: .data)
         let layerStack = contents.appendingPathComponent("output.layerStack", conformingTo: .data)
         let segmentation = contents.appendingPathComponent("input.segmentation", conformingTo: .data)
 
@@ -1072,6 +1105,32 @@ enum PosterBoardVideo {
     }
 
     // MARK: - Small helpers
+
+    /// Length-preserving byte substitution: every occurrence of one
+    /// UUID string for another, inside template data that may be a
+    /// binary plist — where a string round-trip would corrupt the
+    /// payload and a length change would invalidate every offset
+    /// after it. Both strings must be the same byte count (UUID
+    /// strings always are); anything else returns the data untouched.
+    private static func replacing(_ needle: String, with replacement: String,
+                                  in data: Data) -> Data {
+        let needleBytes = [UInt8](needle.utf8)
+        let replacementBytes = [UInt8](replacement.utf8)
+        guard needleBytes.count == replacementBytes.count,
+              data.count >= needleBytes.count else { return data }
+        var bytes = [UInt8](data)
+        var index = 0
+        while index + needleBytes.count <= bytes.count {
+            if Array(bytes[index..<(index + needleBytes.count)]) == needleBytes {
+                bytes.replaceSubrange(index..<(index + needleBytes.count),
+                                      with: replacementBytes)
+                index += needleBytes.count
+            } else {
+                index += 1
+            }
+        }
+        return Data(bytes)
+    }
 
     /// Write an embedded resource tree under `root`.
     private static func write(_ files: [String: Data], into root: URL) throws {
