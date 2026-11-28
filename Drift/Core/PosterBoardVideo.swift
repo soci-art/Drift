@@ -507,13 +507,34 @@ enum PosterBoardVideo {
         try? FileManager.default.removeItem(at: assets)
         try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
 
-        var caml = PosterBoardTemplates.camlHeader(width: frameWidth, height: frameHeight,
-                                                   docWidth: docWidth, docHeight: docHeight,
-                                                   centerX: centerX, centerY: centerY,
-                                                   layerScale: layerScale, layerName: layerName,
-                                                   calculationMode: calculationMode,
-                                                   duration: duration,
-                                                   reverse: reverse ? 1 : 0)
+        // Fix B (Grace, 2026-11-28): the frame document is written
+        // by `videoCAMLHeader`/`videoCAMLFooter` below, NOT by the
+        // generated template pair. The template models the frames
+        // as a transform layer whose bounds are the frame's PIXELS
+        // with a `scale(cover)` transform, inside a document that
+        // declares itself in points — and on iPad the player
+        // renders that pixel layer at the display's scale factor on
+        // top of the declared scale (the field case measured
+        // ≈2.03× on a @2x iPad; fix A — `scalesToFitInPlayer` off —
+        // was falsified by the 2026-11-28 22:01 log, the decode ran
+        // with the flag off and the lock screen still zoomed). Real
+        // packs put every layer in points with no transform layer
+        // at all, so the frame layer below is a plain layer whose
+        // bounds are the cover rect in points; the oversize that
+        // the depth effect parallaxes against is preserved (the
+        // cover rect is larger than the document, and framing still
+        // moves its centre). The per-frame `<values>` entries still
+        // come from the template's `camlFrame` — they carry no
+        // geometry.
+        let layerWidth = Double(frameWidth) * layerScale
+        let layerHeight = Double(frameHeight) * layerScale
+        var caml = Self.videoCAMLHeader(docWidth: docWidth, docHeight: docHeight,
+                                        layerWidth: layerWidth, layerHeight: layerHeight,
+                                        centerX: centerX, centerY: centerY,
+                                        layerName: layerName,
+                                        calculationMode: calculationMode,
+                                        duration: duration,
+                                        reverse: reverse)
         var written = 0
         try await decodeFrames(asset: asset, track: track,
                                displaySize: (width: width, height: height),
@@ -534,9 +555,12 @@ enum PosterBoardVideo {
         guard written > 0 else {
             throw DriftError("\(video.lastPathComponent) 没有解码出任何帧。")
         }
-        caml += PosterBoardTemplates.camlFooter()
+        caml += Self.videoCAMLFooter()
         try caml.write(to: caDirectory.appendingPathComponent("main.caml"),
                        atomically: true, encoding: .utf8)
+        log("  → main.caml: frame layer in points "
+            + "\(Self.camlNumber(layerWidth))×\(Self.camlNumber(layerHeight)) "
+            + "(fix B: no pixel transform layer)")
         // The generated index declares `scalesToFitInPlayer` on, which
         // lets the player rescale the whole document to fit its view.
         // On iPad that fit comes out at the display's scale factor (the
@@ -559,6 +583,93 @@ enum PosterBoardVideo {
             + "document, layer \(layerName) at scale \(String(format: "%.4f", layerScale)), "
             + "\(String(format: "%.2f", fps)) fps, "
             + "duration \(String(format: "%.3f", duration)) s")
+    }
+
+    /// A CAML number: whole values without a fraction, the rest
+    /// rounded to two decimals (cover rects land on fractions of a
+    /// point; two decimals is far below anything the eye can see).
+    private static func camlNumber(_ value: Double) -> String {
+        if value == value.rounded() { return String(Int(value)) }
+        return String(format: "%.2f", value)
+    }
+
+    /// The frame document's opening half in the point model (fix
+    /// B — see the note at the call site in `writeCAML`): root and
+    /// published wrapper exactly as the generated template writes
+    /// them, then ONE plain frame layer whose bounds are the cover
+    /// rect in points, carrying the first frame and the keyframe
+    /// animation the per-frame `<values>` entries feed. No
+    /// transform layer, no pixel bounds.
+    private static func videoCAMLHeader(docWidth: Int, docHeight: Int,
+                                        layerWidth: Double, layerHeight: Double,
+                                        centerX: Double, centerY: Double,
+                                        layerName: String,
+                                        calculationMode: String,
+                                        duration: Double, reverse: Bool) -> String {
+        [
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            "",
+            "<caml xmlns=\"http://www.apple.com/CoreAnimation/1.0\">",
+            "  <CALayer allowsEdgeAntialiasing=\"1\" allowsGroupOpacity=\"1\" bounds=\"0 0 \(docWidth) \(docHeight)\" contentsFormat=\"RGBA8\" geometryFlipped=\"1\" hidden=\"0\" name=\"Root Layer\" position=\"\(docWidth / 2) \(docHeight / 2)\">",
+            "    <backgroundColor opacity=\"0\" value=\"1 0 1\"/>",
+            "    <sublayers>",
+            "      <CALayer id=\"\(layerName)\" allowsEdgeAntialiasing=\"1\" allowsGroupOpacity=\"1\" anchorPoint=\"0 0\" bounds=\"0 0 \(docWidth) \(docHeight)\" contentsFormat=\"RGBA8\" geometryFlipped=\"0\" hidden=\"0\" name=\"\(layerName)\" position=\"0 0\">",
+            "        <sublayers>",
+            "          <CALayer allowsEdgeAntialiasing=\"1\" allowsGroupOpacity=\"1\" bounds=\"0 0 \(camlNumber(layerWidth)) \(camlNumber(layerHeight))\" contentsFormat=\"RGBA8\" cornerCurve=\"circular\" name=\"\(layerName)\" position=\"\(camlNumber(centerX)) \(camlNumber(centerY))\">",
+            "            <contents type=\"CGImage\" src=\"assets/0.jpg\"/>",
+            "            <animations>",
+            "              <animation type=\"CAKeyframeAnimation\" calculationMode=\"\(calculationMode)\" keyPath=\"contents\" beginTime=\"1e-100\" duration=\"\(duration)\" removedOnCompletion=\"0\" repeatCount=\"inf\" repeatDuration=\"0\" speed=\"1\" timeOffset=\"0\" autoreverses=\"\(reverse ? 1 : 0)\">",
+            "                <values>",
+        ].joined(separator: "\n") + "\n"
+    }
+
+    /// The frame document's closing half: the animation and layer
+    /// closings for the point model above, then the same three
+    /// LKStates and six transitions the generated footer writes
+    /// (they carry no geometry; the wording is the template's own).
+    private static func videoCAMLFooter() -> String {
+        [
+            "                </values>",
+            "              </animation>",
+            "            </animations>",
+            "          </CALayer>",
+            "        </sublayers>",
+            "      </CALayer>",
+            "    </sublayers>",
+            "    <states>",
+            "      <LKState name=\"Locked\">",
+            "        <elements/>",
+            "      </LKState>",
+            "      <LKState name=\"Unlock\">",
+            "        <elements/>",
+            "      </LKState>",
+            "      <LKState name=\"Sleep\">",
+            "        <elements/>",
+            "      </LKState>",
+            "    </states>",
+            "    <stateTransitions>",
+            "      <LKStateTransition fromState=\"*\" toState=\"Unlock\">",
+            "        <elements/>",
+            "      </LKStateTransition>",
+            "      <LKStateTransition fromState=\"Unlock\" toState=\"*\">",
+            "        <elements/>",
+            "      </LKStateTransition>",
+            "      <LKStateTransition fromState=\"*\" toState=\"Locked\">",
+            "        <elements/>",
+            "      </LKStateTransition>",
+            "      <LKStateTransition fromState=\"Locked\" toState=\"*\">",
+            "        <elements/>",
+            "      </LKStateTransition>",
+            "      <LKStateTransition fromState=\"*\" toState=\"Sleep\">",
+            "        <elements/>",
+            "      </LKStateTransition>",
+            "      <LKStateTransition fromState=\"Sleep\" toState=\"*\">",
+            "        <elements/>",
+            "      </LKStateTransition>",
+            "    </stateTransitions>",
+            "  </CALayer>",
+            "</caml>",
+        ].joined(separator: "\n") + "\n"
     }
 
     /// The device screen in points, for the video page's framing
