@@ -41,11 +41,18 @@ enum ShareInbox {
         let profile = appBundleURL()
             .appendingPathComponent("embedded.mobileprovision")
         guard let data = try? Data(contentsOf: profile),
-              let start = data.range(of: Data("<?xml".utf8)),
-              let endMarker = Data("</plist>".utf8),
-              let end = data.range(of: endMarker, in: start.lowerBound..<data.count)
+              let start = data.range(of: Data("<?xml".utf8))
         else { return [] }
-        let plistData = data[start.lowerBound..<(end.lowerBound + endMarker.count)]
+        // `Data.range(of:in:)` does not yield an Optional in the
+        // current SDK, so the closing marker is located through
+        // NSData, whose not-found answer is explicit.
+        let endMarker = Data("</plist>".utf8)
+        let end = (data as NSData).range(
+            of: endMarker, options: [],
+            range: NSRange(location: start.lowerBound,
+                           length: data.count - start.lowerBound))
+        guard end.location != NSNotFound else { return [] }
+        let plistData = data[start.lowerBound..<(end.location + end.length)]
         guard let object = try? PropertyListSerialization.propertyList(
                 from: plistData, options: [], format: nil),
               let dict = object as? [String: Any],
