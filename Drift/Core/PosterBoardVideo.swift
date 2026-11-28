@@ -496,10 +496,24 @@ enum PosterBoardVideo {
         caml += PosterBoardTemplates.camlFooter()
         try caml.write(to: caDirectory.appendingPathComponent("main.caml"),
                        atomically: true, encoding: .utf8)
-        try PosterBoardTemplates.camlIndex(docWidth: docWidth, docHeight: docHeight,
-                                           layerName: layerName)
-            .write(to: caDirectory.appendingPathComponent("index.xml"),
-                   atomically: true, encoding: .utf8)
+        // The generated index declares `scalesToFitInPlayer` on, which
+        // lets the player rescale the whole document to fit its view.
+        // On iPad that fit comes out at the display's scale factor (the
+        // field case measured ≈2.03× on a @2x iPad Air): the lock screen
+        // shows the video zoomed well past the preview's cover, while
+        // packs — whose index.xml declares no fit at all — and the
+        // reference's own iPad video skeleton (fit off, pixel units)
+        // display correctly. Turn the fit off for the video layer so
+        // the document renders at its declared size; the template
+        // itself stays untouched (it is generated from the reference),
+        // so the deviation lives here where the reason is written down.
+        let indexText = PosterBoardTemplates.camlIndex(
+            docWidth: docWidth, docHeight: docHeight, layerName: layerName)
+            .replacingOccurrences(of: "<key>scalesToFitInPlayer</key>\n\t<true/>",
+                                  with: "<key>scalesToFitInPlayer</key>\n\t<false/>")
+        try indexText.write(to: caDirectory.appendingPathComponent("index.xml"),
+                            atomically: true, encoding: .utf8)
+        log("  → index.xml: scalesToFitInPlayer off (iPad zoom fix attempt)")
         log("  → \(written) frame(s), \(width)×\(height) frames in a \(docWidth)×\(docHeight) "
             + "document, layer \(layerName) at scale \(String(format: "%.4f", layerScale)), "
             + "\(String(format: "%.2f", fps)) fps, "
