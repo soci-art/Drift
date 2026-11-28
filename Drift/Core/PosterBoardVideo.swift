@@ -338,6 +338,23 @@ enum PosterBoardVideo {
         return sizes
     }
 
+    /// Whether a stored product's documents disagree with the current
+    /// screen beyond the flash gate's tolerance — the same comparison
+    /// `generate` refuses on, exposed so the decoded-video list can
+    /// mark such an item up front (Grace, 2026-11-28: a user tapped a
+    /// stale same-name item three times and was refused three times
+    /// before picking the re-decoded one). Live-photo products carry
+    /// no documents and never mismatch.
+    static func productMismatchesCurrentScreen(at directory: URL) async -> Bool {
+        let current = await MainActor.run { Self.deviceScreenMetrics() }
+        let toleranceW = max(8, current.width / 10)
+        let toleranceH = max(8, current.height / 10)
+        return productDocumentSizes(at: directory).contains {
+            abs($0.width - current.width) > toleranceW
+                || abs($0.height - current.height) > toleranceH
+        }
+    }
+
     /// `create_video_loop_files`.
     private static func generateLoop(plan: PosterBoardVideoPlan,
                                      metrics capturedMetrics: PosterBoardScreenMetrics,
