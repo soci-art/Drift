@@ -571,15 +571,27 @@ enum PosterBoardVideo {
     /// number the background and foreground packages were built for.
     ///
     /// Read from a `UIScreen` reached through a window scene rather than
-    /// `UIScreen.main` — deprecated in iOS 26, and this app targets 26. Falls
-    /// back to the reference's own 390x844 default (a 6.1" iPhone) rather than
-    /// guessing: the reference is a desktop app that has to assume a screen, and
-    /// a build that cannot reach a scene has no better answer than the one it
-    /// uses. The fallback is logged, because it silently changes the document
-    /// every frame is laid out in.
+    /// `UIScreen.main` — deprecated in iOS 26, and this app targets 26. When
+    /// no scene is reachable the device's own main screen is still a truer
+    /// ruler than any assumed size (it is what the deep-repair canvas falls
+    /// back to as well); the reference's own 390x844 default (a 6.1" iPhone)
+    /// is only the last resort, for a moment when no screen at all can be
+    /// seen. The fallbacks are logged, because they silently change the
+    /// document every frame is laid out in.
     private static func screenMetrics(log: @escaping @Sendable (String) -> Void)
         -> PosterBoardScreenMetrics {
         guard let screen = activeScreen(), !screen.bounds.isEmpty else {
+            if !UIScreen.main.bounds.isEmpty {
+                let bounds = UIScreen.main.bounds
+                let width = max(1, Int(bounds.width.rounded()))
+                let height = max(1, Int(bounds.height.rounded()))
+                let scale = max(1, Int(UIScreen.main.scale.rounded()))
+                let idiom = UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"
+                log("  ⚠️ no window scene is reachable; using the main screen's "
+                    + "\(width)x\(height)@\(scale)x~\(idiom) document instead.")
+                return PosterBoardScreenMetrics(width: width, height: height,
+                                                scale: scale, idiom: idiom)
+            }
             log("  ⚠️ no window scene is reachable; falling back to the reference's "
                 + "390x844@3x~iphone document. The frames will be laid out for a screen "
                 + "this device does not have.")

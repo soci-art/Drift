@@ -545,10 +545,15 @@ enum PosterBoardImports {
         } catch {
             let packError = error
             let bagged = importBag(from: file, progress: progress)
-            if !bagged.isEmpty {
-                AppLog.op("导入：从 \(sourceName) 里取出 \(bagged.count) 个壁纸包")
+            if !bagged.packs.isEmpty {
+                AppLog.op("导入：从 \(sourceName) 里取出 \(bagged.packs.count) 个壁纸包")
                 AppLog.timing("导入压缩包 \(sourceName)", since: started)
-                return (bagged, nil)
+                return (bagged.packs, nil)
+            }
+            // A bag whose every pack was refused for its screen size:
+            // the refusal is the news, not the pack attempt's error.
+            if let refusal = bagged.refusal {
+                return (nil, WrongScreenSizeError(message: refusal))
             }
             return (nil, packError)
         }
@@ -557,12 +562,19 @@ enum PosterBoardImports {
     /// Every pack inside a bag archive, imported one at a time: each
     /// entry is extracted to a scratch file and stored from there, so
     /// a bag of large packs never holds more than one on disk outside
-    /// the library itself — and none of them in memory.
+    /// the library itself — and none of them in memory. A pack
+    /// refused for its screen size is skipped like an unusable one,
+    /// but the first refusal's wording rides back with the result:
+    /// when nothing in the bag could be taken, that refusal is what
+    /// the user needs to hear.
     private static func importBag(from file: URL,
-                                  progress: ((Double) -> Void)?) -> [PosterBoardTendie] {
-        guard let archive = try? Archive(url: file, accessMode: .read) else { return [] }
+                                  progress: ((Double) -> Void)?)
+        -> (packs: [PosterBoardTendie], refusal: String?) {
+        guard let archive = try? Archive(url: file, accessMode: .read)
+        else { return ([], nil) }
         let fm = FileManager.default
         var result: [PosterBoardTendie] = []
+        var refusal: String?
         let entries = archive.filter {
             $0.type == .file && $0.path.lowercased().hasSuffix(".tendies")
         }
@@ -585,6 +597,9 @@ enum PosterBoardImports {
                 let tendie = try storePackCopying(from: scratch,
                                                   named: normalizedName(for: entryName))
                 result.append(contentsOf: finishImport(tendie))
+            } catch let error as WrongScreenSizeError {
+                if refusal == nil { refusal = error.message }
+                AppLog.warn("导入：压缩包里的 \(entryName) 尺寸对不上，跳过")
             } catch {
                 AppLog.warn("导入：压缩包里的 \(entryName) 不是能用的壁纸包，跳过")
             }
@@ -592,7 +607,7 @@ enum PosterBoardImports {
                 progress(min(1, Double(doneBytes) / Double(totalBytes)))
             }
         }
-        return result
+        return (result, refusal)
     }
 
     /// Whether a file starts with the ZIP signature ("PK").
@@ -631,6 +646,99 @@ enum PosterBoardImports {
         return (base.isEmpty ? "壁纸包" : base) + ".tendies"
     }
 
+    /// A pack refused at import because it was made for a different
+    /// screen size (Grace, 2026-11-28). Its own type so the bag
+    /// importer can tell a refusal — which the user must hear about
+    /// when nothing in the bag could be taken — from an ordinary
+    /// unusable entry, which is skipped quietly.
+    private struct WrongScreenSizeError: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    /// Refuse a stored pack whose canvas was made for another screen
+    /// size (Grace, 2026-11-28: on an iPad an iPhone pack can never
+    /// match the lock screen — letting it in only postpones the
+    /// discovery to flash time, where it reads as a broken wallpaper
+    /// rather than a wrong-sized one).
+    ///
+    /// The pack's canvases are every size it declares: each
+    /// descriptor's `logicalScreenClass` and each layer document's
+    /// own declared size. A pack carrying a variant for this device
+    /// passes — any one canvas within the flash gate's tolerance of
+    /// the running screen is enough. A readable pack that declares
+    /// nothing is measured by the size the converter itself assumes
+    /// for it (390×844); a file that is not an archive at all is left
+    /// to the validator's own error.
+    private static func refuseIfWrongScreenSize(file: URL, name: String) throws {
+        guard let archive = try? Archive(url: file, accessMode: .read) else { return }
+        var canvases: [(width: Int, height: Int)] = []
+        for entry in archive where entry.path.hasSuffix("Wallpaper.plist") {
+            guard let data = entryData(entry, in: archive),
+                  let object = try? PropertyListSerialization.propertyList(
+                    from: data, options: [], format: nil),
+                  let dict = object as? [String: Any],
+                  let parsed = PosterBoardConverter.parseLogicalScreenClass(
+                    dict["logicalScreenClass"] as? String)
+            else { continue }
+            canvases.append((parsed.width, parsed.height))
+        }
+        for entry in archive where entry.path.hasSuffix(".ca/index.xml") {
+            guard let data = entryData(entry, in: archive),
+                  let text = String(data: data, encoding: .utf8),
+                  let size = documentSize(inIndexXML: text),
+                  !canvases.contains(where: { $0 == size })
+            else { continue }
+            canvases.append(size)
+        }
+        let candidates = canvases.isEmpty ? [(width: 390, height: 844)] : canvases
+        let current = PosterBoardVideo.deviceScreenPoints()
+        let toleranceW = max(8, current.width / 10)
+        let toleranceH = max(8, current.height / 10)
+        if candidates.contains(where: {
+            abs($0.width - current.width) <= toleranceW
+                && abs($0.height - current.height) <= toleranceH
+        }) { return }
+        let first = candidates[0]
+        let message = "「\(name)」是按 \(first.width)×\(first.height) 的屏幕做的，"
+            + "这台机器是 \(current.width)×\(current.height)，尺寸对不上，"
+            + "刷上去锁屏画面会变形。已拒绝导入，请换按这台机器尺寸做的壁纸包。"
+        AppLog.warn("导入拒绝：\(message)")
+        throw WrongScreenSizeError(message: message)
+    }
+
+    /// One archive entry's bytes. Only ever called on plist and
+    /// index files — small by construction.
+    private static func entryData(_ entry: Archive.Entry, in archive: Archive) -> Data? {
+        var data = Data()
+        do {
+            _ = try archive.extract(entry) { data.append($0) }
+        } catch {
+            return nil
+        }
+        return data
+    }
+
+    private static let documentWidthRE = try! NSRegularExpression(
+        pattern: #"<key>documentWidth</key>\s*<real>([\d.]+)</real>"#)
+    private static let documentHeightRE = try! NSRegularExpression(
+        pattern: #"<key>documentHeight</key>\s*<real>([\d.]+)</real>"#)
+
+    /// The document size an index.xml declares, the same two keys
+    /// `PosterBoardVideo.productDocumentSizes` reads from a stored
+    /// video product.
+    private static func documentSize(inIndexXML text: String)
+        -> (width: Int, height: Int)? {
+        let range = NSRange(text.startIndex..., in: text)
+        guard let w = documentWidthRE.firstMatch(in: text, range: range),
+              let h = documentHeightRE.firstMatch(in: text, range: range),
+              let wr = Range(w.range(at: 1), in: text),
+              let hr = Range(h.range(at: 1), in: text),
+              let width = Double(text[wr]), let height = Double(text[hr])
+        else { return nil }
+        return (Int(width.rounded()), Int(height.rounded()))
+    }
+
     /// Copy one pack file in under `name` and validate it. A failed
     /// validation removes the file again — nothing half-imported is
     /// left behind for the next launch to trip over.
@@ -648,6 +756,7 @@ enum PosterBoardImports {
             throw DriftError("无法把 \(name) 拷贝进应用：" + error.localizedDescription)
         }
         do {
+            try refuseIfWrongScreenSize(file: destination, name: name)
             return try PosterBoardTendie(url: destination)
         } catch {
             try? FileManager.default.removeItem(at: destination)
