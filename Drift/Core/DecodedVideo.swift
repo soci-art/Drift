@@ -206,6 +206,12 @@ final class DecodedVideoLibrary: ObservableObject {
                 DriftEngine.shared.log($0)
             }
         } catch {
+            // A failed decode used to leave no trace in the log —
+            // only the popup the user saw (2026-11-28 iPad cases:
+            // repeated loop-decode failures were invisible in
+            // drift.log, inferable only from starts with no
+            // completion). Log it in full before it propagates.
+            AppLog.failure("解码失败：\(name)：\(error.localizedDescription)")
             try? fm.removeItem(at: directory)
             throw error
         }
