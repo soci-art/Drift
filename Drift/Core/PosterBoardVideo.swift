@@ -26,6 +26,28 @@ private struct CompositionUnavailable: Error {
     let message: String
 }
 
+/// A frame-reader failure with the system's error preserved in
+/// full (domain + code): the `localizedDescription` alone is
+/// usually the generic 「无法完成操作」, which says nothing about
+/// what actually refused. Whether a generator fallback is still
+/// safe is `decodeFrames`' call — it owns the consumed count.
+private struct DecodeFailure: Error {
+    let message: String
+
+    init(_ error: Error?) {
+        guard let error else {
+            message = "读取器没有给出原因"
+            return
+        }
+        let nsError = error as NSError
+        message = "\(nsError.localizedDescription)（\(nsError.domain) 错误 \(nsError.code)）"
+    }
+
+    init(message: String) {
+        self.message = message
+    }
+}
+
 /// The screen a video document is built for. The video page's framing box,
 /// the descriptor skeleton and the caml all use one of these, so the box the
 /// user adjusts and the geometry written into the product cannot be measured
@@ -734,14 +756,33 @@ enum PosterBoardVideo {
                                      duration: CMTime,
                                      log: @escaping @Sendable (String) -> Void,
                                      consume: (CGImage) throws -> Bool) async throws {
+        // Count the frames the caller actually took. A reader
+        // failure may fall back to the generator only while that
+        // count is zero — otherwise the fallback would write
+        // frame 0 again over the files already on disk and double
+        // the caml list.
+        var consumed = 0
+        let counting: (CGImage) throws -> Bool = { image in
+            guard try consume(image) else { return false }
+            consumed += 1
+            return true
+        }
         if transform == .identity {
-            try decodeTrack(asset: asset, track: track, consume: consume)
+            log("  → 逐帧解码：普通读取")
+            do {
+                try decodeTrack(asset: asset, track: track, consume: counting)
+            } catch let failure as DecodeFailure {
+                try await fallBackToGenerator(failure, consumed: consumed,
+                                              asset: asset, fps: fps,
+                                              duration: duration, log: log,
+                                              consume: counting)
+            }
             return
         }
         do {
             try decodeComposition(asset: asset, track: track,
                                   displaySize: displaySize, transform: transform,
-                                  fps: fps, duration: duration, consume: consume)
+                                  fps: fps, duration: duration, consume: counting)
         } catch let unavailable as CompositionUnavailable {
             // Only a setup failure may fall back: `decodeComposition` has
             // consumed nothing at that point. A write/read error after frames
@@ -750,24 +791,55 @@ enum PosterBoardVideo {
             log("  ⚠️ 旋转视频的合成解码不可用（\(unavailable.message)），"
                 + "回退到逐帧生成器（会慢很多）")
             try await decodeWithGenerator(asset: asset, fps: fps, duration: duration,
-                                          consume: consume)
+                                          consume: counting)
+        } catch let failure as DecodeFailure {
+            try await fallBackToGenerator(failure, consumed: consumed,
+                                          asset: asset, fps: fps,
+                                          duration: duration, log: log,
+                                          consume: counting)
         }
+    }
+
+    /// A reader failure with no frames on disk yet is not the
+    /// end: the generator takes a completely different route
+    /// (per-frame seeks, damaged frames skipped) and decodes
+    /// many files the sequential reader refuses — the social-app
+    /// .mp4s of the 2026-11-28 iPad cases among them, most
+    /// likely. With frames already written the failure stands
+    /// as reported, in full.
+    private static func fallBackToGenerator(_ failure: DecodeFailure,
+                                            consumed: Int,
+                                            asset: AVURLAsset,
+                                            fps: Double, duration: CMTime,
+                                            log: @escaping @Sendable (String) -> Void,
+                                            consume: (CGImage) throws -> Bool) async throws {
+        guard consumed == 0 else {
+            throw DriftError("帧解码失败：\(failure.message)")
+        }
+        log("  ⚠️ 逐帧读取失败（\(failure.message)），还没解出帧，"
+            + "回退到逐帧生成器（会慢很多）")
+        try await decodeWithGenerator(asset: asset, fps: fps, duration: duration,
+                                      consume: consume)
     }
 
     private static func decodeTrack(asset: AVURLAsset, track: AVAssetTrack,
                                     consume: (CGImage) throws -> Bool) throws {
-        let reader = try AVAssetReader(asset: asset)
+        let reader: AVAssetReader
+        do {
+            reader = try AVAssetReader(asset: asset)
+        } catch {
+            throw DecodeFailure(error)
+        }
         let output = AVAssetReaderTrackOutput(
             track: track,
             outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
         output.alwaysCopiesSampleData = false
         guard reader.canAdd(output) else {
-            throw DriftError("这个视频的帧无法在这台设备上解码。")
+            throw DecodeFailure(message: "这台设备加不上这个视频的帧输出")
         }
         reader.add(output)
         guard reader.startReading() else {
-            throw DriftError("帧解码失败："
-                + (reader.error?.localizedDescription ?? "没有给出原因"))
+            throw DecodeFailure(reader.error)
         }
         while let sample = output.copyNextSampleBuffer() {
             defer { CMSampleBufferInvalidate(sample) }
@@ -779,8 +851,7 @@ enum PosterBoardVideo {
         }
         if reader.status == .reading { reader.cancelReading() }
         if reader.status == .failed {
-            throw DriftError("帧解码失败："
-                + (reader.error?.localizedDescription ?? "没有给出原因"))
+            throw DecodeFailure(reader.error)
         }
     }
 
@@ -836,8 +907,7 @@ enum PosterBoardVideo {
         }
         if reader.status == .reading { reader.cancelReading() }
         if reader.status == .failed {
-            throw DriftError("帧解码失败："
-                + (reader.error?.localizedDescription ?? "没有给出原因"))
+            throw DecodeFailure(reader.error)
         }
     }
 
