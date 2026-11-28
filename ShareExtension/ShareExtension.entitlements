@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Only the group: the extension's whole job is writing into the
+	     shared inbox. The app's own entitlements (get-task-allow, the
+	     IOKit classes) are for the app process and must not ride
+	     along into the appex. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.sociart.drift</string>
+	</array>
+</dict>
+</plist>

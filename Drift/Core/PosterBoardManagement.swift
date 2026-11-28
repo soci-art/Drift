@@ -374,58 +374,23 @@ enum PosterBoardManagement {
         identityVersion: String,
         log: @escaping @Sendable (String) -> Void
     ) async -> (entries: [ManagedEntry], source: String, reason: String?) {
+        // The tunnel route failing must not dead-end the page when the
+        // local channel can read the same store (Grace, 2026-11-28: a
+        // user whose flashes all went through the local channel hit
+        // "隧道容器未读到" here merely because his tunnel was
+        // connected). A tunnel failure is logged with its reason and
+        // the local enumeration gets its turn; the kernel route below
+        // keeps its existing behaviour.
+        var tunnelFailure: String?
         let tunnelAvailable = tunnelReady && !identityVersion.isEmpty
         if tunnelAvailable {
-            var container = PosterBoardAirlift.cachedContainer
-            if container.isEmpty {
-                do { container = try await PosterBoardAirlift.resolveContainer(
-                    pairingPath: AppPaths.pairingFile.path) }
-                catch { container = "" }
+            switch await tunnelManagedEntries(log: log) {
+            case .listed(let entries):
+                return (entries, "隧道", nil)
+            case .failed(let reason):
+                log("[管理页] 隧道读取失败：\(reason)；改走本机读取。")
+                tunnelFailure = reason
             }
-            guard !container.isEmpty else {
-                return ([], "隧道", "隧道容器未读到，无法列出商店。")
-            }
-            if !container.hasSuffix("/") { container += "/" }
-            let availableGenerations: Set<Int>
-            do {
-                availableGenerations = Set(try await Airlift.posterStoreGenerations(
-                    pairingPath: AppPaths.pairingFile.path,
-                    containerPath: container))
-            } catch {
-                return ([], "隧道", "隧道商店没读到：\(error.localizedDescription)")
-            }
-            guard !availableGenerations.isEmpty else {
-                log("隧道商店根目录为空，没有可管理的描述符。")
-                return ([], "隧道", nil)
-            }
-            log("隧道商店根目录：实际存在的结构版本 \(availableGenerations.sorted())。")
-
-            var entries: [ManagedEntry] = []
-            var seen = Set<String>()
-            for generation in [61, 62, 63, 60, 64] where availableGenerations.contains(generation) {
-                do {
-                    let items = try await Airlift.posterStoreList(
-                        pairingPath: AppPaths.pairingFile.path,
-                        containerPath: container,
-                        structureVersion: generation)
-                    for item in items where PosterBoard.managedProviders.contains(item.extension) {
-                        let key = "\(item.extension)/\(item.uuid)/\(generation)"
-                        if seen.contains(key) { continue }
-                        seen.insert(key)
-                        entries.append(ManagedEntry(
-                            id: key,
-                            provider: item.extension,
-                            uuid: item.uuid,
-                            name: (item.name?.isEmpty == false) ? (item.name ?? item.uuid) : (item.packageName?.isEmpty == false ? item.packageName! : String(item.uuid.prefix(8))),
-                            packageName: item.packageName ?? "",
-                            generation: generation,
-                            containerPath: container))
-                    }
-                } catch {
-                    continue
-                }
-            }
-            return (entries, "隧道", nil)
         }
 
         let localAvailable = WorseQueryEscape.isAvailable(
@@ -471,7 +436,75 @@ enum PosterBoardManagement {
             return (entries, "内核", nil)
         }
 
+        if let tunnelFailure {
+            return ([], "隧道", tunnelFailure)
+        }
         return ([], "", "需要配对文件、LocalDevVPN 和已连接的设备，或本机直刷可用，才能列出商店里的壁纸。")
+    }
+
+    /// The tunnel route's outcome for `loadManagedEntries`: the store
+    /// listed (possibly empty), or the reason it could not be read.
+    private enum TunnelListResult {
+        case listed([ManagedEntry])
+        case failed(String)
+    }
+
+    /// Enumerate the store over the tunnel. A failure comes back as a
+    /// reason, never a throw, so the caller can log it and fall
+    /// through to the next route instead of dead-ending the page.
+    private static func tunnelManagedEntries(
+        log: @escaping @Sendable (String) -> Void
+    ) async -> TunnelListResult {
+        var container = PosterBoardAirlift.cachedContainer
+        if container.isEmpty {
+            do { container = try await PosterBoardAirlift.resolveContainer(
+                pairingPath: AppPaths.pairingFile.path) }
+            catch { container = "" }
+        }
+        guard !container.isEmpty else {
+            return .failed("隧道容器未读到，无法列出商店。")
+        }
+        if !container.hasSuffix("/") { container += "/" }
+        let availableGenerations: Set<Int>
+        do {
+            availableGenerations = Set(try await Airlift.posterStoreGenerations(
+                pairingPath: AppPaths.pairingFile.path,
+                containerPath: container))
+        } catch {
+            return .failed("隧道商店没读到：\(error.localizedDescription)")
+        }
+        guard !availableGenerations.isEmpty else {
+            log("隧道商店根目录为空，没有可管理的描述符。")
+            return .listed([])
+        }
+        log("隧道商店根目录：实际存在的结构版本 \(availableGenerations.sorted())。")
+
+        var entries: [ManagedEntry] = []
+        var seen = Set<String>()
+        for generation in [61, 62, 63, 60, 64] where availableGenerations.contains(generation) {
+            do {
+                let items = try await Airlift.posterStoreList(
+                    pairingPath: AppPaths.pairingFile.path,
+                    containerPath: container,
+                    structureVersion: generation)
+                for item in items where PosterBoard.managedProviders.contains(item.extension) {
+                    let key = "\(item.extension)/\(item.uuid)/\(generation)"
+                    if seen.contains(key) { continue }
+                    seen.insert(key)
+                    entries.append(ManagedEntry(
+                        id: key,
+                        provider: item.extension,
+                        uuid: item.uuid,
+                        name: (item.name?.isEmpty == false) ? (item.name ?? item.uuid) : (item.packageName?.isEmpty == false ? item.packageName! : String(item.uuid.prefix(8))),
+                        packageName: item.packageName ?? "",
+                        generation: generation,
+                        containerPath: container))
+                }
+            } catch {
+                continue
+            }
+        }
+        return .listed(entries)
     }
 
     /// Delete one managed entry through whichever route the premises allow.

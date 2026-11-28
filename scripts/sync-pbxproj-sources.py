@@ -23,6 +23,12 @@ Guarantees, in the order they matter:
     buildFile -> fileRef -> owning group -> real file on disk
   * running it twice with no source change writes an identical file
 
+Only the Drift app target is reconciled. The project also carries a
+share-extension target whose sources are its own business (one file,
+`Drift/Core/ShareInbox.swift`, is compiled into both targets on
+purpose); the extension's Sources phase and build files are carried
+over verbatim, never counted against SwiftPM's answer for the app.
+
 Usage:
     scripts/sync-pbxproj-sources.py           # reconcile and write
     scripts/sync-pbxproj-sources.py --check   # report drift, exit 1, no write
@@ -239,6 +245,42 @@ def parse(text: str, secs: dict[str, tuple[int, int]]):
     return refs, builds, groups, root.group(1)
 
 
+def target_sources_phase_id(text: str, secs: dict[str, tuple[int, int]]) -> str:
+    """The Sources build phase of the target named `NUGGET` — found via
+    the target's own buildPhases list, because the project carries
+    more than one target and only this one's phase is reconciled."""
+    if "PBXNativeTarget" not in secs:
+        die("project.pbxproj has no PBXNativeTarget section")
+    body = text[secs["PBXNativeTarget"][0]:secs["PBXNativeTarget"][1]]
+    for m in re.finditer(r"^\t\t([0-9A-F]{24}) /\* (.+?) \*/ = \{\n(.*?)\n\t\t\};$",
+                         body, re.M | re.S):
+        if m.group(2) != NUGGET:
+            continue
+        phases = re.search(r"\t\t\tbuildPhases = \(\n(.*?)\n\t\t\t\);",
+                           m.group(3), re.S)
+        if not phases:
+            die(f"target {NUGGET} has no buildPhases list")
+        for line in phases.group(1).split("\n"):
+            pm = re.match(r"^\t{4}([0-9A-F]{24}) /\* Sources \*/,$", line)
+            if pm:
+                return pm.group(1)
+        die(f"target {NUGGET} has no Sources build phase")
+    die(f"no PBXNativeTarget named {NUGGET}")
+
+
+def sources_phase_block(text: str, secs: dict[str, tuple[int, int]],
+                        phase_id: str) -> re.Match:
+    """The one phase object `phase_id` inside the PBXSourcesBuildPhase
+    section — the section holds every target's phase, so the block is
+    located by id rather than by position."""
+    body = text[secs["PBXSourcesBuildPhase"][0]:secs["PBXSourcesBuildPhase"][1]]
+    block = re.search(r"^\t\t" + phase_id + r" /\* Sources \*/ = \{\n.*?\n\t\t\};$",
+                      body, re.M | re.S)
+    if not block:
+        die(f"Sources phase {phase_id} not found in project.pbxproj")
+    return block
+
+
 def group_dirs(groups: dict[str, Group], root_id: str) -> dict[str, str]:
     """Package-relative directory of each group.  A group declared with `name`
     only is virtual and inherits its parent's directory."""
@@ -306,11 +348,20 @@ def main() -> int:
 
     original = PBXPROJ.read_text(encoding="utf-8")
     secs = split_sections(original)
-    for needed in ("PBXBuildFile", "PBXFileReference", "PBXGroup", "PBXSourcesBuildPhase"):
+    for needed in ("PBXBuildFile", "PBXFileReference", "PBXGroup",
+                   "PBXSourcesBuildPhase", "PBXNativeTarget"):
         if needed not in secs:
             die(f"project.pbxproj has no {needed} section")
 
     refs, builds, groups, root_id = parse(original, secs)
+    # Only the app target's own Sources phase is managed. Its current
+    # file list is the set of build files this script may drop or
+    # replace; any other target's build files (the share extension
+    # compiles one shared file through its own) are carried verbatim.
+    phase_id = target_sources_phase_id(original, secs)
+    phase_block = sources_phase_block(original, secs, phase_id)
+    managed_build_ids = set(re.findall(
+        r"^\t{4}([0-9A-F]{24}) /\* .+? \*/,?$", phase_block.group(0), re.M))
     dirs = group_dirs(groups, root_id)
     parent_of = {child: gid for gid, g in groups.items()
                  for child in g.children if child in groups}
@@ -330,7 +381,16 @@ def main() -> int:
             if ref and ref.is_swift and ref.path:
                 ref_path[child] = posixpath.join(dirs[gid], ref.path)
     ref_for_path = {p: rid for rid, p in ref_path.items()}
-    build_for_ref = {bf.ref: bid for bid, bf in builds.items()}
+    # A file compiled into two targets has two build files pointing at
+    # one reference; the app target's own build file wins the mapping,
+    # so the reconciled phase keeps referencing the object it already
+    # referenced.
+    build_for_ref: dict[str, str] = {}
+    for bid in sorted(managed_build_ids):
+        if bid in builds:
+            build_for_ref.setdefault(builds[bid].ref, bid)
+    for bid, bf in builds.items():
+        build_for_ref.setdefault(bf.ref, bid)
 
     used_ids = set(re.findall(r"\b[0-9A-F]{24}\b", original))
 
@@ -429,7 +489,9 @@ def main() -> int:
         f"fileRef = {new_ref[path]} /* {posixpath.basename(path)} */; }};"
         for path, bid in new_build.items()
     ]
-    build_entries += [b.raw for b in builds.values() if b.ref not in ref_path]
+    build_entries += [b.raw for b in builds.values()
+                      if b.id not in managed_build_ids
+                      and b.id not in new_build.values()]
 
     group_blocks = [render_group(g, g.children, labels) for g in groups.values()]
 
@@ -450,12 +512,15 @@ def main() -> int:
     secs = split_sections(text)
 
     start, end = secs["PBXSourcesBuildPhase"]
-    body = text[start:end]
-    opened = body.index("\t\t\tfiles = (\n") + len("\t\t\tfiles = (\n")
-    closed = body.index("\t\t\t);", opened)
-    text = text[:start + opened] + "\n".join(source_entries) + "\n" + text[start + closed:]
+    block = sources_phase_block(text, secs, phase_id)
+    block_text = block.group(0)
+    opened = block_text.index("\t\t\tfiles = (\n") + len("\t\t\tfiles = (\n")
+    closed = block_text.index("\t\t\t);", opened)
+    new_block = (block_text[:opened] + "\n".join(source_entries) + "\n"
+                 + block_text[closed:])
+    text = text[:start + block.start()] + new_block + text[start + block.end():]
 
-    validate(text, desired)
+    validate(text, desired, phase_id)
 
     if args.check:
         if text != original:
@@ -473,15 +538,20 @@ def main() -> int:
     return 0
 
 
-def validate(text: str, desired: list[str]) -> None:
-    """Refuse to hand Xcode a project whose source entries do not resolve."""
+def validate(text: str, desired: list[str], phase_id: str) -> None:
+    """Refuse to hand Xcode a project whose source entries do not resolve.
+
+    Only the app target's phase is counted — the section also holds
+    the extension's phase, whose entries are not SwiftPM's business.
+    """
     secs = split_sections(text)
     refs, builds, groups, root_id = parse(text, secs)
     dirs = group_dirs(groups, root_id)
     owner_of = {child: gid for gid, g in groups.items() for child in g.children}
 
-    body = text[secs["PBXSourcesBuildPhase"][0]:secs["PBXSourcesBuildPhase"][1]]
-    entries = re.findall(r"^\t{4}([0-9A-F]{24}) /\* (.+?) in Sources \*/,?$", body, re.M)
+    block = sources_phase_block(text, secs, phase_id)
+    entries = re.findall(r"^\t{4}([0-9A-F]{24}) /\* (.+?) in Sources \*/,?$",
+                         block.group(0), re.M)
     if len(entries) != len(desired):
         die(f"Sources phase has {len(entries)} entries but SwiftPM resolved {len(desired)}")
 

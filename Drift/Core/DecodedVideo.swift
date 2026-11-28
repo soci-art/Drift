@@ -261,6 +261,22 @@ final class DecodedVideoLibrary: ObservableObject {
     }
 
     /// Delete the chosen items and their products.
+    /// The ids whose stored product was decoded for a different
+    /// screen size than this device's — the flash gate would refuse
+    /// them, so the list marks them instead of letting the user find
+    /// out by tapping. Recomputed by the list views whenever the
+    /// items change.
+    func staleItemIDs() async -> Set<String> {
+        var ids: Set<String> = []
+        for item in items {
+            if await PosterBoardVideo.productMismatchesCurrentScreen(
+                at: item.productDirectory) {
+                ids.insert(item.id)
+            }
+        }
+        return ids
+    }
+
     func delete(ids: Set<String>) {
         let fm = FileManager.default
         for item in items where ids.contains(item.id) {
