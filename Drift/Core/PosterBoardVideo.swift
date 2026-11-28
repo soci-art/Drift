@@ -462,7 +462,26 @@ enum PosterBoardVideo {
         // reproduce it exactly, and a caller wanting travel passes more.
         let docWidth = metrics.width
         let docHeight = metrics.height
-        let cover = max(Double(docWidth) / Double(width), Double(docHeight) / Double(height))
+        // Frames are stored at the document's own pixel size at most
+        // (Grace, 2026-11-28): a frame larger than the screen can
+        // never be shown sharper than the screen, but the lock-screen
+        // renderer still has to lift every one of its pixels — the
+        // field case was a 304-frame 4K loop stored at 1.1 GB whose
+        // lock screen spun on it forever. The downscale is uniform,
+        // so the aspect — and with it `cover`, the framing and the
+        // preview — is unchanged; only the stored pixels shrink, and
+        // the layer's bounds below name the stored size so the
+        // document stays honest about what it carries.
+        let frameScale = min(1, Double(docWidth * metrics.scale) / Double(width),
+                             Double(docHeight * metrics.scale) / Double(height))
+        let frameWidth = max(1, Int((Double(width) * frameScale).rounded()))
+        let frameHeight = max(1, Int((Double(height) * frameScale).rounded()))
+        if frameScale < 1 {
+            log("  → frames capped to the screen's pixels: "
+                + "\(width)×\(height) → \(frameWidth)×\(frameHeight)")
+        }
+        let cover = max(Double(docWidth) / Double(frameWidth),
+                        Double(docHeight) / Double(frameHeight))
         // The user's framing rides on the centred cover: their zoom
         // multiplies it, their drag moves the layer's centre by the
         // offsets they left in the box. The caml measures the centre
@@ -488,7 +507,7 @@ enum PosterBoardVideo {
         try? FileManager.default.removeItem(at: assets)
         try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
 
-        var caml = PosterBoardTemplates.camlHeader(width: width, height: height,
+        var caml = PosterBoardTemplates.camlHeader(width: frameWidth, height: frameHeight,
                                                    docWidth: docWidth, docHeight: docHeight,
                                                    centerX: centerX, centerY: centerY,
                                                    layerScale: layerScale, layerName: layerName,
@@ -501,7 +520,12 @@ enum PosterBoardVideo {
                                transform: displayTransform,
                                fps: fps, duration: assetDuration, log: log) { frame in
             guard written < frameLimit else { return false }
-            let jpeg = try Self.jpeg(frame)
+            // Every decode route (track reader, composition,
+            // generator, resumed generator) lands in this one
+            // consumer, so the pixel cap above is applied here, once.
+            let stored = Self.scaled(frame, toWidth: frameWidth,
+                                     height: frameHeight) ?? frame
+            let jpeg = try Self.jpeg(stored)
             try jpeg.write(to: assets.appendingPathComponent("\(written).jpg"))
             caml += PosterBoardTemplates.camlFrame(index: written)
             written += 1
@@ -531,7 +555,7 @@ enum PosterBoardVideo {
         try indexText.write(to: caDirectory.appendingPathComponent("index.xml"),
                             atomically: true, encoding: .utf8)
         log("  → index.xml: scalesToFitInPlayer off (iPad zoom fix attempt)")
-        log("  → \(written) frame(s), \(width)×\(height) frames in a \(docWidth)×\(docHeight) "
+        log("  → \(written) frame(s), \(frameWidth)×\(frameHeight) frames in a \(docWidth)×\(docHeight) "
             + "document, layer \(layerName) at scale \(String(format: "%.4f", layerScale)), "
             + "\(String(format: "%.2f", fps)) fps, "
             + "duration \(String(format: "%.3f", duration)) s")
@@ -986,6 +1010,24 @@ enum PosterBoardVideo {
                 continue
             }
         }
+    }
+
+    /// A frame drawn at the size it will be stored at. Drawing into
+    /// a bitmap context of the target size is the whole downscale —
+    /// no filter knobs of our own; a frame already at the target
+    /// size passes through untouched.
+    private static func scaled(_ image: CGImage, toWidth width: Int,
+                               height: Int) -> CGImage? {
+        guard image.width != width || image.height != height else { return image }
+        let space = image.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0, space: space,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
     }
 
     private static func jpeg(_ image: CGImage) throws -> Data {
