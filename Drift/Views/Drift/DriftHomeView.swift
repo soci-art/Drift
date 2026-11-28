@@ -34,10 +34,8 @@ struct DriftHomeView: View {
     private var identity: DeviceIdentity { identityMonitor.current }
     /// The user's method pick (2.0.0: a method, never a channel).
     private var manualPick: DriftMethodPick {
-        // The stored pick stands as-is (Grace, 2026-11-15): the
-        // kernel row is always shown and selectable, and the judge
-        // answers a kernel pick whose switch is off with a
-        // go-turn-it-on reminder — the pick is never rewritten.
+        // The stored pick stands as-is: the kernel row is always shown
+        // and selectable; the judge reports compatibility directly.
         DriftMethodPick.fromStored(manualPickRaw)
     }
     /// The local channel's premise: the app's own system only. It never
@@ -72,25 +70,23 @@ struct DriftHomeView: View {
                          tunnelReady: tunnelReady)
     }
     /// The method rows to draw: every pick, always — 内核直刷
-    /// included (Grace, 2026-11-15, replacing the #329
-    /// hide-while-off rule). Supported devices show it 可用 and
-    /// can pick it with the switch on or off; the switch is
-    /// enforced at the flash tap, with a reminder.
+    /// included. Its availability is determined by system and model
+    /// compatibility.
     private var visiblePicks: [DriftMethodPick] {
         DriftMethodPick.allCases
     }
     private var selectedDescriptors: Int { selection.tendies.reduce(0) { $0 + $1.descriptorCount } }
     private var overLimit: Bool { selectedDescriptors > PosterBoardImports.descriptorLimit }
     private var canApply: Bool {
-        // Kernel Direct writes the selected descriptor packs directly into
-        // PosterBoard's container; no pairing or tunnel is required. On a
-        // supported device the button stays tappable even while the
-        // 实验性功能 switch is off — the tap then answers with the
-        // go-turn-it-on reminder (Grace, 2026-11-15). An unsupported
-        // device cannot tap it at all.
+        // Kernel Direct writes selected descriptor packs directly into
+        // PosterBoard's container; it requires no pairing or tunnel.
+        // The button is available only when the system and model qualify.
         if manualPick == .kernel {
+            // #343: no `selection.video == nil` condition — the run
+            // clips the video out (see runApply), so a leftover on
+            // the video page must not disable this page's button.
             return kernelPremiseReady && !selection.tendies.isEmpty && !overLimit
-                && selection.video == nil && !selection.fullReset
+                && !selection.fullReset
                 && selection.resetModes.isEmpty && !session.running
         }
         // The in-process route is the one path that does not need a pairing
@@ -98,18 +94,13 @@ struct DriftHomeView: View {
         return (session.paired || judgement.mode == .worseQuery)
             && !selection.tendies.isEmpty && !overLimit && !session.running
     }
-    /// The kernel channel's premise, judged on this device alone:
-    /// this device in its band and offset table (#319/#329). (The
-    /// 实验性功能 switch that also gated it was removed with the
-    /// 2026-11-22 opening set.)
+    /// The kernel channel's system-version and model compatibility.
     private var kernelReady: Bool {
         kernelPremiseReady
     }
 
-    /// Supported-or-not, device only: iOS 17 / 18 band and the model
-    /// in the offset table. The switch is not part of this — a
-    /// supported device shows 可用 and can be picked either way
-    /// (Grace, 2026-11-15).
+    /// Supported-or-not, device only: both the iOS 17 / 18 version band
+    /// and the model's presence in the offset table must match.
     private var kernelPremiseReady: Bool {
         KernelDirectPremise.evaluate(version: localVersion).ready
     }
@@ -310,21 +301,15 @@ struct DriftHomeView: View {
             // in-process route only needs the app's own version and a granted
             // App Group, so pairing and the tunnel must not sit in front of it.
             DriftFlowLayout {
-                // With the kernel method on and ready it leads the
-                // card (#329, Grace 2026-11-14: 「最上面就应该显示
-                // 内核直刷可用」); otherwise the local channel's
-                // verdict leads, as before.
+                // When the kernel method is supported it leads the
+                // card; otherwise the local channel's verdict leads.
                 if kernelReady {
                     DriftPill(text: "内核直刷可用", tint: .green)
                 } else {
                     DriftPill(text: localReady ? "本机直刷可用" : "本机直刷不可用",
                               tint: localReady ? .green : .orange)
-                    // #338 (Grace, 2026-11-16): on iOS 17 / 18 the
-                    // card also carries the kernel method's state.
-                    // Until now it said nothing about the kernel
-                    // here, so a 17/18 user with the switch off saw
-                    // only the local and tunnel verdicts and never
-                    // learnt the kernel route existed but was off.
+                    // On iOS 17 / 18, also show the kernel method's
+                    // compatibility state when it is not ready.
                     if isKernelGeneration {
                         DriftPill(text: "内核直刷不可用", tint: .orange)
                     }
@@ -374,7 +359,7 @@ struct DriftHomeView: View {
             VStack(spacing: 0) {
                 ForEach(visiblePicks) { pick in
                     methodRow(pick, judged)
-                    if pick.id != visiblePicks.last?.id {
+                    if pick != visiblePicks.last {
                         Divider().padding(.leading, 34)
                     }
                 }
@@ -387,12 +372,9 @@ struct DriftHomeView: View {
             } else if judged.isBlocked, let blocked = judged.blockedReason {
                 Text(blocked).font(.caption).foregroundStyle(.orange)
             }
-            // Grace (2026-11-19, later the same day): the restore row
-            // is a real pick now — selectable, badged 实验， judged
-            // like the kernel pick with a go-turn-it-on reminder. It
-            // renders through `methodRow` with the other picks; the
-            // sealed-route row it replaces is gone. The seal itself
-            // is unchanged.
+            // (The sealed restore row that collection #329 kept here
+            // is long gone: 恢复刷 sits in the method list below as a
+            // regular method since it opened on 2026-11-22.)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .driftCard()
@@ -409,10 +391,7 @@ struct DriftHomeView: View {
         // availability is its own premise, judged on this device.
         let kernelEval = pick == .kernel
             ? KernelDirectPremise.evaluate(version: localVersion) : nil
-        // The kernel row's 可用 is about the device alone (Grace,
-        // 2026-11-15): supported shows 可用. (The 实验性功能 switch
-        // that used to gate it was removed with the 2026-11-22
-        // opening set, here as on the formal line.)
+        // The kernel row's 可用 is determined only by system and model.
         let available = pick == .auto ? !judged.isBlocked
             : (kernelEval?.ready ?? (option?.available ?? false))
         // Sealed (collection #142): the version is in range but this
@@ -429,13 +408,12 @@ struct DriftHomeView: View {
         } else if pick == .kernel {
             status = available ? "可用" : "不支持"
         } else if pick == .restore {
-            // The restore pick is selectable like the kernel pick,
-            // and its status follows the judged premises: on the
-            // With the tunnel premises ready and the device in
-            // the iOS 27 segment it honestly reads 可用； anywhere
-            // else 不可用 (Grace, 2026-11-19; status made
-            // premise-driven 2026-11-20; the 实验性功能 switch
-            // that used to gate it was removed 2026-11-22).
+            // The restore pick's status follows the same judged
+            // premise as its colour below (restoreAvailable): the
+            // route opened as a regular feature on 2026-11-22, so a
+            // device whose premises are ready honestly reads 可用 —
+            // the sealed-era hardcoded 不可用 read green-不可用 on
+            // exactly those devices (Grace's field report, 2026-11-22).
             status = judged.restoreAvailable ? "可用" : "不可用"
         } else {
             status = available ? "可用" : "不可用"
@@ -656,11 +634,11 @@ struct DriftHomeView: View {
                 .driftGlassButton()
             }
             if manualPick == .kernel || judgement.useKernel {
-                NativeNote("内核直刷会把已选壁纸描述文件写入 PosterBoard 容器并逐项核验；写入后会打开 PosterBoard，可上滑结束它，也可使用下方「注销」方式生效。")
+                NativeNote("内核直刷写完会打开 PosterBoard，上滑关掉它就能生效，也可以用下面的「注销」。")
             } else if judgement.mode == .worseQuery {
-                NativeNote("本机直刷在本机写入，不需要配对文件，也不用开隧道。刷完先打开 PosterBoard 刷新集合，再从应用切换器上滑关闭它，系统重新拉起后壁纸生效。App 不会自动注销。")
+                NativeNote("本机直刷不用配对文件、不用开隧道。刷完打开 PosterBoard，再从应用切换器上滑关掉，它重开后壁纸就生效。")
             } else if !session.paired {
-                NativeNote("两条隧道通道都需要先导入配对文件；本机直刷不需要，但只有证书签名才能用。")
+                NativeNote("隧道通道要先导入配对文件，本机直刷不用。iOS 26.0–26.6.1 不挑签名、不用组；其他版本需要带能用的组。")
             } else if selection.tendies.isEmpty && !imports.isEmpty {
                 NativeNote("在上面的列表里点圆圈勾选要刷的包。")
             }
@@ -725,7 +703,7 @@ struct DriftHomeView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             if manualPick == .kernel || judgement.useKernel {
-                NativeNote("内核直刷写完后，用这两种办法生效：上滑结束 PosterBoard，或者注销。")
+                NativeNote("内核直刷写完后，上滑关掉 PosterBoard 或用注销生效。")
             } else {
                 NativeNote("隧道通道（免注销 / 注销直刷）刷完会自动处理生效，不用在这里操作。")
             }
@@ -788,19 +766,29 @@ struct DriftHomeView: View {
         var runSelection = packsSelection
         runSelection.resetModes = []
         runSelection.fullReset = false
+        // #343 (Grace, 2026-11-21): a run launched from this page
+        // carries only the checked packs — whatever the video page
+        // picked stays out of it, exactly as the video page's own
+        // run already leaves the packs out. The two pages share one
+        // selection state (and one judge), but not one payload: in
+        // the field a leftover file in the video slot (a .tendies,
+        // of all things) rode into a pack run and the compile step
+        // tried to decode it as a video, burning two restore
+        // dry-runs at about nine minutes each.
+        runSelection.video = nil
+        runSelection.thumbnail = nil
         // Kernel Direct has its own on-device write flow. It verifies the
         // real PosterBoard container first, then writes the selected packs;
         // no channel mode, pairing record or tunnel is involved. Dispatch
-        // follows the judgement alone, never the raw stored pick: a kernel
-        // pick with its 实验性功能 switch off judges as blocked (the
-        // reminder above) and never reaches this point (Grace, 2026-11-15).
+        // follows the judgement alone, never the raw stored pick: an
+        // unsupported kernel pick is blocked before it reaches this point.
         if judgement.useKernel {
             Task {
                 defer { session.flashCover = false }
                 // Re-judge on the state as it is now, like every other
                 // channel's run below: the card's answer is not the run's
-                // answer if the switch or the premises moved in between.
-                let fresh = DriftJudge.judge(identity: identity, selection: packsSelection,
+                // answer if the device's compatibility premises changed.
+                let fresh = DriftJudge.judge(identity: identity, selection: runSelection,
                                              pick: manualPick, tunnelReady: tunnelReady)
                 if fresh.isBlocked {
                     session.errorText = fresh.blockedReason
@@ -811,7 +799,7 @@ struct DriftHomeView: View {
                     return
                 }
                 let outcome = await session.runKernelApply(identity: identity,
-                                                            selection: packsSelection)
+                                                            selection: runSelection)
                 if outcome.ok {
                     statusLine = outcome.message
                 } else {

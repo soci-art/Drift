@@ -35,9 +35,6 @@ struct DriftSettingsView: View {
     @State private var exportPopupMessage: String?
     @State private var recordBusy = false
     @ObservedObject private var updateChecker = AppUpdateChecker.shared
-    /// The bounded low-space backup experiment switch (synced from the
-    /// formal line, 2026-11-23). Alpha has no #339 预发行版更新 switch —
-    /// that property stays formal/prerelease-only by design.
     @AppStorage(PosterBoardBackup.lowSpaceExperimentEnabledKey) private var lowSpaceExperimentEnabled = false
     @State private var cacheBreakdown: AppCache.Breakdown?
     @State private var confirmClearCache = false
@@ -293,7 +290,7 @@ struct DriftSettingsView: View {
     // MARK: - In-process route
 
     /// The in-process route's premise, shown where the user can act on it:
-    /// whether this system is in range, and which App Group the process
+    /// whether this system is in range, and which App Group the installed
     /// signing profile actually granted.
     private var localRouteSection: some View {
         Section("本机直刷") {
@@ -454,6 +451,13 @@ struct DriftSettingsView: View {
         }
     }
 
+    // MARK: - Restore method (sealed)
+
+    /// The sealed restore entry (2.0.0): visible and greyed, never
+    /// selectable. There is no restore code behind it — safety by
+    /// non-existence. Tapping the row shows the sealing notice; the
+    /// pre-2.0.0 local-backup write-back/delete actions went away with
+    /// the backup machinery they belonged to.
     // Feedback #24: the history used to expand all 20 records inline and
     // stretch the whole settings page. It lives in a fixed-height box now
     // and scrolls inside itself. Feedback #83: receipts are merged into the
